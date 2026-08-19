@@ -151,7 +151,7 @@ pub(crate) enum Command {
         apply: bool,
     },
 
-    /// Preview or install the bundled agent recall skill without overwriting.
+    /// Preview, install, or explicitly replace the bundled agent recall skill.
     InstallSkill {
         /// Agent host's skills directory; Praxis adds a praxis-recall child.
         #[arg(long, value_name = "DIRECTORY")]
@@ -160,6 +160,10 @@ pub(crate) enum Command {
         /// Apply the displayed installation instead of previewing it.
         #[arg(long)]
         apply: bool,
+
+        /// Permit replacing a different existing skill; still previews unless --apply is set.
+        #[arg(long)]
+        replace: bool,
     },
 
     /// Discover an AoE-managed Codex transcript and print sanitized events.
@@ -510,11 +514,17 @@ mod tests {
     fn skill_install_is_preview_only_unless_apply_is_explicit() {
         let preview =
             Cli::try_parse_from(["praxis", "install-skill", "--target", "/agent/skills"]).unwrap();
-        let Command::InstallSkill { target, apply } = preview.command else {
+        let Command::InstallSkill {
+            target,
+            apply,
+            replace,
+        } = preview.command
+        else {
             panic!("expected install-skill command");
         };
         assert_eq!(target, PathBuf::from("/agent/skills"));
         assert!(!apply);
+        assert!(!replace);
 
         let applied = Cli::try_parse_from([
             "praxis",
@@ -528,6 +538,20 @@ mod tests {
             panic!("expected install-skill command");
         };
         assert!(apply);
+
+        let replacement = Cli::try_parse_from([
+            "praxis",
+            "install-skill",
+            "--target",
+            "/agent/skills",
+            "--replace",
+        ])
+        .unwrap();
+        let Command::InstallSkill { apply, replace, .. } = replacement.command else {
+            panic!("expected install-skill command");
+        };
+        assert!(!apply);
+        assert!(replace);
     }
 
     #[test]

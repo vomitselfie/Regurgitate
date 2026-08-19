@@ -129,9 +129,12 @@ keeping native event normalization in a separate ingestion adapter.
 The `packaging` module embeds the tracked skill files in release binaries and
 installs them only beneath a caller-supplied skills directory. Installation is
 preview-only unless `--apply` is explicit. It stages a new package before
-renaming it into place, is idempotent for identical files, and refuses to
-replace changed, non-directory, or symlinked destinations. Host path discovery
-and host configuration mutation remain outside the skill installer.
+renaming it into place and is idempotent for identical files. Different
+content is preserved unless `--replace` is explicit; replacement swaps the
+whole staged directory through a private backup and restores the old directory
+if installation fails. Non-directory and symlinked destinations are always
+rejected. Host path discovery and host configuration mutation remain outside
+the skill installer.
 
 The same module can conservatively add hooks to explicit AoE and Codex config
 files. Provider-specific parsers and policies remain separate, while a small
@@ -285,7 +288,7 @@ Implemented:
 - confidence/guidance scoring that excludes unknown events from evidence;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
-- a preview-first, no-overwrite skill package installer;
+- a preview-first skill package installer with explicit atomic replacement;
 - locked, atomic, conflict-refusing AoE and Codex hook config installers; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 

@@ -33,6 +33,13 @@ struct PackagedFile {
     contents: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExistingInstall {
+    Missing,
+    Current,
+    Different,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkillInstallReport {
     pub status: InstallStatus,
@@ -41,13 +48,24 @@ pub struct SkillInstallReport {
 }
 
 /// Preview or install the embedded agent-neutral skill under an explicit host
-/// skills directory. Existing content is never replaced.
-pub fn install_skill(skills_directory: &Path, apply: bool) -> Result<SkillInstallReport> {
+/// skills directory. Different existing content is replaced only when the
+/// caller explicitly opts in.
+pub fn install_skill(
+    skills_directory: &Path,
+    apply: bool,
+    replace: bool,
+) -> Result<SkillInstallReport> {
     validate_skills_directory(skills_directory)?;
     let destination = skills_directory.join(SKILL_NAME);
 
-    if existing_install_is_current(&destination)? {
-        return Ok(report(InstallStatus::AlreadyCurrent, destination));
+    match inspect_existing_install(&destination)? {
+        ExistingInstall::Current => {
+            return Ok(report(InstallStatus::AlreadyCurrent, destination));
+        }
+        ExistingInstall::Different if !replace => {
+            bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
+        }
+        ExistingInstall::Missing | ExistingInstall::Different => {}
     }
 
     if !apply {
@@ -63,8 +81,15 @@ pub fn install_skill(skills_directory: &Path, apply: bool) -> Result<SkillInstal
 
     // Recheck after creating the parent so concurrent installers cannot turn a
     // preview into an overwrite.
-    if existing_install_is_current(&destination)? {
-        return Ok(report(InstallStatus::AlreadyCurrent, destination));
+    let existing = inspect_existing_install(&destination)?;
+    match existing {
+        ExistingInstall::Current => {
+            return Ok(report(InstallStatus::AlreadyCurrent, destination));
+        }
+        ExistingInstall::Different if !replace => {
+            bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
+        }
+        ExistingInstall::Missing | ExistingInstall::Different => {}
     }
 
     let staging =
@@ -74,9 +99,14 @@ pub fn install_skill(skills_directory: &Path, apply: bool) -> Result<SkillInstal
         return Err(error);
     }
 
+    if existing == ExistingInstall::Different {
+        replace_staging_package(skills_directory, &staging, &destination)?;
+        return Ok(report(InstallStatus::Replaced, destination));
+    }
+
     if let Err(rename_error) = fs::rename(&staging, &destination) {
         let _ = fs::remove_dir_all(&staging);
-        if existing_install_is_current(&destination)? {
+        if inspect_existing_install(&destination)? == ExistingInstall::Current {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
         return Err(rename_error).with_context(|| {
@@ -100,10 +130,10 @@ fn validate_skills_directory(path: &Path) -> Result<()> {
     }
 }
 
-fn existing_install_is_current(destination: &Path) -> Result<bool> {
+fn inspect_existing_install(destination: &Path) -> Result<ExistingInstall> {
     let metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ExistingInstall::Missing),
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
@@ -129,12 +159,20 @@ fn existing_install_is_current(destination: &Path) -> Result<bool> {
 
     for packaged in &SKILL_FILES {
         let path = destination.join(packaged.relative_path);
-        let file_metadata = fs::symlink_metadata(&path).with_context(|| {
-            format!(
-                "existing {SKILL_NAME} installation is incomplete at {}",
-                path.display()
-            )
-        })?;
+        let file_metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(ExistingInstall::Different);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "could not inspect installed skill file at {}",
+                        path.display()
+                    )
+                });
+            }
+        };
         if file_metadata.file_type().is_symlink() || !file_metadata.is_file() {
             bail!(
                 "existing {SKILL_NAME} file is not a regular file: {}",
@@ -145,14 +183,35 @@ fn existing_install_is_current(destination: &Path) -> Result<bool> {
             format!("could not read installed skill file at {}", path.display())
         })?;
         if current != packaged.contents.as_bytes() {
-            bail!(
-                "existing {SKILL_NAME} file differs; refusing to overwrite {}",
-                path.display()
-            );
+            return Ok(ExistingInstall::Different);
         }
     }
 
-    Ok(true)
+    Ok(ExistingInstall::Current)
+}
+
+fn replace_staging_package(
+    skills_directory: &Path,
+    staging: &Path,
+    destination: &Path,
+) -> Result<()> {
+    let backup = skills_directory.join(format!(".{SKILL_NAME}.backup-{}", Uuid::new_v4().simple()));
+    fs::rename(destination, &backup).with_context(|| {
+        format!("could not stage the existing {SKILL_NAME} installation for replacement")
+    })?;
+
+    if let Err(install_error) = fs::rename(staging, destination) {
+        let restore_result = fs::rename(&backup, destination);
+        let _ = fs::remove_dir_all(staging);
+        if restore_result.is_err() {
+            bail!("could not install or restore the existing {SKILL_NAME} installation");
+        }
+        return Err(install_error).context("could not replace the existing skill installation");
+    }
+
+    fs::remove_dir_all(&backup)
+        .context("installed the new skill but could not remove its private backup")?;
+    Ok(())
 }
 
 fn write_staging_package(staging: &Path) -> Result<()> {
@@ -197,7 +256,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let target = temp.path().join("agent-skills");
 
-        let report = install_skill(&target, false).unwrap();
+        let report = install_skill(&target, false, false).unwrap();
 
         assert_eq!(report.status, InstallStatus::Planned);
         assert_eq!(report.destination, target.join(SKILL_NAME));
@@ -209,7 +268,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let target = temp.path().join("agent-skills");
 
-        let installed = install_skill(&target, true).unwrap();
+        let installed = install_skill(&target, true, false).unwrap();
         assert_eq!(installed.status, InstallStatus::Installed);
         for packaged in &SKILL_FILES {
             assert_eq!(
@@ -218,7 +277,7 @@ mod tests {
             );
         }
 
-        let repeated = install_skill(&target, true).unwrap();
+        let repeated = install_skill(&target, true, false).unwrap();
         assert_eq!(repeated.status, InstallStatus::AlreadyCurrent);
     }
 
@@ -226,14 +285,44 @@ mod tests {
     fn changed_installation_is_preserved() {
         let temp = tempdir().unwrap();
         let target = temp.path().join("agent-skills");
-        let installed = install_skill(&target, true).unwrap();
+        let installed = install_skill(&target, true, false).unwrap();
         let skill_file = installed.destination.join("SKILL.md");
         fs::write(&skill_file, "personal change\n").unwrap();
 
-        let error = install_skill(&target, true).unwrap_err();
+        let error = install_skill(&target, true, false).unwrap_err();
 
-        assert!(error.to_string().contains("refusing to overwrite"));
+        assert!(error.to_string().contains("preview replacement"));
         assert_eq!(fs::read_to_string(skill_file).unwrap(), "personal change\n");
+    }
+
+    #[test]
+    fn explicit_replacement_previews_then_atomically_updates() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("agent-skills");
+        let installed = install_skill(&target, true, false).unwrap();
+        let skill_file = installed.destination.join("SKILL.md");
+        fs::write(&skill_file, "previous bundle or personal change\n").unwrap();
+
+        let preview = install_skill(&target, false, true).unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+        assert_eq!(
+            fs::read_to_string(&skill_file).unwrap(),
+            "previous bundle or personal change\n"
+        );
+
+        let replaced = install_skill(&target, true, true).unwrap();
+        assert_eq!(replaced.status, InstallStatus::Replaced);
+        assert_eq!(
+            fs::read(&skill_file).unwrap(),
+            SKILL_FILES[0].contents.as_bytes()
+        );
+        assert!(fs::read_dir(&target).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with('.')
+        }));
     }
 
     #[cfg(unix)]
@@ -248,7 +337,7 @@ mod tests {
         fs::create_dir(&elsewhere).unwrap();
         symlink(&elsewhere, target.join(SKILL_NAME)).unwrap();
 
-        let error = install_skill(&target, true).unwrap_err();
+        let error = install_skill(&target, true, true).unwrap_err();
 
         assert!(error.to_string().contains("symlinked skill destination"));
         assert!(fs::read_dir(elsewhere).unwrap().next().is_none());

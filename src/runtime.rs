@@ -139,8 +139,12 @@ pub fn execute(cli: Cli) -> Result<()> {
             let report = install_codex_hook(&config, apply)?;
             print_json(&report)
         }
-        Command::InstallSkill { target, apply } => {
-            let report = install_skill(&target, apply)?;
+        Command::InstallSkill {
+            target,
+            apply,
+            replace,
+        } => {
+            let report = install_skill(&target, apply, replace)?;
             print_json(&report)
         }
         Command::DebugParse {

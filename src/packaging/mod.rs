@@ -20,5 +20,6 @@ pub use skill::{SkillInstallReport, install_skill};
 pub enum InstallStatus {
     Planned,
     Installed,
+    Replaced,
     AlreadyCurrent,
 }
