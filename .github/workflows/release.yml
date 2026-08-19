@@ -1,0 +1,191 @@
+name: CI and release
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: praxis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.88.0
+  RELEASE_TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install the minimum supported Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt --no-self-update
+          rustup default "$RUST_VERSION"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --all-targets
+
+      - name: Verify release packaging
+        run: |
+          set -euo pipefail
+          bash -n scripts/package-release.sh
+          cargo build --locked
+
+          package_dist="$RUNNER_TEMP/praxis-package"
+          PRAXIS_DIST_DIR="$package_dist" \
+            scripts/package-release.sh ci-smoke target/debug/praxis
+          (cd "$package_dist" && sha256sum --check SHA256SUMS)
+
+          package_id="$(cargo pkgid -p praxis)"
+          version="${package_id##*@}"
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "$package_dist/praxis-v${version}-ci-smoke.tar.gz" -C "$smoke_dir"
+          actual="$($smoke_dir/praxis-v${version}-ci-smoke/praxis --version)"
+          test "$actual" = "praxis $version"
+
+  release:
+    name: Release
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source and tags
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the release Rust toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+          rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          rustup default "$RUST_VERSION"
+          rustup target add "$RELEASE_TARGET"
+
+      - name: Determine release state
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          package_id="$(cargo pkgid -p praxis)"
+          version="${package_id##*@}"
+          if [[ "$version" == "$package_id" ]]; then
+            echo "could not determine the Praxis package version" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          archive="praxis-${tag}-${RELEASE_TARGET}.tar.gz"
+          tag_commit="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)"
+
+          mode=create
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [[ -z "$tag_commit" ]]; then
+              echo "release $tag exists but its tag is unavailable" >&2
+              exit 1
+            fi
+
+            assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+            complete=false
+            if grep -Fxq "$archive" <<<"$assets" && grep -Fxq SHA256SUMS <<<"$assets"; then
+              complete=true
+            fi
+
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              if [[ "$complete" == false ]]; then
+                echo "release $tag belongs to another commit and is missing required assets" >&2
+                exit 1
+              fi
+              mode=skip
+            elif [[ "$complete" == true ]]; then
+              mode=skip
+            else
+              mode=repair
+            fi
+          elif [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "tag $tag already points to another commit but has no release" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        if: steps.release.outputs.mode != 'skip'
+        run: |
+          set -euo pipefail
+          binary="target/$RELEASE_TARGET/release/praxis"
+          cargo build --locked --release --target "$RELEASE_TARGET"
+          if readelf -l "$binary" | grep -Fq INTERP; then
+            echo "release binary is dynamically linked" >&2
+            exit 1
+          fi
+
+      - name: Package release
+        if: steps.release.outputs.mode != 'skip'
+        run: |
+          set -euo pipefail
+          scripts/package-release.sh \
+            "$RELEASE_TARGET" \
+            "target/$RELEASE_TARGET/release/praxis"
+          (cd dist && sha256sum --check SHA256SUMS)
+
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "dist/${{ steps.release.outputs.archive }}" -C "$smoke_dir"
+          actual="$($smoke_dir/praxis-${{ steps.release.outputs.tag }}-$RELEASE_TARGET/praxis --version)"
+          test "$actual" = "praxis ${{ steps.release.outputs.version }}"
+
+      - name: Publish GitHub release
+        if: steps.release.outputs.mode != 'skip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          archive="dist/${{ steps.release.outputs.archive }}"
+
+          if [[ "${{ steps.release.outputs.mode }}" == repair ]]; then
+            gh release upload "$tag" "$archive" dist/SHA256SUMS \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
+
+          release_flags=()
+          if [[ "${{ steps.release.outputs.version }}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$tag" "$archive" dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Praxis $tag" \
+            --generate-notes \
+            "${release_flags[@]}"
+
+      - name: Report existing release
+        if: steps.release.outputs.mode == 'skip'
+        run: echo "${{ steps.release.outputs.tag }} is already released; bump Cargo.toml to publish another version."

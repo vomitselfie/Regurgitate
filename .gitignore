@@ -1,5 +1,6 @@
 # Rust build output
 /target/
+/dist/
 
 # Local collaboration notes and agent-specific instructions. Public project
 # documentation belongs under docs/, skills/, or the explicitly allowed README.

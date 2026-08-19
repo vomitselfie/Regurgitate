@@ -25,6 +25,8 @@ module boundaries.
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - a locked, atomic installer for empty AoE idle/error hook slots; and
+- version-gated CI releases with a verified Linux binary archive and checksum;
+  and
 - adversarial privacy, authentication, migration, project-isolation, and
   source-replacement tests.
 

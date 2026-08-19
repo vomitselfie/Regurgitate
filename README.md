@@ -33,6 +33,29 @@ for Codex sessions, Claude Code can record tool completions directly, and
 task-specific bounded recall is available to any agent that can invoke the CLI.
 Automatic host-path discovery is not implemented.
 
+## Installation
+
+Praxis currently publishes a static Linux x86-64 musl binary because Linux
+Secret Service is a runtime requirement. Download and verify the latest release
+with the GitHub CLI, then install it somewhere on `PATH`:
+
+```bash
+release="$(gh release view --repo vomitselfie/aoe-praxis --json tagName --jq .tagName)"
+version="${release#v}"
+archive="praxis-${release}-x86_64-unknown-linux-musl.tar.gz"
+gh release download "$release" --repo vomitselfie/aoe-praxis \
+  --pattern "$archive" --pattern SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "$archive"
+install -Dm755 "praxis-${release}-x86_64-unknown-linux-musl/praxis" \
+  "$HOME/.local/bin/praxis"
+praxis --version
+```
+
+The archive also contains this README and the MIT license. The `install-skill`
+command installs the provider-neutral recall skill embedded in the binary, so
+the separate source tree is not required at runtime.
+
 ## CLI usage
 
 Praxis currently requires Linux Secret Service to be available and unlocked.
@@ -166,3 +189,14 @@ cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 ```
+
+The same checks run in GitHub Actions for pull requests and pushes to `master`.
+A passing push to `master` publishes the version declared in `Cargo.toml` when
+that version does not already have a GitHub release. The workflow builds with
+the declared minimum Rust version, creates a versioned binary archive and
+`SHA256SUMS`, tags the tested commit, and generates release notes. Existing
+release tags and assets are never replaced by a later commit.
+
+The first such push publishes `v0.1.0`. For each later release, update the
+package version in `Cargo.toml`, refresh `Cargo.lock`, run the verification
+commands above, and push the tested commit to `master`.
