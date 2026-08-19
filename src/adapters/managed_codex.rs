@@ -2,9 +2,9 @@ use std::{fs::File, path::PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::{application::SessionEventSource, core::HistoryEvent};
+use crate::application::{EventBatch, IngestionCursor, ProjectLocator, SessionEventSource};
 
-use super::{aoe, codex};
+use super::{aoe, codex_incremental};
 
 /// Edge adapter that links AoE's session registry to Codex's transcript
 /// adapter. AoE and Codex parsing remain in their own modules.
@@ -25,13 +25,27 @@ impl ManagedCodexSource {
 }
 
 impl SessionEventSource for ManagedCodexSource {
-    fn events_for_session(&self, session_id: &str) -> Result<Vec<HistoryEvent>> {
+    fn events_for_session(
+        &self,
+        session_id: &str,
+        cursor: Option<&IngestionCursor>,
+    ) -> Result<EventBatch> {
         let descriptor = aoe::find_session(&self.aoe_config_dir, &self.profile, session_id)?;
         let transcript_path =
             aoe::find_codex_transcript(&self.codex_home, &descriptor.agent_session_id)?;
         let transcript = File::open(&transcript_path)
             .with_context(|| "could not open the linked Codex transcript")?;
-        codex::normalize_transcript(transcript, &descriptor.session_id)
+        let normalized = codex_incremental::normalize_transcript_since(
+            transcript,
+            &descriptor.session_id,
+            cursor,
+        )?;
+        Ok(EventBatch {
+            events: normalized.events,
+            next_cursor: normalized.next_cursor,
+            project: ProjectLocator::new(descriptor.project_path),
+            source_reset: normalized.source_reset,
+        })
     }
 }
 
@@ -68,10 +82,10 @@ mod tests {
         .unwrap();
 
         let source = ManagedCodexSource::new(config_dir, "default", codex_home);
-        let events = source.events_for_session("aoe-1").unwrap();
+        let batch = source.events_for_session("aoe-1", None).unwrap();
 
-        assert_eq!(events.len(), 1);
-        let encoded = serde_json::to_string(&events).unwrap();
+        assert_eq!(batch.events.len(), 1);
+        let encoded = serde_json::to_string(&batch.events).unwrap();
         for forbidden in [
             "SECRET_PROJECT",
             "SECRET_COMMAND",

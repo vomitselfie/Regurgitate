@@ -1,3 +1,10 @@
+mod cursor;
 mod ingestion;
+mod project;
 
-pub use ingestion::{EventSink, IngestionReport, IngestionService, SessionEventSource};
+pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
+pub use ingestion::{
+    CursorStore, EventBatch, EventSink, IngestionReport, IngestionService, ProjectResolver,
+    SessionEventSource,
+};
+pub use project::ProjectLocator;

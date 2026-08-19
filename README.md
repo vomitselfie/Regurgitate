@@ -15,12 +15,13 @@ Linux. It provides:
 - AoE session discovery without embedding AoE concerns in the core model;
 - per-record CBOR + XChaCha20-Poly1305 encrypted SQLite storage;
 - HKDF-separated event keys and a Linux Secret Service master-key provider;
-- a modular, idempotent `ingest` application service and CLI path; and
+- encrypted project identity mappings and incremental ingestion cursors;
+- a modular, interruption-safe `ingest` application service and CLI path; and
 - privacy regression tests with adversarial fixture content.
 
 This is an early implementation. Manual ingestion is wired for AoE-managed
-Codex sessions. Project identity, bounded recall, ingestion cursors, and
-automatic installation are not implemented yet.
+Codex sessions. Bounded recall and automatic installation are not implemented
+yet.
 
 ## Manual ingestion
 
@@ -47,12 +48,13 @@ recorded in [Source format notes](docs/source-format-notes.md).
 
 ## Privacy invariant
 
-Only a `HistoryEvent` may cross the adapter boundary. Raw Codex and AoE values
-exist only inside their adapters and are reduced to controlled vocabularies
-before the event is returned. Events are serialized to CBOR and encrypted in
-memory before SQLite receives any payload bytes. The master key is stored
-separately through Linux Secret Service; the implementation has no automatic
-plaintext-key or plaintext-event fallback.
+Only controlled event and cursor types may enter the application service. A
+project path crosses in a non-serializable `ProjectLocator` whose only consumer
+is the encrypted identity resolver; the path never enters an event, report, or
+plaintext database column. Events and private metadata are serialized to CBOR
+and encrypted in memory before SQLite receives any payload bytes. The master
+key is stored separately through Linux Secret Service; the implementation has
+no automatic plaintext-key or plaintext-event fallback.
 
 ## Verification
 

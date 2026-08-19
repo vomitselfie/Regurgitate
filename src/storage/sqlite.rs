@@ -12,14 +12,16 @@ use crate::{application::EventSink, core::HistoryEvent};
 use super::{
     MasterKey,
     crypto::{EnvelopeMetadata, EventCipher},
+    private::PrivateMetadataCipher,
 };
 
 #[cfg(test)]
 use super::crypto::ENVELOPE_VERSION;
 
 pub struct EncryptedStore {
-    connection: Connection,
+    pub(super) connection: Connection,
     cipher: EventCipher,
+    pub(super) private_cipher: PrivateMetadataCipher,
 }
 
 struct StoredEvent {
@@ -55,11 +57,24 @@ impl EncryptedStore {
                  envelope_version INTEGER NOT NULL,
                  nonce            BLOB NOT NULL,
                  ciphertext       BLOB NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS private_projects (
+                 lookup_token     BLOB PRIMARY KEY NOT NULL,
+                 envelope_version INTEGER NOT NULL,
+                 nonce            BLOB NOT NULL,
+                 ciphertext       BLOB NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS private_cursors (
+                 lookup_token     BLOB PRIMARY KEY NOT NULL,
+                 envelope_version INTEGER NOT NULL,
+                 nonce            BLOB NOT NULL,
+                 ciphertext       BLOB NOT NULL
              );",
         )?;
         Ok(Self {
             connection,
             cipher: EventCipher::new(master_key)?,
+            private_cipher: PrivateMetadataCipher::new(master_key)?,
         })
     }
 

@@ -26,8 +26,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             codex_home,
         } => {
             let source = managed_codex_source(profile, aoe_config_dir, codex_home)?;
-            let events = source.events_for_session(&session)?;
-            let output: Vec<_> = events.iter().map(DebugEvent::from).collect();
+            let batch = source.events_for_session(&session, None)?;
+            let output: Vec<_> = batch.events.iter().map(DebugEvent::from).collect();
             print_json(&output)
         }
         Command::Ingest {
@@ -108,7 +108,10 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        fs::{self, OpenOptions},
+        io::Write,
+    };
 
     use tempfile::tempdir;
 
@@ -130,17 +133,26 @@ mod tests {
         let config_dir = temp.path().join("aoe");
         let profile_dir = config_dir.join("profiles/default");
         fs::create_dir_all(&profile_dir).unwrap();
+        let project_dir = temp.path().join("PLAINTEXT_SENTINEL_PROJECT");
+        fs::create_dir(&project_dir).unwrap();
         fs::write(
             profile_dir.join("sessions.json"),
-            br#"[{"id":"aoe-1","project_path":"/private/SECRET_PROJECT","tool":"codex","agent_session_id":"codex-1"}]"#,
+            serde_json::to_vec(&serde_json::json!([{
+                "id": "aoe-1",
+                "project_path": project_dir,
+                "tool": "codex",
+                "agent_session_id": "codex-1"
+            }]))
+            .unwrap(),
         )
         .unwrap();
 
         let codex_home = temp.path().join("codex");
         let transcript_dir = codex_home.join("sessions/2026/08/19");
         fs::create_dir_all(&transcript_dir).unwrap();
+        let transcript_path = transcript_dir.join("rollout-codex-1.jsonl");
         fs::write(
-            transcript_dir.join("rollout-codex-1.jsonl"),
+            &transcript_path,
             concat!(
                 "{\"timestamp\":\"2026-08-19T12:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"call-1\",\"arguments\":\"SECRET_ARGUMENT\"}}\n",
                 "{\"timestamp\":\"2026-08-19T12:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-1\",\"output\":{\"exit_code\":0,\"output\":\"SECRET_OUTPUT\"}}}\n"
@@ -157,14 +169,36 @@ mod tests {
 
         assert_eq!(first.observed, 1);
         assert_eq!(first.inserted, 1);
-        assert_eq!(second.observed, 1);
-        assert_eq!(second.already_present, 1);
+        assert_eq!(second.observed, 0);
+        assert_eq!(second.inserted, 0);
+
+        let mut transcript = OpenOptions::new()
+            .append(true)
+            .open(&transcript_path)
+            .unwrap();
+        transcript
+            .write_all(
+                concat!(
+                    "{\"timestamp\":\"2026-08-19T12:00:02Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"apply_patch\",\"call_id\":\"call-2\",\"arguments\":\"SECOND_SECRET_ARGUMENT\"}}\n",
+                    "{\"timestamp\":\"2026-08-19T12:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-2\",\"output\":{\"success\":true,\"output\":\"SECOND_SECRET_OUTPUT\"}}}\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        drop(transcript);
+        let third =
+            ingest_session(source(), "aoe-1", data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(third.observed, 1);
+        assert_eq!(third.inserted, 1);
 
         let database = fs::read(data_home.join("praxis/history.db")).unwrap();
         for forbidden in [
-            b"SECRET_PROJECT".as_slice(),
+            b"PLAINTEXT_SENTINEL_PROJECT".as_slice(),
             b"SECRET_ARGUMENT",
             b"SECRET_OUTPUT",
+            b"SECOND_SECRET_ARGUMENT",
+            b"SECOND_SECRET_OUTPUT",
+            b"aoe-1",
         ] {
             assert!(
                 !database

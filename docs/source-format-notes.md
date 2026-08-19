@@ -57,16 +57,15 @@ controlled operation.
 ## Current ingestion compatibility
 
 `praxis ingest --session <id>` composes the AoE registry lookup and Codex
-transcript normalizer through a generic session-event source. Repeating the
-command is safe because normalized tool-call identifiers produce deterministic
-event UUIDs and SQLite ignores an event UUID already present in the encrypted
-store.
+transcript normalizer through a generic session-event source. Its encrypted
+cursor records a committed byte offset, the SHA-256 digest of the committed
+prefix, the last observed source length, and any pending call as controlled
+metadata. It never stores a transcript path or raw JSONL fragment.
 
-The current implementation deliberately rescans the linked transcript. This is
-correct but increasingly inefficient as a session grows. Cursor support must
-record enough source identity and progress to detect append, truncation,
-replacement, and rotation without placing a transcript path or session ID in
-plaintext database metadata.
+Only newline-terminated records advance the cursor. Appended records are parsed
+incrementally; a shorter source or changed committed prefix triggers a reset
+and safe reparse. Deterministic event UUIDs keep this interruption-safe because
+SQLite ignores an event already committed before the cursor advances.
 
 ## Fields that must never cross normalization
 

@@ -58,20 +58,20 @@ pub fn normalize_post_tool_hook<R: Read>(reader: R) -> Result<HistoryEvent> {
 }
 
 #[derive(Debug, Deserialize)]
-struct TranscriptRecord {
-    timestamp: Option<DateTime<Utc>>,
+pub(super) struct TranscriptRecord {
+    pub(super) timestamp: Option<DateTime<Utc>>,
     #[serde(rename = "type")]
-    record_type: String,
-    payload: TranscriptPayload,
+    pub(super) record_type: String,
+    pub(super) payload: TranscriptPayload,
 }
 
 #[derive(Debug, Deserialize)]
-struct TranscriptPayload {
+pub(super) struct TranscriptPayload {
     #[serde(rename = "type")]
-    payload_type: Option<String>,
-    call_id: Option<String>,
-    name: Option<String>,
-    output: Option<Value>,
+    pub(super) payload_type: Option<String>,
+    pub(super) call_id: Option<String>,
+    pub(super) name: Option<String>,
+    pub(super) output: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -179,7 +179,7 @@ fn history_event(
     }
 }
 
-fn stable_event_id(session_id: &str, source_event_id: &str) -> Uuid {
+pub(super) fn stable_event_id(session_id: &str, source_event_id: &str) -> Uuid {
     let mut source = String::with_capacity(session_id.len() + source_event_id.len() + 1);
     source.push_str(session_id);
     source.push(':');
