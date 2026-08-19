@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::core::Operation;
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(name = "praxis", version, about)]
 pub struct Cli {
     #[command(subcommand)]
@@ -17,7 +17,7 @@ impl Cli {
     }
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 pub(crate) enum Command {
     /// Normalize one Codex hook event from stdin without retaining raw fields.
     DebugHook,
@@ -81,6 +81,14 @@ pub(crate) enum Command {
         /// Maximum aggregate observations to return (hard maximum: 20).
         #[arg(long, default_value_t = crate::query::DEFAULT_RECALL_LIMIT)]
         limit: usize,
+
+        /// Ephemeral task text used only to rank controlled observations.
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Approximate maximum JSON output tokens (hard maximum: 1000).
+        #[arg(long, default_value_t = crate::query::DEFAULT_TOKEN_BUDGET)]
+        token_budget: usize,
 
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]

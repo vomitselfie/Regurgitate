@@ -54,9 +54,9 @@ storage interfaces. A path is carried only by a non-serializable
 
 SQLite receives an event UUID, a key-derived project lookup token,
 authenticated envelope metadata, a random nonce, and ciphertext. The event UUID
-and timestamps are structural metadata; the
-session ID, project ID, agent type, operation, outcome, and other event fields
-are inside the encrypted payload. Project and cursor tables expose only
+and timestamps are structural metadata; the session ID, project ID, agent type,
+operation, outcome, and other event fields are inside the encrypted payload.
+Project and cursor tables expose only
 HMAC-SHA-256 lookup tokens, version numbers, nonces, and ciphertext. Their
 paths, session IDs, cursor offsets, digests, and pending state are encrypted.
 The master key is held by Linux Secret Service and is never stored beside the
@@ -79,6 +79,14 @@ most common controlled error class. It has no event-level output mode and
 rejects limits above 20 before querying storage. Identifiers and timestamps are
 used internally for scoping and recency ranking but are absent from the result.
 
+Optional task text is ephemeral input to a small deterministic classifier. The
+classifier keeps only controlled capability and operation hints, then drops the
+normalized text. Those hints affect ranking but are not stored or returned.
+After ranking and the observation-count limit, the result is serialized and
+trimmed from lowest priority until its conservative four-bytes-per-token
+estimate fits the requested budget. The output records that estimate for later
+evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
+
 ## Current boundaries and limits
 
 Implemented:
@@ -93,11 +101,12 @@ Implemented:
 - Linux Secret Service key retrieval/creation;
 - manual session ingestion;
 - project-scoped aggregate recall with operation/failure filters and a hard
-  observation limit; and
+  observation limit;
+- ephemeral task-query ranking and explicit serialized-output token budgets;
+  and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
 
-- task-query relevance and explicit token-budget accounting;
 - automatic AoE lifecycle integration; and
 - retention, inspection, and forgetting commands.

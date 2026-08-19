@@ -4,6 +4,7 @@ use std::{env, fs, io, path::PathBuf};
 use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Context, Result};
+use zeroize::Zeroizing;
 
 use crate::{
     adapters::{ManagedCodexSource, aoe, codex},
@@ -54,8 +55,11 @@ pub fn execute(cli: Cli) -> Result<()> {
             operation,
             failures,
             limit,
+            query,
+            token_budget,
             data_home,
         } => {
+            let query = query.map(Zeroizing::new);
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
             let result = recall_project(
                 project,
@@ -63,7 +67,9 @@ pub fn execute(cli: Cli) -> Result<()> {
                     operation: operation.map(Into::into),
                     failures_only: failures,
                     limit,
+                    token_budget,
                 },
+                query.as_ref().map(|value| value.as_str()),
                 data_home,
                 &SecretServiceKeyProvider::default(),
             )?;
@@ -100,6 +106,7 @@ fn ingest_session(
 fn recall_project(
     project: PathBuf,
     options: RecallOptions,
+    task_query: Option<&str>,
     data_home: PathBuf,
     key_provider: &impl MasterKeyProvider,
 ) -> Result<RecallResult> {
@@ -107,7 +114,7 @@ fn recall_project(
     prepare_private_directory(&praxis_dir)?;
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
-    RecallService::new(&store).recall(&ProjectLocator::new(project), options)
+    RecallService::new(&store).recall(&ProjectLocator::new(project), options, task_query)
 }
 
 fn default_data_home() -> Result<PathBuf> {
@@ -229,6 +236,7 @@ mod tests {
         let recalled = recall_project(
             project_dir,
             RecallOptions::default(),
+            Some("SUPER_SECRET_QUERY"),
             data_home.clone(),
             &FixedKeyProvider,
         )
@@ -246,6 +254,7 @@ mod tests {
             b"SECRET_OUTPUT",
             b"SECOND_SECRET_ARGUMENT",
             b"SECOND_SECRET_OUTPUT",
+            b"SUPER_SECRET_QUERY",
             b"aoe-1",
         ] {
             assert!(

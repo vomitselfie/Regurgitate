@@ -17,12 +17,13 @@ Linux. It provides:
 - HKDF-separated event keys and a Linux Secret Service master-key provider;
 - encrypted project identity mappings and incremental ingestion cursors;
 - a modular, interruption-safe `ingest` application service and CLI path;
-- project-scoped, aggregate-only recall with a hard output limit; and
+- project-scoped, task-ranked aggregate recall with hard count and token
+  budgets; and
 - privacy regression tests with adversarial fixture content.
 
 This is an early implementation. Manual ingestion is wired for AoE-managed
-Codex sessions, and the first bounded recall interface is available. Automatic
-installation and task-specific semantic recall are not implemented yet.
+Codex sessions, and the first task-specific bounded recall interface is
+available. Automatic installation is not implemented yet.
 
 ## Manual ingestion
 
@@ -35,6 +36,7 @@ cargo run -- debug-hook < tests/fixtures/codex/post-tool-use-success.json
 cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
+cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 ```
 
 Both debug commands print only the sanitized event projection. They never print
@@ -44,13 +46,17 @@ the hook payload, transcript payload, command arguments, or tool results.
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
 
-`recall` returns at most 20 fixed-schema aggregate observations. It supports a
-controlled `--operation` filter and `--failures`, and never returns event,
-session, or project identifiers, timestamps, paths, or historical content.
+`recall` returns at most 20 fixed-schema aggregate observations and defaults to
+an approximate 600-token serialized-output budget. It supports a controlled
+`--operation` filter, `--failures`, and ephemeral task-query ranking. It never
+returns event, session, or project identifiers, timestamps, paths, query text,
+or historical content. Query text is not persisted by Praxis, though text
+provided on a command line may still be retained by the user's shell history.
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
-the current implementation limits. Upstream source-format assumptions are
-recorded in [Source format notes](docs/source-format-notes.md).
+the current implementation limits, and [Roadmap](docs/roadmap.md) for the next
+integration slices. Upstream source-format assumptions are recorded in
+[Source format notes](docs/source-format-notes.md).
 
 ## Privacy invariant
 

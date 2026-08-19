@@ -10,8 +10,13 @@ use crate::{
     core::{Capability, ErrorClass, HistoryEvent, Operation, Outcome, Strategy},
 };
 
+use super::task::TaskIntent;
+
 pub const DEFAULT_RECALL_LIMIT: usize = 10;
 pub const MAX_RECALL_LIMIT: usize = 20;
+pub const DEFAULT_TOKEN_BUDGET: usize = 600;
+pub const MAX_TOKEN_BUDGET: usize = 1_000;
+const MIN_TOKEN_BUDGET: usize = 32;
 const MAX_CANDIDATE_EVENTS: usize = 1_000;
 
 pub trait ProjectLookup {
@@ -27,6 +32,7 @@ pub struct RecallOptions {
     pub operation: Option<Operation>,
     pub failures_only: bool,
     pub limit: usize,
+    pub token_budget: usize,
 }
 
 impl Default for RecallOptions {
@@ -35,6 +41,7 @@ impl Default for RecallOptions {
             operation: None,
             failures_only: false,
             limit: DEFAULT_RECALL_LIMIT,
+            token_budget: DEFAULT_TOKEN_BUDGET,
         }
     }
 }
@@ -42,6 +49,7 @@ impl Default for RecallOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RecallResult {
     pub observations: Vec<RecallObservation>,
+    pub approximate_tokens: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -70,21 +78,29 @@ where
         Self { history }
     }
 
-    pub fn recall(&self, locator: &ProjectLocator, options: RecallOptions) -> Result<RecallResult> {
+    pub fn recall(
+        &self,
+        locator: &ProjectLocator,
+        options: RecallOptions,
+        task_query: Option<&str>,
+    ) -> Result<RecallResult> {
         if options.limit == 0 || options.limit > MAX_RECALL_LIMIT {
             bail!("recall limit must be between 1 and {MAX_RECALL_LIMIT}");
         }
+        if options.token_budget < MIN_TOKEN_BUDGET || options.token_budget > MAX_TOKEN_BUDGET {
+            bail!("recall token budget must be between {MIN_TOKEN_BUDGET} and {MAX_TOKEN_BUDGET}");
+        }
         let Some(project_id) = self.history.find_project(locator)? else {
-            return Ok(RecallResult {
-                observations: Vec::new(),
-            });
+            return Ok(budgeted_result(Vec::new(), options.token_budget));
         };
         let events = self
             .history
             .recent_project_events(project_id, MAX_CANDIDATE_EVENTS)?;
-        Ok(RecallResult {
-            observations: aggregate(events, options),
-        })
+        let intent = task_query.map(TaskIntent::classify).unwrap_or_default();
+        Ok(budgeted_result(
+            aggregate(events, options, &intent),
+            options.token_budget,
+        ))
     }
 }
 
@@ -104,7 +120,11 @@ struct Group {
     latest: DateTime<Utc>,
 }
 
-fn aggregate(events: Vec<HistoryEvent>, options: RecallOptions) -> Vec<RecallObservation> {
+fn aggregate(
+    events: Vec<HistoryEvent>,
+    options: RecallOptions,
+    intent: &TaskIntent,
+) -> Vec<RecallObservation> {
     let mut groups = HashMap::<GroupKey, Group>::new();
     for event in events {
         if options
@@ -150,7 +170,9 @@ fn aggregate(events: Vec<HistoryEvent>, options: RecallOptions) -> Vec<RecallObs
             let score = group.successes.saturating_mul(4)
                 + group.failures.saturating_mul(3)
                 + group.unknown;
+            let relevance = intent.relevance(key.capability, key.operation);
             (
+                relevance,
                 score,
                 group.latest,
                 key,
@@ -172,15 +194,45 @@ fn aggregate(events: Vec<HistoryEvent>, options: RecallOptions) -> Vec<RecallObs
             .0
             .cmp(&left.0)
             .then_with(|| right.1.cmp(&left.1))
-            .then_with(|| left.2.capability.cmp(&right.2.capability))
-            .then_with(|| left.2.operation.cmp(&right.2.operation))
-            .then_with(|| left.2.strategy.cmp(&right.2.strategy))
+            .then_with(|| right.2.cmp(&left.2))
+            .then_with(|| left.3.capability.cmp(&right.3.capability))
+            .then_with(|| left.3.operation.cmp(&right.3.operation))
+            .then_with(|| left.3.strategy.cmp(&right.3.strategy))
     });
     ranked
         .into_iter()
         .take(options.limit)
-        .map(|(_, _, _, observation)| observation)
+        .map(|(_, _, _, _, observation)| observation)
         .collect()
+}
+
+fn budgeted_result(mut observations: Vec<RecallObservation>, token_budget: usize) -> RecallResult {
+    loop {
+        let mut result = RecallResult {
+            observations,
+            approximate_tokens: 0,
+        };
+        loop {
+            let estimate = estimate_tokens(&result);
+            if estimate == result.approximate_tokens {
+                break;
+            }
+            result.approximate_tokens = estimate;
+        }
+        if result.approximate_tokens <= token_budget || result.observations.is_empty() {
+            return result;
+        }
+        observations = result.observations;
+        observations.pop();
+    }
+}
+
+fn estimate_tokens(value: &impl Serialize) -> usize {
+    let bytes = serde_json::to_vec_pretty(value)
+        .expect("fixed-schema recall output must remain serializable")
+        .len()
+        + 1; // CLI newline
+    bytes.div_ceil(4)
 }
 
 #[cfg(test)]
@@ -253,7 +305,9 @@ mod tests {
                     operation: Some(Operation::Command),
                     failures_only: false,
                     limit: 1,
+                    token_budget: DEFAULT_TOKEN_BUDGET,
                 },
+                None,
             )
             .unwrap();
 
@@ -286,6 +340,7 @@ mod tests {
                     limit: MAX_RECALL_LIMIT + 1,
                     ..RecallOptions::default()
                 },
+                None,
             )
             .unwrap_err();
         assert!(error.to_string().contains("recall limit"));
@@ -303,6 +358,7 @@ mod tests {
             .recall(
                 &ProjectLocator::new(PathBuf::from("/private/project")),
                 RecallOptions::default(),
+                None,
             )
             .unwrap();
         assert!(result.observations.is_empty());
@@ -349,10 +405,66 @@ mod tests {
                 &ProjectLocator::new(PathBuf::from("/private/project")),
                 RecallOptions {
                     limit: MAX_RECALL_LIMIT,
+                    token_budget: MAX_TOKEN_BUDGET,
                     ..RecallOptions::default()
                 },
+                None,
             )
             .unwrap();
         assert_eq!(result.observations.len(), MAX_RECALL_LIMIT);
+    }
+
+    #[test]
+    fn task_relevance_survives_a_tight_token_budget_without_leaking_query_text() {
+        let mut events = Vec::new();
+        for id in 1..=10 {
+            events.push(event(id, Operation::Command, Outcome::Success));
+        }
+        events.push(event(20, Operation::ApplyPatch, Outcome::Success));
+        let history = MemoryHistory {
+            project_id: Some(Uuid::from_u128(7)),
+            events,
+            requested_limit: Cell::new(0),
+        };
+        let result = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions {
+                    token_budget: 100,
+                    ..RecallOptions::default()
+                },
+                Some("patch SUPER_SECRET_TASK_TOKEN"),
+            )
+            .unwrap();
+
+        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.observations[0].operation, Operation::ApplyPatch);
+        assert!(result.approximate_tokens <= 100);
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("SUPER_SECRET_TASK_TOKEN")
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_token_budgets_before_querying_storage() {
+        let history = MemoryHistory {
+            project_id: Some(Uuid::nil()),
+            events: Vec::new(),
+            requested_limit: Cell::new(0),
+        };
+        let error = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions {
+                    token_budget: MAX_TOKEN_BUDGET + 1,
+                    ..RecallOptions::default()
+                },
+                None,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("token budget"));
+        assert_eq!(history.requested_limit.get(), 0);
     }
 }
