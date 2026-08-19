@@ -68,7 +68,7 @@ project documentation and backups.
 If you use AoE 1.14 or newer, it can download Praxis and connect your agent:
 
 ```bash
-aoe plugin install gh:vomitselfie/aoe-praxis
+aoe plugin install gh:vomitselfie/Praxis
 aoe serve
 ```
 
@@ -108,7 +108,7 @@ You can also install Praxis without AoE. There are two pieces:
 
 #### 1. Install the program
 
-Open the [latest release](https://github.com/vomitselfie/aoe-praxis/releases/latest)
+Open the [latest release](https://github.com/vomitselfie/Praxis/releases/latest)
 and download the archive for your computer:
 
 | Computer | Asset name ends with |
@@ -129,7 +129,7 @@ If that says `command not found`, reopen your terminal or ask your agent to add
 
 If “put it on your PATH” is unfamiliar, ask your coding agent:
 
-> Install the latest Praxis release from vomitselfie/aoe-praxis for this
+> Install the latest Praxis release from vomitselfie/Praxis for this
 > computer. Verify it against SHA256SUMS, place it in ~/.local/bin, and confirm
 > that `praxis --version` works.
 
@@ -137,7 +137,7 @@ If “put it on your PATH” is unfamiliar, ask your coding agent:
 <summary>Terminal install using GitHub CLI</summary>
 
 ```bash
-release="$(gh release view --repo vomitselfie/aoe-praxis --json tagName --jq .tagName)"
+release="$(gh release view --repo vomitselfie/Praxis --json tagName --jq .tagName)"
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform="linux-x86_64" ;;
   Darwin-arm64) platform="macos-aarch64" ;;
@@ -145,7 +145,7 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "Praxis has no release for this platform." >&2; return 1 ;;
 esac
 archive="praxis-${release}-${platform}.tar.gz"
-gh release download "$release" --repo vomitselfie/aoe-praxis \
+gh release download "$release" --repo vomitselfie/Praxis \
   --pattern "$archive" --pattern SHA256SUMS
 checksum="$(grep -F "  $archive" SHA256SUMS)"
 if command -v sha256sum >/dev/null 2>&1; then

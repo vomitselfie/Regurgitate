@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "Encrypted local procedural memory for AI agents"
-repository = "https://github.com/vomitselfie/aoe-praxis"
+repository = "https://github.com/vomitselfie/Praxis"
 
 [dependencies]
 anyhow = "1.0"
