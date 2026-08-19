@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, path::Path};
+use std::{fs::OpenOptions, path::Path, time::Duration};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -47,6 +47,7 @@ impl EncryptedStore {
     }
 
     fn from_connection(connection: Connection, master_key: &MasterKey) -> Result<Self> {
+        connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA secure_delete = ON;

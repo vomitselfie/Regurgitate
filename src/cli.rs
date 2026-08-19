@@ -22,6 +22,12 @@ pub(crate) enum Command {
     /// Normalize one Codex hook event from stdin without retaining raw fields.
     DebugHook,
 
+    /// Ingest the Codex session identified by an AoE status-hook environment.
+    AoeHook,
+
+    /// Print an AoE status-hook configuration snippet for manual installation.
+    PrintAoeConfig,
+
     /// Discover an AoE-managed Codex transcript and print sanitized events.
     DebugParse {
         /// Stable AoE session identifier.

@@ -7,11 +7,11 @@ use anyhow::{Context, Result};
 use zeroize::Zeroizing;
 
 use crate::{
-    adapters::{ManagedCodexSource, aoe, codex},
+    adapters::{ManagedCodexSource, aoe, aoe_hook, codex},
     application::ProjectLocator,
     application::{IngestionReport, IngestionService, SessionEventSource},
     cli::{Cli, Command},
-    core::DebugEvent,
+    core::{AgentKind, DebugEvent},
     query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
 };
@@ -21,6 +21,21 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::DebugHook => {
             let event = codex::normalize_post_tool_hook(io::stdin().lock())?;
             print_json(&DebugEvent::from(&event))
+        }
+        Command::AoeHook => {
+            let context = aoe_hook::current_context()?;
+            let report = ingest_aoe_hook(
+                context,
+                None,
+                None,
+                default_data_home()?,
+                &SecretServiceKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
+        Command::PrintAoeConfig => {
+            println!("{AOE_CONFIG_SNIPPET}");
+            Ok(())
         }
         Command::DebugParse {
             session,
@@ -76,6 +91,38 @@ pub fn execute(cli: Cli) -> Result<()> {
             print_json(&result)
         }
     }
+}
+
+const AOE_CONFIG_SNIPPET: &str = r#"# Merge into the global or profile AoE config.
+# The handler reads only AOE_SESSION_ID, AOE_PROFILE, and AOE_TOOL.
+[status_hooks]
+enabled = true
+on_idle = "praxis aoe-hook"
+on_error = "praxis aoe-hook""#;
+
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum AoeHookReport {
+    Ingested {
+        #[serde(flatten)]
+        report: IngestionReport,
+    },
+    IgnoredUnsupportedAgent,
+}
+
+fn ingest_aoe_hook(
+    context: aoe_hook::AoeHookContext,
+    aoe_config_dir: Option<PathBuf>,
+    codex_home: Option<PathBuf>,
+    data_home: PathBuf,
+    key_provider: &impl MasterKeyProvider,
+) -> Result<AoeHookReport> {
+    if context.agent != AgentKind::Codex {
+        return Ok(AoeHookReport::IgnoredUnsupportedAgent);
+    }
+    let source = managed_codex_source(context.profile, aoe_config_dir, codex_home)?;
+    let report = ingest_session(source, &context.session_id, data_home, key_provider)?;
+    Ok(AoeHookReport::Ingested { report })
 }
 
 fn managed_codex_source(
@@ -214,6 +261,24 @@ mod tests {
         assert_eq!(second.observed, 0);
         assert_eq!(second.inserted, 0);
 
+        let hook_report = ingest_aoe_hook(
+            aoe_hook::AoeHookContext {
+                session_id: "aoe-1".to_owned(),
+                profile: "default".to_owned(),
+                agent: AgentKind::Codex,
+            },
+            Some(config_dir.clone()),
+            Some(codex_home.clone()),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let AoeHookReport::Ingested { report } = hook_report else {
+            panic!("Codex hook was unexpectedly ignored");
+        };
+        assert_eq!(report.observed, 0);
+        assert_eq!(report.inserted, 0);
+
         let mut transcript = OpenOptions::new()
             .append(true)
             .open(&transcript_path)
@@ -273,5 +338,19 @@ mod tests {
         prepare_private_directory(&praxis_dir).unwrap();
         let mode = fs::metadata(praxis_dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[test]
+    fn generated_aoe_config_uses_the_identifier_only_handler() {
+        assert!(AOE_CONFIG_SNIPPET.contains("on_idle = \"praxis aoe-hook\""));
+        assert!(AOE_CONFIG_SNIPPET.contains("on_error = \"praxis aoe-hook\""));
+        for forbidden in [
+            "AOE_PROJECT_PATH",
+            "AOE_SESSION_TITLE",
+            "AOE_GROUP_PATH",
+            "AOE_NEW_STATUS",
+        ] {
+            assert!(!AOE_CONFIG_SNIPPET.contains(forbidden));
+        }
     }
 }

@@ -27,6 +27,14 @@ The plugin system is useful for installation, commands, settings, and UI, but
 the documented worker contract is not itself a complete tool-event feed.
 Status/lifecycle hooks remain useful for automatic session-boundary ingestion.
 
+The implemented host integration uses global/profile `[status_hooks]` entries
+for `on_idle` and `on_error`. AoE documents these hooks as best-effort,
+non-blocking commands and supplies `AOE_SESSION_ID`, `AOE_PROFILE`, `AOE_TOOL`,
+project/status context, and other metadata. Praxis reads only the first three.
+The generated snippet is intended for manual merge because status hooks are
+personal global/profile configuration and an existing hook must not be
+silently overwritten.
+
 ## Codex
 
 Current Codex JSONL records are stored below `CODEX_HOME/sessions` and use

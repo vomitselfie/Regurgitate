@@ -44,6 +44,20 @@ operation. A changed or truncated committed prefix causes a safe reset and
 reparse. If event persistence fails, the cursor does not advance; retrying is
 safe because already committed event UUIDs are ignored.
 
+## AoE host integration
+
+AoE status hooks are the first automatic recording surface. The `aoe-hook`
+command reads only the session ID, resolved profile, and agent type from its
+environment. It deliberately ignores the hook's project path, session title,
+group, old/new status, and transition timestamp; normal AoE session discovery
+remains the single source of project and transcript association.
+
+`print-aoe-config` emits a non-mutating snippet for `on_idle` and `on_error`.
+The user must merge it into a global or profile config, preserving existing
+personal hooks. Repeated or overlapping delivery reuses the normal cursor and
+stable-event idempotency path. SQLite waits briefly for a concurrent local
+writer rather than immediately failing with a busy error.
+
 ## Privacy boundary
 
 Raw records are short-lived adapter inputs. Prompts, responses, reasoning,
@@ -100,6 +114,7 @@ Implemented:
   replacement handling;
 - Linux Secret Service key retrieval/creation;
 - manual session ingestion;
+- identifier-only AoE status-hook ingestion and non-mutating config generation;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
@@ -108,5 +123,5 @@ Implemented:
 
 Not yet implemented:
 
-- automatic AoE lifecycle integration; and
+- packaging and installation automation;
 - retention, inspection, and forgetting commands.

@@ -37,6 +37,7 @@ cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
+cargo run -- print-aoe-config
 ```
 
 Both debug commands print only the sanitized event projection. They never print
@@ -52,6 +53,13 @@ an approximate 600-token serialized-output budget. It supports a controlled
 returns event, session, or project identifiers, timestamps, paths, query text,
 or historical content. Query text is not persisted by Praxis, though text
 provided on a command line may still be retained by the user's shell history.
+
+For automatic recording, install the release binary somewhere available in the
+AoE host process's `PATH`, run `praxis print-aoe-config`, and manually merge the
+snippet into the desired global or profile AoE config. It invokes
+`praxis aoe-hook` on stable idle/error transitions. The handler reads only
+`AOE_SESSION_ID`, `AOE_PROFILE`, and `AOE_TOOL`; duplicate deliveries are safe.
+Unsupported agent types are ignored successfully.
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
 the current implementation limits, and [Roadmap](docs/roadmap.md) for the next

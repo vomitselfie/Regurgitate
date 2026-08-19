@@ -128,7 +128,7 @@ pub fn find_codex_transcript(codex_home: &Path, agent_session_id: &str) -> Resul
     bail!("no Codex transcript is linked to the selected AoE session")
 }
 
-fn validate_identifier(value: &str, label: &str) -> Result<()> {
+pub(super) fn validate_identifier(value: &str, label: &str) -> Result<()> {
     let valid = !value.is_empty()
         && value.len() <= 128
         && value

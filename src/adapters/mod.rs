@@ -1,4 +1,5 @@
 pub mod aoe;
+pub mod aoe_hook;
 pub mod codex;
 mod codex_incremental;
 mod managed_codex;
