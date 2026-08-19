@@ -7,7 +7,7 @@ commands, source content, tool arguments, or tool output.
 
 The core storage, query, and application boundaries are agent-agnostic. Native
 hook adapters currently cover Codex and Claude Code, while transcript ingestion
-targets Agent of Empires-managed Codex sessions on Linux. The current
+targets Agent of Empires-managed Codex sessions on Linux and macOS. The current
 implementation provides:
 
 - a strict, controlled normalized event model;
@@ -17,7 +17,7 @@ implementation provides:
 - AoE session discovery without embedding AoE concerns in the core model;
 - an installable AoE API-v12 plugin with aggregate health UI and commands;
 - per-record CBOR + XChaCha20-Poly1305 encrypted SQLite storage;
-- HKDF-separated event keys and a Linux Secret Service master-key provider;
+- HKDF-separated event keys backed by Linux Secret Service or macOS Keychain;
 - encrypted project identity mappings and incremental ingestion cursors;
 - separate modular services for cursor-based transcript ingestion and
   cursor-free native hook recording;
@@ -53,7 +53,8 @@ The API-v12 plugin downloads the static release binary, contributes `status`
 and `refresh` commands, and publishes aggregate readiness to AoE's status bar
 and plugin settings page. Its supervised worker runs with `aoe serve`; a
 TUI-only AoE process can manage the installation but does not run plugin
-workers. The current release asset supports Linux x86-64.
+workers. The release provides Linux x86-64 plus native Apple Silicon and Intel
+macOS workers. Windows is not supported and no Windows asset is published.
 GitHub discovery additionally requires the repository's `aoe-plugin` topic;
 direct `gh:` installation does not.
 
@@ -64,20 +65,32 @@ transcript fallback. The plugin and hooks reuse the same encrypted history.
 
 ### Standalone CLI
 
-Praxis currently publishes a static Linux x86-64 musl binary because Linux
-Secret Service is a runtime requirement. Download and verify the latest release
-with the GitHub CLI, then install it somewhere on `PATH`:
+Praxis publishes a static Linux x86-64 binary and native macOS binaries for
+Apple Silicon and Intel. It stores the master key in Linux Secret Service or
+macOS Keychain. Download the archive for the current machine, verify it, and
+install it somewhere on `PATH`:
 
 ```bash
 release="$(gh release view --repo vomitselfie/aoe-praxis --json tagName --jq .tagName)"
-version="${release#v}"
-archive="praxis-${release}-x86_64-unknown-linux-musl.tar.gz"
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) platform="linux-x86_64" ;;
+  Darwin-arm64) platform="macos-aarch64" ;;
+  Darwin-x86_64) platform="macos-x86_64" ;;
+  *) echo "Praxis has no release for this platform." >&2; return 1 ;;
+esac
+archive="praxis-${release}-${platform}.tar.gz"
 gh release download "$release" --repo vomitselfie/aoe-praxis \
   --pattern "$archive" --pattern SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf "$archive"
-install -Dm755 "praxis-${release}-x86_64-unknown-linux-musl/praxis" \
-  "$HOME/.local/bin/praxis"
+checksum="$(grep -F "  $archive" SHA256SUMS)"
+if command -v sha256sum >/dev/null 2>&1; then
+  printf '%s\n' "$checksum" | sha256sum --check
+else
+  printf '%s\n' "$checksum" | shasum -a 256 --check
+fi
+unpack_dir="$(mktemp -d)"
+tar -xzf "$archive" -C "$unpack_dir"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$unpack_dir/praxis" "$HOME/.local/bin/praxis"
 praxis --version
 ```
 
@@ -87,11 +100,12 @@ the separate source tree is not required at runtime.
 
 ## CLI usage
 
-Praxis currently requires Linux Secret Service to be available and unlocked.
-It never falls back to a plaintext key or plaintext history database.
+Praxis requires Linux Secret Service or macOS Keychain to be available and
+unlocked. It never falls back to a plaintext key or plaintext history database.
 Sandboxed agent hosts may require explicit approval for the Praxis process to
-reach Secret Service and the encrypted data directory. If access is denied,
-recall fails closed; do not weaken sandbox or key-storage policy automatically.
+reach the operating system credential store and encrypted data directory. If
+access is denied, recall fails closed; do not weaken sandbox or key-storage
+policy automatically.
 
 ```bash
 cargo test
@@ -130,7 +144,9 @@ the hook payload, transcript payload, command arguments, or tool results.
 `record-hook` intentionally writes nothing to stdout on success so provider
 hook protocols cannot interpret a report as control output. `ingest` prints
 only aggregate counts. Both recording paths store encrypted events under
-`$XDG_DATA_HOME/praxis/history.db` (or `~/.local/share/praxis/history.db`).
+`$XDG_DATA_HOME/praxis/history.db`; without that override the default is
+`~/.local/share/praxis/history.db` on Linux and
+`~/Library/Application Support/praxis/history.db` on macOS.
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
 
@@ -297,8 +313,8 @@ non-serializable `ProjectLocator` whose only consumer is the encrypted identity
 resolver; the path never enters an event, report, or plaintext database column.
 Events and private metadata are serialized to CBOR and encrypted in memory
 before SQLite receives any payload bytes. The master key is stored separately
-through Linux Secret Service; the implementation has no automatic
-plaintext-key or plaintext-event fallback.
+through Linux Secret Service or macOS Keychain; the implementation has no
+automatic plaintext-key or plaintext-event fallback.
 
 ## Verification
 
@@ -311,9 +327,10 @@ cargo clippy --all-targets -- -D warnings
 The same checks run in GitHub Actions for pull requests and pushes to `master`.
 A passing push to `master` publishes the version declared in `Cargo.toml` when
 that version does not already have a GitHub release. The workflow builds with
-the declared minimum Rust version, creates a versioned binary archive and
-`SHA256SUMS`, tags the tested commit, and generates release notes. Existing
-release tags and assets are never replaced by a later commit.
+the declared minimum Rust version, creates Linux x86-64, Apple Silicon, and
+Intel macOS archives plus one combined `SHA256SUMS`, tags the tested commit, and
+generates release notes. Existing release tags and complete asset sets are
+never replaced by a later commit.
 
 The first such push publishes `v0.1.0`. For each later release, update the
 package version in `Cargo.toml`, refresh `Cargo.lock`, run the verification

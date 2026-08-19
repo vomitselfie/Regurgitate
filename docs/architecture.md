@@ -9,7 +9,7 @@ CLI/runtime composition
     ├── Codex / Claude native-hook adapters
     ├── AoE JSON-RPC plugin worker + aggregate health view
     ├── cursor-based ingestion or cursor-free recording service
-    └── encrypted SQLite adapter + Secret Service key provider
+    └── encrypted SQLite adapter + operating-system key provider
 
 application service ── depends on ──> controlled HistoryEvent model
 adapters/storage ────── implement ───> narrow application ports
@@ -115,12 +115,15 @@ personal hooks. Repeated or overlapping delivery reuses the normal cursor and
 stable-event idempotency path. SQLite waits briefly for a concurrent local
 writer rather than immediately failing with a busy error.
 
-The repository root also carries an AoE API-v12 manifest. AoE installs the
-normal versioned Linux release archive and launches its `praxis` binary with no
-arguments plus the exact `AOE_PLUGIN_ID`. The binary enters worker mode only
-for that combination; every ordinary invocation continues through the CLI.
-The plugin protocol and UI projection live in their own `aoe_plugin` modules,
-separate from transcript discovery and the controlled event model.
+The repository root also carries an AoE API-v12 manifest. Its release-asset
+template selects Linux x86-64, Apple Silicon, or Intel macOS using AoE's host
+OS and architecture substitutions. Every archive exposes the same root
+`praxis` path, so packaging stays separate from worker dispatch. AoE launches
+that binary with no arguments plus the exact `AOE_PLUGIN_ID`; the binary enters
+worker mode only for that combination, while every ordinary invocation
+continues through the CLI. The plugin protocol and UI projection live in their
+own `aoe_plugin` modules, separate from transcript discovery and the controlled
+event model.
 
 The worker speaks newline-delimited JSON-RPC over stdio, keeps stdout exclusive
 to protocol messages, and exits when the host closes stdin. It uses the normal
@@ -181,8 +184,8 @@ operation, outcome, and other event fields are inside the encrypted payload.
 Project and cursor tables expose only
 HMAC-SHA-256 lookup tokens, version numbers, nonces, and ciphertext. Their
 paths, session IDs, cursor offsets, digests, and pending state are encrypted.
-The master key is held by Linux Secret Service and is never stored beside the
-database.
+The master key is held by Linux Secret Service or macOS Keychain and is never
+stored beside the database.
 
 Debug commands expose only `DebugEvent`, which omits identifiers and timestamps.
 The ingestion command exposes only aggregate counts; the native recording
@@ -231,12 +234,13 @@ scaffolding are outside this boundary.
 
 ## Health boundary
 
-The `status` command composes two narrow read-only probes. The Secret Service
-probe checks for an existing, correctly sized master key without entering the
-create path. The database probe checks only an existing regular file, opens it
-with SQLite read-only flags, runs a bounded integrity check, and returns an
-aggregate event count. It does not create directories, initialize tables,
-migrate schema, change permissions, decrypt event payloads, or repair damage.
+The `status` command composes two narrow read-only probes. The operating-system
+credential-store probe checks for an existing, correctly sized master key
+without entering the create path. The database probe checks only an existing
+regular file, opens it with SQLite read-only flags, runs a bounded integrity
+check, and returns an aggregate event count. It does not create directories,
+initialize tables, migrate schema, change permissions, decrypt event payloads,
+or repair damage.
 
 The application service reduces probe results to `ready`, `not_configured`, or
 `unavailable` component states and an overall status. Backend errors are not
@@ -307,7 +311,7 @@ Implemented:
 - encrypted path-to-project UUID mapping with keyed lookup tokens;
 - encrypted incremental cursors with append, incomplete-line, truncation, and
   replacement handling;
-- Linux Secret Service key retrieval/creation;
+- Linux Secret Service and macOS Keychain key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
 - an AoE API-v12 release-binary plugin with supervised JSON-RPC health UI;

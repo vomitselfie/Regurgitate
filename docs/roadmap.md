@@ -7,7 +7,8 @@ module boundaries.
 ## Working now
 
 - AoE-managed Codex session discovery and strict normalization;
-- encrypted per-event SQLite storage with a separate Secret Service master key;
+- encrypted per-event SQLite storage with a separate Secret Service or Keychain
+  master key;
 - encrypted project mappings and append-safe ingestion cursors;
 - manual, interruption-safe session ingestion;
 - project-scoped aggregate recall;
@@ -34,7 +35,8 @@ module boundaries.
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - locked, atomic installers for empty AoE idle/error slots and an additive
   Codex matcher group;
-- version-gated CI releases with a verified Linux binary archive and checksum;
+- version-gated CI releases with verified Linux x86-64, Apple Silicon, and
+  Intel macOS archives plus combined checksums;
   and
 - adversarial privacy, authentication, migration, project-isolation, and
   source-replacement tests.

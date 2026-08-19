@@ -31,7 +31,7 @@ pub(super) fn settings_page(report: &HealthReport) -> Value {
         ),
         OverallHealth::Degraded => (
             "Praxis needs attention",
-            "Linux Secret Service or the encrypted history database is unavailable.",
+            "The operating system credential store or encrypted history database is unavailable.",
             "warn",
         ),
     };

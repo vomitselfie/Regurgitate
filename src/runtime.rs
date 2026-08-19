@@ -26,7 +26,7 @@ use crate::{
     query::{RecallOptions, RecallResult, RecallService},
     storage::{
         EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
-        SecretServiceKeyProvider,
+        SystemKeyProvider,
     },
 };
 
@@ -39,7 +39,7 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::RecordHook { agent, data_home } => {
             let observation = normalize_hook(agent, io::stdin().lock())?;
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            record_hook(observation, data_home, &SecretServiceKeyProvider::default())?;
+            record_hook(observation, data_home, &SystemKeyProvider::default())?;
             Ok(())
         }
         Command::Learn {
@@ -54,7 +54,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 strategy.into(),
                 outcome.into(),
                 data_home,
-                &SecretServiceKeyProvider::default(),
+                &SystemKeyProvider::default(),
             )?;
             print_json(&report)
         }
@@ -65,7 +65,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 None,
                 None,
                 default_data_home()?,
-                &SecretServiceKeyProvider::default(),
+                &SystemKeyProvider::default(),
             )?;
             print_json(&report)
         }
@@ -98,7 +98,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             if let Some(config) = codex_config {
                 hooks.push((HookProvider::Codex, inspect_codex_hook(&config)));
             }
-            let report = health_status(data_home, SecretServiceKeyProvider::default(), hooks);
+            let report = health_status(data_home, SystemKeyProvider::default(), hooks);
             print_json(&report)
         }
         Command::Forget {
@@ -107,12 +107,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             data_home,
         } => {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let report = forget_project(
-                project,
-                apply,
-                data_home,
-                &SecretServiceKeyProvider::default(),
-            )?;
+            let report = forget_project(project, apply, data_home, &SystemKeyProvider::default())?;
             print_json(&report)
         }
         Command::Prune {
@@ -124,12 +119,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let policy =
                 retention_policy(older_than_days, keep_recent)?.validate(chrono::Utc::now())?;
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let report = prune_history(
-                policy,
-                apply,
-                data_home,
-                &SecretServiceKeyProvider::default(),
-            )?;
+            let report = prune_history(policy, apply, data_home, &SystemKeyProvider::default())?;
             print_json(&report)
         }
         Command::InstallAoeHook { config, apply } => {
@@ -168,12 +158,8 @@ pub fn execute(cli: Cli) -> Result<()> {
         } => {
             let source = managed_codex_source(profile, aoe_config_dir, codex_home)?;
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let report = ingest_session(
-                source,
-                &session,
-                data_home,
-                &SecretServiceKeyProvider::default(),
-            )?;
+            let report =
+                ingest_session(source, &session, data_home, &SystemKeyProvider::default())?;
             print_json(&report)
         }
         Command::Recall {
@@ -197,7 +183,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 },
                 query.as_ref().map(|value| value.as_str()),
                 data_home,
-                &SecretServiceKeyProvider::default(),
+                &SystemKeyProvider::default(),
             )?;
             print_json(&result)
         }

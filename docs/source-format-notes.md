@@ -16,6 +16,9 @@ under the XDG configuration directory. The fields needed by the adapter are:
 Other observed fields include titles, commands, timestamps, group paths, and UI
 state. Praxis does not deserialize them.
 
+Without an explicit `XDG_CONFIG_HOME`, Praxis follows AoE's platform defaults:
+`~/.config/agent-of-empires` on Linux and `~/.agent-of-empires` on macOS.
+
 AoE currently provides three useful integration surfaces:
 
 1. repo lifecycle hooks (`on_create`, `on_launch`, `on_destroy`);

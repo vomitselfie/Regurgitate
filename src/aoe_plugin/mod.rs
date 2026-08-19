@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::{
     application::{HealthReport, HealthService},
-    storage::{HistoryDatabaseProbe, SecretServiceKeyProvider},
+    storage::{HistoryDatabaseProbe, SystemKeyProvider},
 };
 
 pub const PLUGIN_ID: &str = "vomitselfie.praxis";
@@ -35,7 +35,7 @@ fn matches_worker_invocation(plugin_id: Option<&OsStr>, argument_count: usize) -
 
 fn inspect_health(data_home: &std::path::Path) -> HealthReport {
     let history = HistoryDatabaseProbe::new(data_home.join("praxis/history.db"));
-    HealthService::new(SecretServiceKeyProvider::default(), history).inspect()
+    HealthService::new(SystemKeyProvider::default(), history).inspect()
 }
 
 #[cfg(test)]
@@ -67,15 +67,8 @@ mod tests {
         assert_eq!(manifest["runtime"]["kind"].as_str(), Some("release-binary"));
         assert_eq!(
             manifest["runtime"]["asset"].as_str(),
-            Some("praxis-v${version}-x86_64-unknown-linux-musl.tar.gz")
+            Some("praxis-v${version}-${os}-${arch}.tar.gz")
         );
-        let expected_binary = format!(
-            "praxis-v{}-x86_64-unknown-linux-musl/praxis",
-            env!("CARGO_PKG_VERSION")
-        );
-        assert_eq!(
-            manifest["runtime"]["bin"].as_str(),
-            Some(expected_binary.as_str())
-        );
+        assert_eq!(manifest["runtime"]["bin"].as_str(), Some("praxis"));
     }
 }

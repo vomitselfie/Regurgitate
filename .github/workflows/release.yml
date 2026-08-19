@@ -14,7 +14,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.88.0
-  RELEASE_TARGET: x86_64-unknown-linux-musl
 
 jobs:
   verify:
@@ -51,20 +50,94 @@ jobs:
 
           package_dist="$RUNNER_TEMP/praxis-package"
           PRAXIS_DIST_DIR="$package_dist" \
-            scripts/package-release.sh ci-smoke target/debug/praxis
-          (cd "$package_dist" && sha256sum --check SHA256SUMS)
+            scripts/package-release.sh linux-x86_64 target/debug/praxis
+          PRAXIS_DIST_DIR="$package_dist" \
+            scripts/verify-release-package.sh linux-x86_64
 
-          package_id="$(cargo pkgid -p praxis)"
-          version="${package_id##*@}"
-          smoke_dir="$(mktemp -d)"
-          tar -xzf "$package_dist/praxis-v${version}-ci-smoke.tar.gz" -C "$smoke_dir"
-          actual="$($smoke_dir/praxis-v${version}-ci-smoke/praxis --version)"
-          test "$actual" = "praxis $version"
+  build-release:
+    name: Build ${{ matrix.platform }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+            binary_arch: x86_64
+          - runner: macos-15
+            rust_target: aarch64-apple-darwin
+            platform: macos-aarch64
+            binary_arch: arm64
+          - runner: macos-15
+            rust_target: x86_64-apple-darwin
+            platform: macos-x86_64
+            binary_arch: x86_64
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Install the release Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          rustup default "$RUST_VERSION"
+          rustup target add "${{ matrix.rust_target }}"
+
+      - name: Build release binary
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target "${{ matrix.rust_target }}"
+
+      - name: Verify static Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.rust_target }}/release/praxis"
+          if readelf -l "$binary" | grep -Fq INTERP; then
+            echo "release binary is dynamically linked" >&2
+            exit 1
+          fi
+
+      - name: Verify macOS binary architecture
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.rust_target }}/release/praxis"
+          actual="$(lipo -archs "$binary")"
+          test "$actual" = "${{ matrix.binary_arch }}"
+
+      - name: Package and smoke-test release
+        run: |
+          set -euo pipefail
+          scripts/package-release.sh \
+            "${{ matrix.platform }}" \
+            "target/${{ matrix.rust_target }}/release/praxis"
+          scripts/verify-release-package.sh "${{ matrix.platform }}"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: praxis-${{ matrix.platform }}
+          path: dist/praxis-v*-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
 
   release:
     name: Release
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    needs: verify
+    needs: build-release
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -75,14 +148,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install the release Rust toolchain
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
-          rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
-          rustup default "$RUST_VERSION"
-          rustup target add "$RELEASE_TARGET"
+      - name: Download release archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Determine release state
         id: release
@@ -97,7 +167,12 @@ jobs:
             exit 1
           fi
           tag="v${version}"
-          archive="praxis-${tag}-${RELEASE_TARGET}.tar.gz"
+          required_assets=(
+            "praxis-${tag}-linux-x86_64.tar.gz"
+            "praxis-${tag}-macos-aarch64.tar.gz"
+            "praxis-${tag}-macos-x86_64.tar.gz"
+            "SHA256SUMS"
+          )
           tag_commit="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)"
 
           mode=create
@@ -108,10 +183,12 @@ jobs:
             fi
 
             assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-            complete=false
-            if grep -Fxq "$archive" <<<"$assets" && grep -Fxq SHA256SUMS <<<"$assets"; then
-              complete=true
-            fi
+            complete=true
+            for required in "${required_assets[@]}"; do
+              if ! grep -Fxq "$required" <<<"$assets"; then
+                complete=false
+              fi
+            done
 
             if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
               if [[ "$complete" == false ]]; then
@@ -131,33 +208,30 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
 
-      - name: Build release binary
+      - name: Verify release set and generate checksums
         if: steps.release.outputs.mode != 'skip'
         run: |
           set -euo pipefail
-          binary="target/$RELEASE_TARGET/release/praxis"
-          cargo build --locked --release --target "$RELEASE_TARGET"
-          if readelf -l "$binary" | grep -Fq INTERP; then
-            echo "release binary is dynamically linked" >&2
-            exit 1
-          fi
-
-      - name: Package release
-        if: steps.release.outputs.mode != 'skip'
-        run: |
-          set -euo pipefail
-          scripts/package-release.sh \
-            "$RELEASE_TARGET" \
-            "target/$RELEASE_TARGET/release/praxis"
-          (cd dist && sha256sum --check SHA256SUMS)
-
-          smoke_dir="$(mktemp -d)"
-          tar -xzf "dist/${{ steps.release.outputs.archive }}" -C "$smoke_dir"
-          actual="$($smoke_dir/praxis-${{ steps.release.outputs.tag }}-$RELEASE_TARGET/praxis --version)"
-          test "$actual" = "praxis ${{ steps.release.outputs.version }}"
+          tag="${{ steps.release.outputs.tag }}"
+          archives=(
+            "dist/praxis-${tag}-linux-x86_64.tar.gz"
+            "dist/praxis-${tag}-macos-aarch64.tar.gz"
+            "dist/praxis-${tag}-macos-x86_64.tar.gz"
+          )
+          for archive in "${archives[@]}"; do
+            test -f "$archive"
+          done
+          (
+            cd dist
+            sha256sum \
+              "praxis-${tag}-linux-x86_64.tar.gz" \
+              "praxis-${tag}-macos-aarch64.tar.gz" \
+              "praxis-${tag}-macos-x86_64.tar.gz" \
+              > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
 
       - name: Publish GitHub release
         if: steps.release.outputs.mode != 'skip'
@@ -166,10 +240,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
-          archive="dist/${{ steps.release.outputs.archive }}"
+          archives=(
+            "dist/praxis-${tag}-linux-x86_64.tar.gz"
+            "dist/praxis-${tag}-macos-aarch64.tar.gz"
+            "dist/praxis-${tag}-macos-x86_64.tar.gz"
+          )
 
           if [[ "${{ steps.release.outputs.mode }}" == repair ]]; then
-            gh release upload "$tag" "$archive" dist/SHA256SUMS \
+            gh release upload "$tag" "${archives[@]}" dist/SHA256SUMS \
               --clobber \
               --repo "$GITHUB_REPOSITORY"
             exit 0
@@ -179,7 +257,7 @@ jobs:
           if [[ "${{ steps.release.outputs.version }}" == *-* ]]; then
             release_flags+=(--prerelease)
           fi
-          gh release create "$tag" "$archive" dist/SHA256SUMS \
+          gh release create "$tag" "${archives[@]}" dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Praxis $tag" \

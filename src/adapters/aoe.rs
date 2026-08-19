@@ -30,7 +30,12 @@ pub fn default_config_dir() -> Result<PathBuf> {
         return Ok(PathBuf::from(path).join("agent-of-empires"));
     }
     let home = env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".config/agent-of-empires"))
+    let home = PathBuf::from(home);
+    #[cfg(target_os = "macos")]
+    let config_home = home.join(".agent-of-empires");
+    #[cfg(not(target_os = "macos"))]
+    let config_home = home.join(".config/agent-of-empires");
+    Ok(config_home)
 }
 
 pub fn default_codex_home() -> Result<PathBuf> {

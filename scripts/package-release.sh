@@ -3,17 +3,17 @@
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
-    echo "usage: $0 <target-triple> <release-binary>" >&2
+    echo "usage: $0 <platform-id> <release-binary>" >&2
     exit 2
 fi
 
-target="$1"
+platform="$1"
 binary="$2"
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_dir="${PRAXIS_DIST_DIR:-$repo_root/dist}"
 
-if [[ ! "$target" =~ ^[A-Za-z0-9_.-]+$ ]]; then
-    echo "invalid target triple: $target" >&2
+if [[ ! "$platform" =~ ^(linux|macos)-(x86_64|aarch64)$ ]]; then
+    echo "invalid release platform: $platform" >&2
     exit 2
 fi
 
@@ -33,8 +33,7 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+[-+0-9A-Za-z.]*$ ]]; then
     exit 1
 fi
 
-package_name="praxis-v${version}-${target}"
-archive_name="${package_name}.tar.gz"
+archive_name="praxis-v${version}-${platform}.tar.gz"
 staging_root="$(mktemp -d)"
 
 cleanup() {
@@ -42,26 +41,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
-package_dir="$staging_root/$package_name"
-mkdir -p -- "$package_dir" "$dist_dir"
-install -m 0755 -- "$binary" "$package_dir/praxis"
-install -m 0644 -- "$repo_root/README.md" "$repo_root/LICENSE" "$package_dir/"
+mkdir -p -- "$dist_dir"
+install -m 0755 -- "$binary" "$staging_root/praxis"
+install -m 0644 -- "$repo_root/README.md" "$repo_root/LICENSE" "$staging_root/"
 
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" show -s --format=%ct HEAD)}"
-tar \
-    --sort=name \
-    --mtime="@$source_date_epoch" \
-    --owner=0 \
-    --group=0 \
-    --numeric-owner \
-    -C "$staging_root" \
-    -cf - \
-    "$package_name" \
-    | gzip -n > "$dist_dir/$archive_name"
+write_archive() {
+    if tar --version 2>/dev/null | grep -Fq "GNU tar"; then
+        tar \
+            --sort=name \
+            --mtime="@$source_date_epoch" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -C "$staging_root" \
+            -cf - \
+            LICENSE README.md praxis
+    else
+        COPYFILE_DISABLE=1 tar \
+            -C "$staging_root" \
+            -cf - \
+            LICENSE README.md praxis
+    fi
+}
+
+write_archive | gzip -n > "$dist_dir/$archive_name"
 
 (
     cd -- "$dist_dir"
-    sha256sum "$archive_name" > SHA256SUMS
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$archive_name" > SHA256SUMS
+    else
+        shasum -a 256 "$archive_name" > SHA256SUMS
+    fi
 )
 
 printf '%s\n' "$dist_dir/$archive_name"

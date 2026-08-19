@@ -7,5 +7,10 @@ pub(crate) fn default_data_home() -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     let home = env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local/share"))
+    let home = PathBuf::from(home);
+    #[cfg(target_os = "macos")]
+    let data_home = home.join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let data_home = home.join(".local/share");
+    Ok(data_home)
 }
