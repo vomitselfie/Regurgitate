@@ -327,7 +327,7 @@ fn open_existing_history(
     writable: bool,
     key_provider: &impl ExistingMasterKeyProvider,
 ) -> Result<Option<EncryptedStore>> {
-    let Some(database) = existing_history_database(data_home, writable)? else {
+    let Some(database) = existing_history_database(data_home)? else {
         return Ok(None);
     };
     let key = key_provider
@@ -707,72 +707,6 @@ mod tests {
 
         assert!(result.observations.is_empty());
         assert!(!data_home.exists());
-    }
-
-    #[test]
-    fn legacy_history_is_read_in_place_then_migrated_on_recording() {
-        let temp = tempdir().unwrap();
-        let project = temp.path().join("LEGACY_PROJECT");
-        fs::create_dir(&project).unwrap();
-        let data_home = temp.path().join("data");
-        let legacy_database = data_home.join("praxis/history.db");
-        fs::create_dir_all(legacy_database.parent().unwrap()).unwrap();
-        let store =
-            EncryptedStore::open(&legacy_database, &MasterKey::from_bytes([23; 32])).unwrap();
-        let first = serde_json::to_vec(&serde_json::json!({
-            "session_id": "legacy-session",
-            "cwd": &project,
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Write",
-            "tool_use_id": "legacy-tool",
-            "tool_input": {},
-            "tool_response": {}
-        }))
-        .unwrap();
-        RecordingService::new(store)
-            .record(claude::normalize_tool_hook(first.as_slice()).unwrap())
-            .unwrap();
-
-        let recalled = recall_project(
-            project.clone(),
-            RecallOptions::default(),
-            None,
-            data_home.clone(),
-            &FixedKeyProvider,
-        )
-        .unwrap();
-        assert_eq!(recalled.observations.len(), 1);
-        assert!(legacy_database.is_file());
-        assert!(!data_home.join("regurgitate").exists());
-
-        let second = serde_json::to_vec(&serde_json::json!({
-            "session_id": "legacy-session",
-            "cwd": &project,
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_use_id": "new-tool",
-            "tool_input": {},
-            "tool_response": {}
-        }))
-        .unwrap();
-        record_hook(
-            claude::normalize_tool_hook(second.as_slice()).unwrap(),
-            data_home.clone(),
-            &FixedKeyProvider,
-        )
-        .unwrap();
-
-        assert!(!legacy_database.exists());
-        assert!(data_home.join("regurgitate/history.db").is_file());
-        let recalled = recall_project(
-            project,
-            RecallOptions::default(),
-            None,
-            data_home,
-            &FixedKeyProvider,
-        )
-        .unwrap();
-        assert_eq!(recalled.observations.len(), 2);
     }
 
     #[test]

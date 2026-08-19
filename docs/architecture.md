@@ -209,14 +209,6 @@ paths, session IDs, cursor offsets, digests, and pending state are encrypted.
 The master key is held by Linux Secret Service or macOS Keychain and is never
 stored beside the database.
 
-The v0.6 rename migrates local state without rewriting encrypted records.
-Read-only commands fall back to the legacy data directory and credential-store
-service without mutating either. The next recording operation atomically
-renames the complete legacy data directory and copies the existing master key
-to Regurgitate's credential-store service. Version-one encryption and lookup
-domain separators remain byte-for-byte stable format identifiers, so all
-existing authenticated envelopes and project tokens remain valid.
-
 Debug commands expose only `DebugEvent`, which omits identifiers and timestamps.
 The ingestion command exposes only aggregate counts; the native recording
 command emits no success output.

@@ -97,26 +97,6 @@ without the AoE page being open. Future Regurgitate releases update with:
 aoe plugin update vomitselfie.regurgitate
 ```
 
-#### Moving from Praxis
-
-The new plugin ID means AoE treats Regurgitate as a new plugin rather than an
-update to Praxis. Install Regurgitate, use its settings page to set up each
-agent you previously connected, then remove the old plugin:
-
-```bash
-aoe plugin install gh:vomitselfie/Regurgitate
-aoe serve
-# After completing agent setup in AoE and closing it:
-aoe plugin uninstall vomitselfie.praxis
-```
-
-Setup replaces old Praxis hook commands instead of adding duplicates. It moves
-an existing `praxis-recall` skill into a hidden `.regurgitate-retired`
-directory before installing `regurgitate-recall`, preserving any personal
-changes for review. Existing encrypted history remains readable immediately;
-the data directory and credential-store key migrate on the next recorded
-event. The encryption format retains compatibility with all existing events.
-
 Do not also enable the AoE transcript fallback for Codex after connecting the
 native Codex hook; the two sources can observe the same session.
 

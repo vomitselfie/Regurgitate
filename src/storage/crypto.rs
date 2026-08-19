@@ -13,10 +13,8 @@ use crate::core::HistoryEvent;
 use super::MasterKey;
 
 pub const ENVELOPE_VERSION: u32 = 1;
-// Version-one domain separators are immutable format identifiers. Keeping
-// their original bytes allows Regurgitate to authenticate existing history.
-const V1_EVENT_KEY_INFO: &[u8] = b"praxis:event-encryption:v1";
-const V1_AAD_DOMAIN: &[u8] = b"praxis:event-envelope";
+const EVENT_KEY_INFO: &[u8] = b"regurgitate:event-encryption:v1";
+const AAD_DOMAIN: &[u8] = b"regurgitate:event-envelope";
 const NONCE_BYTES: usize = 24;
 
 pub struct EventCipher {
@@ -46,8 +44,8 @@ impl EnvelopeMetadata {
     }
 
     fn associated_data(&self) -> Vec<u8> {
-        let mut aad = Vec::with_capacity(V1_AAD_DOMAIN.len() + 4 + 16 + 8 + 4);
-        aad.extend_from_slice(V1_AAD_DOMAIN);
+        let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 4 + 16 + 8 + 4);
+        aad.extend_from_slice(AAD_DOMAIN);
         aad.extend_from_slice(&self.envelope_version.to_be_bytes());
         aad.extend_from_slice(self.event_id.as_bytes());
         aad.extend_from_slice(&self.created_at_ms.to_be_bytes());
@@ -60,7 +58,7 @@ impl EventCipher {
     pub fn new(master_key: &MasterKey) -> Result<Self> {
         let hkdf = Hkdf::<Sha256>::new(None, master_key.as_bytes());
         let mut event_key = Zeroizing::new([0_u8; 32]);
-        hkdf.expand(V1_EVENT_KEY_INFO, event_key.as_mut())
+        hkdf.expand(EVENT_KEY_INFO, event_key.as_mut())
             .map_err(|_| anyhow!("could not derive the Regurgitate event encryption key"))?;
         let cipher = XChaCha20Poly1305::new_from_slice(event_key.as_ref())
             .map_err(|_| anyhow!("derived Regurgitate event key has an invalid length"))?;

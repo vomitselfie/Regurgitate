@@ -5,7 +5,6 @@ use crate::application::KeyReadinessProbe;
 
 const MASTER_KEY_BYTES: usize = 32;
 const DEFAULT_SERVICE: &str = "dev.regurgitate.history";
-const LEGACY_SERVICE: &str = "dev.praxis.history";
 const DEFAULT_USERNAME: &str = "master-key-v1";
 
 /// A master key held in zeroizing memory. Debug and clone are intentionally not
@@ -53,7 +52,6 @@ pub trait ExistingMasterKeyProvider {
 /// macOS.
 pub struct SystemKeyProvider {
     service: String,
-    legacy_service: Option<String>,
     username: String,
 }
 
@@ -61,7 +59,6 @@ impl Default for SystemKeyProvider {
     fn default() -> Self {
         Self {
             service: DEFAULT_SERVICE.to_owned(),
-            legacy_service: Some(LEGACY_SERVICE.to_owned()),
             username: DEFAULT_USERNAME.to_owned(),
         }
     }
@@ -74,23 +71,19 @@ impl SystemKeyProvider {
         if service.is_empty() || username.is_empty() {
             bail!("credential store service and username must not be empty");
         }
-        Ok(Self {
-            service,
-            legacy_service: None,
-            username,
-        })
+        Ok(Self { service, username })
     }
 
-    fn entry(&self, service: &str) -> Result<keyring::Entry> {
+    fn entry(&self) -> Result<keyring::Entry> {
         if let Err(error) = keyring::Entry::store_status() {
             bail!("operating system credential store could not initialize: {error}");
         }
-        keyring::Entry::new(service, &self.username)
+        keyring::Entry::new(&self.service, &self.username)
             .context("operating system credential store is unavailable or locked")
     }
 
-    fn read_service(&self, service: &str) -> Result<Option<MasterKey>> {
-        match self.entry(service)?.get_secret() {
+    fn read_key(&self) -> Result<Option<MasterKey>> {
+        match self.entry()?.get_secret() {
             Ok(secret) => {
                 let secret = Zeroizing::new(secret);
                 MasterKey::from_secret(&secret).map(Some)
@@ -101,27 +94,16 @@ impl SystemKeyProvider {
             }
         }
     }
-
-    fn read_legacy(&self) -> Result<Option<MasterKey>> {
-        self.legacy_service
-            .as_deref()
-            .map(|service| self.read_service(service))
-            .transpose()
-            .map(Option::flatten)
-    }
 }
 
 impl MasterKeyProvider for SystemKeyProvider {
     fn get_or_create(&self) -> Result<MasterKey> {
-        if let Some(existing) = self.read_service(&self.service)? {
+        if let Some(existing) = self.read_key()? {
             return Ok(existing);
         }
 
-        let entry = self.entry(&self.service)?;
-        let key = match self.read_legacy()? {
-            Some(legacy) => legacy,
-            None => MasterKey::generate()?,
-        };
+        let entry = self.entry()?;
+        let key = MasterKey::generate()?;
         entry.set_secret(key.as_bytes()).context(
             "could not create the Regurgitate key in the operating system credential store",
         )?;
@@ -139,10 +121,7 @@ impl MasterKeyProvider for SystemKeyProvider {
 
 impl ExistingMasterKeyProvider for SystemKeyProvider {
     fn get_existing(&self) -> Result<Option<MasterKey>> {
-        if let Some(existing) = self.read_service(&self.service)? {
-            return Ok(Some(existing));
-        }
-        self.read_legacy()
+        self.read_key()
     }
 }
 

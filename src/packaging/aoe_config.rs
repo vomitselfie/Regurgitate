@@ -15,7 +15,6 @@ use super::{
 };
 
 const AOE_HOOK_COMMAND: &str = "regurgitate aoe-hook";
-const LEGACY_AOE_HOOK_COMMAND: &str = "praxis aoe-hook";
 const CONFIG_LOCK_FILENAME: &str = ".config.lock";
 const OTHER_STATUS_HOOKS: [&str; 4] = ["on_starting", "on_running", "on_waiting", "on_change"];
 
@@ -156,7 +155,6 @@ fn hook_needs_install(status_hooks: &Table, key: &str) -> Result<bool> {
     };
     match item.as_str() {
         Some(AOE_HOOK_COMMAND) => Ok(false),
-        Some(LEGACY_AOE_HOOK_COMMAND) => Ok(true),
         Some(_) => bail!("AoE {key} is already configured; refusing to replace it"),
         None => bail!("AoE {key} must be a string; refusing to replace it"),
     }
@@ -285,24 +283,6 @@ mod tests {
 
         assert_eq!(repeated.status, InstallStatus::AlreadyCurrent);
         assert!(repeated.changes.is_empty());
-    }
-
-    #[test]
-    fn legacy_hooks_are_replaced_instead_of_rejected() {
-        let temp = tempdir().unwrap();
-        let config = temp.path().join("config.toml");
-        fs::write(
-            &config,
-            "[status_hooks]\nenabled = true\non_idle = \"praxis aoe-hook\"\non_error = \"praxis aoe-hook\"\n",
-        )
-        .unwrap();
-
-        install_aoe_hook(&config, true).unwrap();
-
-        let written = fs::read_to_string(config).unwrap();
-        assert!(written.contains("on_idle = \"regurgitate aoe-hook\""));
-        assert!(written.contains("on_error = \"regurgitate aoe-hook\""));
-        assert!(!written.contains(LEGACY_AOE_HOOK_COMMAND));
     }
 
     #[cfg(unix)]

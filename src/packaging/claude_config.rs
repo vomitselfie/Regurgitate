@@ -15,7 +15,6 @@ use super::{
 };
 
 const CLAUDE_HOOK_COMMAND: &str = "regurgitate record-hook --agent claude";
-const LEGACY_CLAUDE_HOOK_COMMAND: &str = "praxis record-hook --agent claude";
 const CONFIG_LOCK_FILENAME: &str = "settings.json.lock";
 const HOOK_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
 
@@ -131,14 +130,8 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .with_context(|| format!("Claude hooks.{event} must be an array"))?;
-        let migrated = migrate_legacy_hooks(groups, hook_command)?;
         match regurgitate_hook_coverage(groups, hook_command)? {
-            RegurgitateHookCoverage::AllTools => {
-                if migrated {
-                    changes.push(event);
-                }
-                continue;
-            }
+            RegurgitateHookCoverage::AllTools => continue,
             RegurgitateHookCoverage::Restricted => {
                 bail!("Regurgitate Claude {event} hook is already restricted by a matcher")
             }
@@ -156,57 +149,6 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let mut content = serde_json::to_string_pretty(&document)?;
     content.push('\n');
     Ok(PreparedConfig { content, changes })
-}
-
-fn migrate_legacy_hooks(groups: &mut [Value], hook_command: &str) -> Result<bool> {
-    let mut migrated = false;
-    for group in groups {
-        let group = group
-            .as_object_mut()
-            .context("Claude hook groups must be JSON objects")?;
-        let restricted = match group.get("matcher") {
-            None => false,
-            Some(Value::String(matcher)) => !matcher.is_empty() && matcher != "*",
-            Some(_) => bail!("Claude hook matcher must be a string"),
-        };
-        let Some(handlers) = group.get_mut("hooks") else {
-            continue;
-        };
-        let handlers = handlers
-            .as_array_mut()
-            .context("Claude hook group handlers must be an array")?;
-        for handler in handlers {
-            let handler = handler
-                .as_object_mut()
-                .context("Claude hook handlers must be JSON objects")?;
-            if handler.get("type").and_then(Value::as_str) != Some("command") {
-                continue;
-            }
-            let Some(command) = handler.get("command").and_then(Value::as_str) else {
-                continue;
-            };
-            if !is_legacy_hook_command(command) {
-                continue;
-            }
-            if restricted {
-                bail!("legacy Regurgitate Claude hook is restricted by a matcher");
-            }
-            handler.insert("command".to_owned(), Value::String(hook_command.to_owned()));
-            migrated = true;
-        }
-    }
-    Ok(migrated)
-}
-
-fn is_legacy_hook_command(command: &str) -> bool {
-    if command == LEGACY_CLAUDE_HOOK_COMMAND {
-        return true;
-    }
-    command
-        .strip_suffix(" record-hook --agent claude")
-        .is_some_and(|executable| {
-            executable.ends_with("/praxis") || executable.ends_with("/praxis'")
-        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,25 +345,6 @@ mod tests {
             HookReadiness::Installed
         );
         assert!(fs::read_to_string(config).unwrap().contains(command));
-    }
-
-    #[test]
-    fn legacy_hooks_are_replaced_instead_of_duplicated() {
-        let temp = tempdir().unwrap();
-        let config = temp.path().join("settings.json");
-        fs::write(
-            &config,
-            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"praxis record-hook --agent claude"}]}],"PostToolUseFailure":[{"hooks":[{"type":"command","command":"praxis record-hook --agent claude"}]}]}}"#,
-        )
-        .unwrap();
-
-        let preview = install_claude_hook(&config, false).unwrap();
-        assert_eq!(preview.status, InstallStatus::Planned);
-        install_claude_hook(&config, true).unwrap();
-
-        let written = fs::read_to_string(config).unwrap();
-        assert_eq!(written.matches(CLAUDE_HOOK_COMMAND).count(), 2);
-        assert!(!written.contains(LEGACY_CLAUDE_HOOK_COMMAND));
     }
 
     #[cfg(unix)]

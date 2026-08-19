@@ -11,8 +11,6 @@ use uuid::Uuid;
 use super::InstallStatus;
 
 const SKILL_NAME: &str = "regurgitate-recall";
-const LEGACY_SKILL_NAME: &str = "praxis-recall";
-const RETIRED_SKILLS_DIRECTORY: &str = ".regurgitate-retired";
 const SKILL_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/skills/regurgitate-recall/SKILL.md"
@@ -117,13 +115,11 @@ fn install_skill_package(
 ) -> Result<SkillInstallReport> {
     validate_skills_directory(skills_directory)?;
     let destination = skills_directory.join(SKILL_NAME);
-    let legacy = inspect_legacy_install(skills_directory)?;
 
     match inspect_existing_install(&destination, package)? {
-        ExistingInstall::Current if legacy.is_none() => {
+        ExistingInstall::Current => {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
-        ExistingInstall::Current => {}
         ExistingInstall::Different if !replace => {
             bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
         }
@@ -144,14 +140,9 @@ fn install_skill_package(
     // Recheck after creating the parent so concurrent installers cannot turn a
     // preview into an overwrite.
     let existing = inspect_existing_install(&destination, package)?;
-    let legacy = inspect_legacy_install(skills_directory)?;
     match existing {
-        ExistingInstall::Current if legacy.is_none() => {
-            return Ok(report(InstallStatus::AlreadyCurrent, destination));
-        }
         ExistingInstall::Current => {
-            retire_legacy_install(skills_directory, legacy.unwrap())?;
-            return Ok(report(InstallStatus::Replaced, destination));
+            return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
         ExistingInstall::Different if !replace => {
             bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
@@ -168,20 +159,11 @@ fn install_skill_package(
 
     if existing == ExistingInstall::Different {
         replace_staging_package(skills_directory, &staging, &destination)?;
-        if let Some(legacy) = legacy {
-            retire_legacy_install(skills_directory, legacy)?;
-        }
         return Ok(report(InstallStatus::Replaced, destination));
     }
 
-    let retired = legacy
-        .map(|legacy| retire_legacy_install(skills_directory, legacy))
-        .transpose()?;
     if let Err(rename_error) = fs::rename(&staging, &destination) {
         let _ = fs::remove_dir_all(&staging);
-        if let Some(retired) = retired.as_deref() {
-            let _ = restore_legacy_install(skills_directory, retired);
-        }
         if inspect_existing_install(&destination, package)? == ExistingInstall::Current {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
@@ -193,52 +175,7 @@ fn install_skill_package(
         });
     }
 
-    let status = if retired.is_some() {
-        InstallStatus::Replaced
-    } else {
-        InstallStatus::Installed
-    };
-    Ok(report(status, destination))
-}
-
-fn inspect_legacy_install(skills_directory: &Path) -> Result<Option<PathBuf>> {
-    let legacy = skills_directory.join(LEGACY_SKILL_NAME);
-    let metadata = match fs::symlink_metadata(&legacy) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(error).context("could not inspect the legacy recall skill");
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        bail!("legacy recall skill is not a regular directory");
-    }
-    Ok(Some(legacy))
-}
-
-fn retire_legacy_install(skills_directory: &Path, legacy: PathBuf) -> Result<PathBuf> {
-    let retired_directory = skills_directory.join(RETIRED_SKILLS_DIRECTORY);
-    match fs::symlink_metadata(&retired_directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            bail!("retired-skill destination is not a regular directory");
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            fs::create_dir(&retired_directory)
-                .context("could not create the retired-skill directory")?;
-        }
-        Err(error) => return Err(error).context("could not inspect the retired-skill directory"),
-    }
-    let retired =
-        retired_directory.join(format!("{LEGACY_SKILL_NAME}-{}", Uuid::new_v4().simple()));
-    fs::rename(&legacy, &retired)
-        .context("could not retire the legacy recall skill before migration")?;
-    Ok(retired)
-}
-
-fn restore_legacy_install(skills_directory: &Path, retired: &Path) -> Result<()> {
-    fs::rename(retired, skills_directory.join(LEGACY_SKILL_NAME))
-        .context("could not restore the legacy recall skill after a failed migration")
+    Ok(report(InstallStatus::Installed, destination))
 }
 
 fn validate_skills_directory(path: &Path) -> Result<()> {
@@ -453,34 +390,6 @@ mod tests {
                 .to_string_lossy()
                 .starts_with('.')
         }));
-    }
-
-    #[test]
-    fn legacy_skill_is_retired_and_replaced_without_losing_its_files() {
-        let temp = tempdir().unwrap();
-        let target = temp.path().join("agent-skills");
-        let legacy = target.join(LEGACY_SKILL_NAME);
-        fs::create_dir_all(&legacy).unwrap();
-        fs::write(legacy.join("PERSONAL_NOTE"), "keep me\n").unwrap();
-
-        let preview = install_skill(&target, false, false).unwrap();
-        assert_eq!(preview.status, InstallStatus::Planned);
-        assert!(legacy.exists());
-
-        let migrated = install_skill(&target, true, false).unwrap();
-        assert_eq!(migrated.status, InstallStatus::Replaced);
-        assert!(migrated.destination.join("SKILL.md").is_file());
-        assert!(!legacy.exists());
-        let retired = fs::read_dir(target.join(RETIRED_SKILLS_DIRECTORY))
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        assert_eq!(
-            fs::read_to_string(retired.join("PERSONAL_NOTE")).unwrap(),
-            "keep me\n"
-        );
     }
 
     #[cfg(unix)]

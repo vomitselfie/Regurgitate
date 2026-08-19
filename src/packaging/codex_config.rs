@@ -15,7 +15,6 @@ use super::{
 };
 
 const CODEX_HOOK_COMMAND: &str = "regurgitate record-hook --agent codex";
-const LEGACY_CODEX_HOOK_COMMAND: &str = "praxis record-hook --agent codex";
 const CONFIG_LOCK_FILENAME: &str = "config.toml.lock";
 
 pub const CODEX_CONFIG_SNIPPET: &str = r#"# Merge into the user-level Codex config.toml.
@@ -111,16 +110,11 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let groups = hooks["PostToolUse"]
         .as_array_of_tables_mut()
         .context("Codex hooks.PostToolUse must be an array of tables")?;
-    let migrated = migrate_legacy_hooks(groups, hook_command)?;
     match regurgitate_hook_coverage(groups, hook_command) {
         RegurgitateHookCoverage::AllTools => {
             return Ok(PreparedConfig {
                 content: document.to_string(),
-                changes: if migrated {
-                    vec!["hooks.PostToolUse"]
-                } else {
-                    Vec::new()
-                },
+                changes: Vec::new(),
             });
         }
         RegurgitateHookCoverage::Restricted => {
@@ -144,54 +138,6 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
         content: document.to_string(),
         changes: vec!["hooks.PostToolUse"],
     })
-}
-
-fn migrate_legacy_hooks(groups: &mut ArrayOfTables, hook_command: &str) -> Result<bool> {
-    let mut migrated = false;
-    for group in groups.iter_mut() {
-        let restricted = match group.get("matcher") {
-            None => false,
-            Some(item) => match item.as_str() {
-                Some("" | "*") => false,
-                Some(_) => true,
-                None => bail!("Codex hook matcher must be a string"),
-            },
-        };
-        let Some(handlers) = group
-            .get_mut("hooks")
-            .and_then(Item::as_array_of_tables_mut)
-        else {
-            continue;
-        };
-        for handler in handlers.iter_mut() {
-            if handler.get("type").and_then(Item::as_str) != Some("command") {
-                continue;
-            }
-            let Some(command) = handler.get("command").and_then(Item::as_str) else {
-                continue;
-            };
-            if !is_legacy_hook_command(command) {
-                continue;
-            }
-            if restricted {
-                bail!("legacy Regurgitate Codex hook is restricted by a matcher");
-            }
-            handler.insert("command", value(hook_command));
-            migrated = true;
-        }
-    }
-    Ok(migrated)
-}
-
-fn is_legacy_hook_command(command: &str) -> bool {
-    if command == LEGACY_CODEX_HOOK_COMMAND {
-        return true;
-    }
-    command
-        .strip_suffix(" record-hook --agent codex")
-        .is_some_and(|executable| {
-            executable.ends_with("/praxis") || executable.ends_with("/praxis'")
-        })
 }
 
 fn ensure_hooks_enabled(document: &DocumentMut) -> Result<()> {
@@ -375,26 +321,6 @@ mod tests {
             inspect_codex_hook(&config).unwrap(),
             HookReadiness::Conflicting
         );
-    }
-
-    #[test]
-    fn legacy_hook_is_replaced_instead_of_duplicated() {
-        let temp = tempdir().unwrap();
-        let config = temp.path().join("config.toml");
-        fs::write(
-            &config,
-            "[[hooks.PostToolUse]]\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"'/plugins/vomitselfie.praxis/0.5.0/praxis' record-hook --agent codex\"\n",
-        )
-        .unwrap();
-
-        let preview = install_codex_hook(&config, false).unwrap();
-        assert_eq!(preview.status, InstallStatus::Planned);
-        install_codex_hook(&config, true).unwrap();
-
-        let written = fs::read_to_string(config).unwrap();
-        assert!(written.contains(CODEX_HOOK_COMMAND));
-        assert!(!written.contains(LEGACY_CODEX_HOOK_COMMAND));
-        assert_eq!(written.matches("record-hook --agent codex").count(), 1);
     }
 
     #[cfg(unix)]
