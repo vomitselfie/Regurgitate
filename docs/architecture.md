@@ -145,6 +145,13 @@ Its `SKILL.md` waits for task context, requests a bounded aggregate, and tells
 the agent to verify observations against current state. It does not depend on
 AoE, Codex transcript formats, SQLite, or key management.
 
+An agent command sandbox may deny access to the operating-system credential
+store even when the user's desktop session has unlocked it. In that case the
+skill permits one retry through the host's standard per-command approval path,
+scoped to the exact `praxis recall` or `praxis learn` prefix. The binary cannot
+and does not escape the sandbox itself, and the workflow never approves a shell
+wrapper or changes credentials, storage, filesystem, or network policy.
+
 Provider discovery remains an edge concern. Codex-specific UI metadata lives
 under the skill's optional `agents/` directory and can be ignored by Claude,
 Hermes, or another host. Future hosts should reuse the workflow and CLI while
@@ -223,14 +230,15 @@ evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 
 The agent-facing instruction bundle is part of the same context boundary. A
 regression test keeps the embedded `SKILL.md` at or below 3,000 bytes; the v0.2
-bundle is 2,540 bytes, down from 4,819. Using the CLI's conservative
-four-bytes-per-token estimate, that is approximately 635 tokens instead of
+bundle was 2,540 bytes; the current bundle, including sandbox recovery guidance,
+is 2,923 bytes, down from the initial 4,819. Using the CLI's conservative
+four-bytes-per-token estimate, that is approximately 731 tokens instead of
 1,205. Together with the default recall budget reduction from 600 to 300, the
-Praxis-controlled ceiling for an activated default recall fell from roughly
-1,805 to 935 tokens, a 48% reduction. Successful recording hooks remain silent
-and therefore add no Praxis output to agent context. These figures describe
-Praxis-owned serialized payloads; provider tokenization and host-added tool-call
-scaffolding are outside this boundary.
+Praxis-controlled ceiling for an activated default recall is roughly 1,031
+tokens instead of 1,805, a 43% reduction. Successful recording hooks remain
+silent and therefore add no Praxis output to agent context. These figures
+describe Praxis-owned serialized payloads; provider tokenization and host-added
+tool-call scaffolding are outside this boundary.
 
 ## Health boundary
 

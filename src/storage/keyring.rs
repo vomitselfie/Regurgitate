@@ -74,6 +74,9 @@ impl SystemKeyProvider {
     }
 
     fn entry(&self) -> Result<keyring::Entry> {
+        if let Err(error) = keyring::Entry::store_status() {
+            bail!("operating system credential store could not initialize: {error}");
+        }
         keyring::Entry::new(&self.service, &self.username)
             .context("operating system credential store is unavailable or locked")
     }

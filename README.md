@@ -104,8 +104,9 @@ Praxis requires Linux Secret Service or macOS Keychain to be available and
 unlocked. It never falls back to a plaintext key or plaintext history database.
 Sandboxed agent hosts may require explicit approval for the Praxis process to
 reach the operating system credential store and encrypted data directory. If
-access is denied, recall fails closed; do not weaken sandbox or key-storage
-policy automatically.
+access is denied, Praxis fails closed. On hosts with per-command approvals,
+permit only the exact `praxis recall` or `praxis learn` prefix outside the
+sandbox; do not approve a shell wrapper or weaken sandbox or key-storage policy.
 
 ```bash
 cargo test
@@ -267,10 +268,12 @@ The tracked [`praxis-recall`](skills/praxis-recall/SKILL.md) skill tells a fresh
 agent to wait until the task is known, request one bounded task-specific
 aggregate, validate any remembered pattern against current state, and record at
 most one controlled outcome after a meaningful verified approach. Its workflow
-is provider-neutral and uses only `praxis recall` and `praxis learn`. The
-optional `agents/openai.yaml` file contains Codex discovery metadata; other
-agent hosts can ignore it and register the same `SKILL.md` through their own
-skill-loading mechanism.
+is provider-neutral and uses only `praxis recall` and `praxis learn`. If an
+agent sandbox blocks its operating-system credential store, the skill permits
+one retry through a host's standard per-command approval path, scoped to the
+exact Praxis subcommand. The optional `agents/openai.yaml` file contains Codex
+discovery metadata; other agent hosts can ignore it and register the same
+`SKILL.md` through their own skill-loading mechanism.
 
 Pass the selected agent host's skills directory to `install-skill`. The command
 previews its destination and two packaged files by default without touching the
@@ -286,13 +289,14 @@ Recording stays out of the conversation: successful native hooks emit no
 output, and Praxis stores controlled observations rather than replaying raw
 history into the agent context. Recall is explicit, aggregate-only, and bounded.
 
-The v0.2 recall path was tightened against its initial implementation:
+The current recall path remains substantially smaller than its initial
+implementation while including the sandboxed-host recovery rule:
 
 | Praxis-controlled context | Initial | Current | Reduction |
 | --- | ---: | ---: | ---: |
-| Recall skill instructions | ~1,205 tokens | ~635 tokens | 47% |
+| Recall skill instructions | ~1,205 tokens | ~731 tokens | 39% |
 | Default recall output budget | 600 tokens | 300 tokens | 50% |
-| Skill plus default recall ceiling | ~1,805 tokens | ~935 tokens | 48% |
+| Skill plus default recall ceiling | ~1,805 tokens | ~1,031 tokens | 43% |
 
 Instruction estimates use the same conservative four-bytes-per-token rule as
 the CLI. They are stable payload-size comparisons, not a claim about exact

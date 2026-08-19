@@ -22,6 +22,14 @@ Continue normally if Praxis is unavailable or empty. Do not change credentials
 or privacy settings to make recall work. Validate relevant evidence against the
 current repository and constraints before acting.
 
+## Sandboxed hosts
+
+If the sandbox blocks the operating system credential store and the host
+supports per-command approval, retry once outside the sandbox. Scope approval
+to the exact `praxis recall` or `praxis learn` prefix. Never approve a shell
+wrapper, combine commands, broaden access, or change credentials or storage. If
+the retry is unavailable or fails, continue normally.
+
 ## Record a verified practice
 
 After a meaningful approach is directly verified by a test, validation,
