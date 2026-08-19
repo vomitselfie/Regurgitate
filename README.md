@@ -46,6 +46,7 @@ cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- status
+cargo run -- status --aoe-config /path/to/aoe/config.toml --claude-config /path/to/claude/settings.json
 cargo run -- print-aoe-config
 cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
@@ -68,6 +69,10 @@ the overall installation and controlled readiness values for the key store and
 history database. The only data measurement it exposes is the aggregate event
 count. It does not create a missing key or database, migrate or repair an
 existing database, return paths or identifiers, or surface raw backend errors.
+Optional `--aoe-config` and `--claude-config` arguments add non-mutating hook
+checks for those exact files. Their output is limited to the provider name and
+`installed`, `not_installed`, `conflicting`, or `unavailable`; Praxis does not
+guess host paths or return config paths and command strings.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
 an approximate 600-token serialized-output budget. It supports a controlled

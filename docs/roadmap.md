@@ -19,6 +19,7 @@ module boundaries.
 - a shared, sanitized native-hook observation boundary and cross-adapter
   conformance fixtures;
 - read-only key-store and database health with aggregate-only output;
+- explicit-path AoE and Claude hook readiness with controlled output;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - a locked, atomic installer for empty AoE idle/error hook slots; and
@@ -46,16 +47,18 @@ privacy boundary:
 2. key-store and database readiness expose no paths or identifiers;
 3. the probes never create a key, create or migrate a database, or attempt a
    repair; and
-4. unavailable-key-store and damaged-database behavior is covered by tests.
+4. unavailable-key-store and damaged-database behavior is covered by tests;
+5. optional hook checks inspect only explicitly supplied configs and return no
+   paths or command strings.
 
 ## Next integration slice
 
-Extend read-only readiness to hook configuration without guessing host paths:
+Add project forgetting without adding event-level inspection:
 
-1. define provider-neutral installed/not-installed/conflicting hook states;
-2. inspect only explicitly supplied AoE and Claude config files;
-3. reuse the packaging parsers without adding mutation to `status`; and
-4. keep command strings and config paths out of the report.
+1. define a project-scoped deletion port and aggregate preview report;
+2. require an explicit project locator and explicit apply flag;
+3. remove encrypted events and private project metadata transactionally; and
+4. return counts only, with no event IDs, project IDs, or paths.
 
 Both installers require explicit host paths instead of guessing them and are
 preview-only without `--apply`. The AoE installer preserves unrelated TOML but
@@ -64,7 +67,6 @@ transition rather than a composable command list.
 
 ## Later slices
 
-- installed-hook readiness inspection;
 - retention and project forgetting;
 - human-only inspection and key maintenance;
 - additional native agent adapters;

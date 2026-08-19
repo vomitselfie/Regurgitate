@@ -4,8 +4,10 @@ mod skill;
 
 use serde::Serialize;
 
-pub use aoe_config::{AOE_CONFIG_SNIPPET, AoeHookInstallReport, install_aoe_hook};
-pub use claude_config::CLAUDE_CONFIG_SNIPPET;
+pub use aoe_config::{
+    AOE_CONFIG_SNIPPET, AoeHookInstallReport, inspect_aoe_hook, install_aoe_hook,
+};
+pub use claude_config::{CLAUDE_CONFIG_SNIPPET, inspect_claude_hook};
 pub use skill::{SkillInstallReport, install_skill};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

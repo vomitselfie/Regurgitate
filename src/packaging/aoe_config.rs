@@ -15,6 +15,8 @@ use serde::Serialize;
 use tempfile::NamedTempFile;
 use toml_edit::{DocumentMut, Table, table, value};
 
+use crate::application::HookReadiness;
+
 use super::InstallStatus;
 
 const AOE_HOOK_COMMAND: &str = "praxis aoe-hook";
@@ -35,6 +37,19 @@ pub struct AoeHookInstallReport {
     pub status: InstallStatus,
     pub config: PathBuf,
     pub changes: Vec<&'static str>,
+}
+
+/// Inspect one explicit AoE config without acquiring a write lock or changing
+/// the file. Invalid structure and occupied single-command slots are reported
+/// as controlled conflicts; read failures remain backend errors for the health
+/// service to sanitize.
+pub fn inspect_aoe_hook(config: &Path) -> Result<HookReadiness> {
+    let content = read_config(config)?;
+    Ok(match prepare_config(&content) {
+        Ok(prepared) if prepared.changes.is_empty() => HookReadiness::Installed,
+        Ok(_) => HookReadiness::NotInstalled,
+        Err(_) => HookReadiness::Conflicting,
+    })
 }
 
 struct PreparedConfig {
@@ -438,5 +453,36 @@ mod tests {
         let written = fs::read_to_string(target).unwrap();
         assert!(written.contains("# managed in dotfiles"));
         assert!(written.contains("on_idle = \"praxis aoe-hook\""));
+    }
+
+    #[test]
+    fn readiness_distinguishes_missing_installed_and_conflicting() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        assert_eq!(
+            inspect_aoe_hook(&config).unwrap(),
+            HookReadiness::NotInstalled
+        );
+
+        fs::write(
+            &config,
+            AOE_CONFIG_SNIPPET
+                .lines()
+                .skip(2)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        assert_eq!(inspect_aoe_hook(&config).unwrap(), HookReadiness::Installed);
+
+        fs::write(
+            &config,
+            "[status_hooks]\nenabled = true\non_idle = \"PRIVATE_COMMAND\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_aoe_hook(&config).unwrap(),
+            HookReadiness::Conflicting
+        );
     }
 }

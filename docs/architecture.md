@@ -165,6 +165,13 @@ The application service reduces probe results to `ready`, `not_configured`, or
 included in the report, so keyring messages, database paths, and damaged bytes
 cannot reach CLI JSON.
 
+Optional hook readiness follows the same reduction. The runtime inspects only
+AoE and Claude config paths explicitly supplied to `status`. AoE reuses the
+same comment-preserving, conflict-aware preview parser as its installer. Claude
+uses a typed view of only the two relevant hook arrays; unrelated settings are
+not represented, and personal command strings are transient comparison inputs.
+The health report retains only a controlled provider and readiness enum.
+
 ## Current boundaries and limits
 
 Implemented:
@@ -183,6 +190,7 @@ Implemented:
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
 - non-mutating Claude Code hook config generation;
 - non-mutating aggregate key-store and database health reporting;
+- explicit-path, non-mutating AoE and Claude hook readiness reporting;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
@@ -194,5 +202,4 @@ Implemented:
 Not yet implemented:
 
 - automatic host-specific installation-path discovery;
-- installed-hook readiness inspection;
 - retention, inspection, and forgetting commands.

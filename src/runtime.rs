@@ -9,12 +9,15 @@ use zeroize::Zeroizing;
 use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
-        HealthReport, HealthService, HookObservation, IngestionReport, IngestionService,
-        ProjectLocator, RecordingReport, RecordingService, SessionEventSource,
+        HealthReport, HealthService, HookObservation, HookProvider, HookReadiness, IngestionReport,
+        IngestionService, ProjectLocator, RecordingReport, RecordingService, SessionEventSource,
     },
     cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
-    packaging::{AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, install_aoe_hook, install_skill},
+    packaging::{
+        AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, inspect_aoe_hook, inspect_claude_hook,
+        install_aoe_hook, install_skill,
+    },
     query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, HistoryDatabaseProbe, MasterKeyProvider, SecretServiceKeyProvider},
 };
@@ -50,9 +53,20 @@ pub fn execute(cli: Cli) -> Result<()> {
             println!("{CLAUDE_CONFIG_SNIPPET}");
             Ok(())
         }
-        Command::Status { data_home } => {
+        Command::Status {
+            aoe_config,
+            claude_config,
+            data_home,
+        } => {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let report = health_status(data_home, SecretServiceKeyProvider::default());
+            let mut hooks = Vec::with_capacity(2);
+            if let Some(config) = aoe_config {
+                hooks.push((HookProvider::Aoe, inspect_aoe_hook(&config)));
+            }
+            if let Some(config) = claude_config {
+                hooks.push((HookProvider::Claude, inspect_claude_hook(&config)));
+            }
+            let report = health_status(data_home, SecretServiceKeyProvider::default(), hooks);
             print_json(&report)
         }
         Command::InstallAoeHook { config, apply } => {
@@ -191,9 +205,10 @@ fn record_hook(
 fn health_status(
     data_home: PathBuf,
     key_probe: impl crate::application::KeyReadinessProbe,
+    hooks: impl IntoIterator<Item = (HookProvider, Result<HookReadiness>)>,
 ) -> HealthReport {
     let history = HistoryDatabaseProbe::new(data_home.join("praxis/history.db"));
-    HealthService::new(key_probe, history).inspect()
+    HealthService::new(key_probe, history).inspect_with_hooks(hooks)
 }
 
 fn recall_project(
@@ -471,7 +486,11 @@ mod tests {
     fn health_status_does_not_initialize_or_expose_local_state() {
         let temp = tempdir().unwrap();
         let data_home = temp.path().join("PRIVATE_DATA_HOME");
-        let report = health_status(data_home.clone(), FixedKeyProbe(Ok(false)));
+        let report = health_status(
+            data_home.clone(),
+            FixedKeyProbe(Ok(false)),
+            std::iter::empty(),
+        );
         assert_eq!(
             report.status,
             crate::application::OverallHealth::NotConfigured
@@ -496,10 +515,32 @@ mod tests {
         let report = health_status(
             data_home,
             FixedKeyProbe(Err(anyhow::anyhow!("PRIVATE_KEYRING_FAILURE"))),
+            std::iter::empty(),
         );
         assert_eq!(report.status, crate::application::OverallHealth::Degraded);
         let encoded = serde_json::to_string(&report).unwrap();
         for forbidden in ["PRIVATE_DATABASE_FAILURE", "PRIVATE_KEYRING_FAILURE"] {
+            assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
+        }
+    }
+
+    #[test]
+    fn health_status_reports_hook_states_without_paths_or_commands() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("data");
+        let report = health_status(
+            data_home,
+            FixedKeyProbe(Ok(false)),
+            [
+                (HookProvider::Aoe, Ok(HookReadiness::Installed)),
+                (HookProvider::Claude, Ok(HookReadiness::Conflicting)),
+            ],
+        );
+        assert_eq!(report.status, crate::application::OverallHealth::Degraded);
+        assert_eq!(report.hooks.len(), 2);
+
+        let encoded = serde_json::to_string(&report).unwrap();
+        for forbidden in ["config.toml", "settings.json", "praxis record-hook"] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
     }

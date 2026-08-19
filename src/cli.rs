@@ -48,6 +48,14 @@ pub(crate) enum Command {
 
     /// Report aggregate local readiness without creating or repairing state.
     Status {
+        /// Explicit AoE config to inspect without modifying.
+        #[arg(long, value_name = "FILE")]
+        aoe_config: Option<PathBuf>,
+
+        /// Explicit Claude settings file to inspect without modifying.
+        #[arg(long, value_name = "FILE")]
+        claude_config: Option<PathBuf>,
+
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]
         data_home: Option<PathBuf>,
@@ -212,11 +220,26 @@ mod tests {
     }
 
     #[test]
-    fn status_accepts_no_sensitive_target_arguments() {
-        let status = Cli::try_parse_from(["praxis", "status"]).unwrap();
-        let Command::Status { data_home } = status.command else {
+    fn status_checks_only_explicit_provider_configs() {
+        let status = Cli::try_parse_from([
+            "praxis",
+            "status",
+            "--aoe-config",
+            "/aoe/config.toml",
+            "--claude-config",
+            "/claude/settings.json",
+        ])
+        .unwrap();
+        let Command::Status {
+            aoe_config,
+            claude_config,
+            data_home,
+        } = status.command
+        else {
             panic!("expected status command");
         };
+        assert_eq!(aoe_config, Some(PathBuf::from("/aoe/config.toml")));
+        assert_eq!(claude_config, Some(PathBuf::from("/claude/settings.json")));
         assert!(data_home.is_none());
     }
 
