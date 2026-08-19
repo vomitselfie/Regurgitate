@@ -70,6 +70,13 @@ under the skill's optional `agents/` directory and can be ignored by Claude,
 Hermes, or another host. Future hosts should reuse the workflow and CLI while
 keeping native event normalization in a separate ingestion adapter.
 
+The `packaging` module embeds the tracked skill files in release binaries and
+installs them only beneath a caller-supplied skills directory. Installation is
+preview-only unless `--apply` is explicit. It stages a new package before
+renaming it into place, is idempotent for identical files, and refuses to
+replace changed, non-directory, or symlinked destinations. Host path discovery
+and configuration mutation remain outside the installer.
+
 ## Privacy boundary
 
 Raw records are short-lived adapter inputs. Prompts, responses, reasoning,
@@ -130,10 +137,11 @@ Implemented:
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
-- a provider-neutral agent recall skill with optional Codex metadata; and
+- a provider-neutral agent recall skill with optional Codex metadata;
+- a preview-first, no-overwrite skill package installer; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
 
-- packaging and installation automation;
+- host-specific installation-path discovery or config mutation;
 - retention, inspection, and forgetting commands.

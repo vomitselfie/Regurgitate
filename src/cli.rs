@@ -28,6 +28,17 @@ pub(crate) enum Command {
     /// Print an AoE status-hook configuration snippet for manual installation.
     PrintAoeConfig,
 
+    /// Preview or install the bundled agent recall skill without overwriting.
+    InstallSkill {
+        /// Agent host's skills directory; Praxis adds a praxis-recall child.
+        #[arg(long, value_name = "DIRECTORY")]
+        target: PathBuf,
+
+        /// Apply the displayed installation instead of previewing it.
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Discover an AoE-managed Codex transcript and print sanitized events.
     DebugParse {
         /// Stable AoE session identifier.
@@ -134,5 +145,34 @@ impl From<OperationArg> for Operation {
             OperationArg::Wait => Self::Wait,
             OperationArg::ToolCall => Self::ToolCall,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_install_is_preview_only_unless_apply_is_explicit() {
+        let preview =
+            Cli::try_parse_from(["praxis", "install-skill", "--target", "/agent/skills"]).unwrap();
+        let Command::InstallSkill { target, apply } = preview.command else {
+            panic!("expected install-skill command");
+        };
+        assert_eq!(target, PathBuf::from("/agent/skills"));
+        assert!(!apply);
+
+        let applied = Cli::try_parse_from([
+            "praxis",
+            "install-skill",
+            "--target",
+            "/agent/skills",
+            "--apply",
+        ])
+        .unwrap();
+        let Command::InstallSkill { apply, .. } = applied.command else {
+            panic!("expected install-skill command");
+        };
+        assert!(apply);
     }
 }

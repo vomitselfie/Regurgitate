@@ -14,7 +14,9 @@ module boundaries.
 - transient task-query ranking with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
-- a provider-neutral recall skill with isolated Codex discovery metadata; and
+- a provider-neutral recall skill with isolated Codex discovery metadata;
+- a preview-first, no-overwrite installer for an explicit agent skills path;
+  and
 - adversarial privacy, authentication, migration, project-isolation, and
   source-replacement tests.
 
@@ -22,15 +24,16 @@ module boundaries.
 
 Package the existing integration surfaces without coupling them to the core:
 
-1. provide an explicit, previewable installation path for the recall skill;
-2. keep host-specific discovery metadata outside the provider-neutral workflow;
-3. package AoE hook configuration without silently replacing personal hooks;
-4. add adapter conformance fixtures before supporting another agent source; and
-5. keep installation code separate from query, ingestion, and storage policy.
+1. package AoE hook configuration without silently replacing personal hooks;
+2. add adapter conformance fixtures before supporting another agent source;
+3. add safe status reporting before retention and inspection commands; and
+4. keep host discovery and installation code separate from query, ingestion,
+   and storage policy.
 
-The skill, hook handler, and configuration generator are implemented. A future
-installer may merge personal configuration only after an explicit preview and
-approval; the current repository never edits it.
+The skill installer, hook handler, and configuration generator are implemented.
+The installer requires the host skills path instead of guessing it. A future
+AoE config installer may merge personal configuration only after an explicit
+preview and approval; the current repository never edits it.
 
 ## Later slices
 

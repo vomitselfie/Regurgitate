@@ -40,6 +40,8 @@ cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- print-aoe-config
+cargo run -- install-skill --target /path/to/agent/skills
+cargo run -- install-skill --target /path/to/agent/skills --apply
 ```
 
 Both debug commands print only the sanitized event projection. They never print
@@ -73,8 +75,11 @@ workflow is provider-neutral and calls only `praxis recall`. The optional
 can ignore it and register the same `SKILL.md` through their own skill-loading
 mechanism.
 
-Install or link the skill directory through the selected agent host. Praxis
-does not modify agent configuration automatically.
+Pass the selected agent host's skills directory to `install-skill`. The command
+previews its destination and two packaged files by default without touching the
+filesystem; repeat it with `--apply` to install. A repeated install reports
+`already_current`. Praxis refuses to replace a changed file, non-directory, or
+symlinked skill destination, and does not guess or modify an agent's config.
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
 the current implementation limits, and [Roadmap](docs/roadmap.md) for the next

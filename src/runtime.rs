@@ -12,6 +12,7 @@ use crate::{
     application::{IngestionReport, IngestionService, SessionEventSource},
     cli::{Cli, Command},
     core::{AgentKind, DebugEvent},
+    packaging::install_skill,
     query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
 };
@@ -36,6 +37,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::PrintAoeConfig => {
             println!("{AOE_CONFIG_SNIPPET}");
             Ok(())
+        }
+        Command::InstallSkill { target, apply } => {
+            let report = install_skill(&target, apply)?;
+            print_json(&report)
         }
         Command::DebugParse {
             session,
