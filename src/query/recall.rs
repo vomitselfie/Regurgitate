@@ -14,7 +14,7 @@ use super::task::TaskIntent;
 
 pub const DEFAULT_RECALL_LIMIT: usize = 10;
 pub const MAX_RECALL_LIMIT: usize = 20;
-pub const DEFAULT_TOKEN_BUDGET: usize = 600;
+pub const DEFAULT_TOKEN_BUDGET: usize = 300;
 pub const MAX_TOKEN_BUDGET: usize = 1_000;
 const MIN_TOKEN_BUDGET: usize = 32;
 const MAX_CANDIDATE_EVENTS: usize = 1_000;

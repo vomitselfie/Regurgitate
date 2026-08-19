@@ -77,7 +77,7 @@ cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- learn --project "$PWD" --strategy targeted-verification --outcome success
 cargo run -- recall --project "$PWD"
-cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
+cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 300
 cargo run -- status
 cargo run -- status --aoe-config /path/to/aoe/config.toml --codex-config /path/to/codex/config.toml --claude-config /path/to/claude/settings.json
 cargo run -- forget --project "$PWD"
@@ -159,7 +159,7 @@ Reports contain only `planned`, `pruned`, or `no_changes` and an event count.
 Project mappings, forgetting tombstones, and ingestion cursors are retained.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
-an approximate 600-token serialized-output budget. It supports a controlled
+an approximate 300-token serialized-output budget. It supports a controlled
 `--operation` filter, `--failures`, and ephemeral task-query ranking. Repeated
 known outcomes add a success rate, evidence confidence, and `prefer`, `avoid`,
 or `mixed` guidance; those fields are omitted until at least two known outcomes

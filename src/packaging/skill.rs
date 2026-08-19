@@ -252,6 +252,14 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn agent_instruction_bundle_stays_compact() {
+        assert!(
+            SKILL_FILES[0].contents.len() <= 3_000,
+            "SKILL.md should stay below its 750-token conservative byte budget"
+        );
+    }
+
+    #[test]
     fn preview_reports_destination_without_writing() {
         let temp = tempdir().unwrap();
         let target = temp.path().join("agent-skills");
