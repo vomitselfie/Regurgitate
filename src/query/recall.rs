@@ -90,7 +90,6 @@ pub enum PracticeGuidance {
 pub struct RecallObservation {
     pub capability: Capability,
     pub operation: Operation,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub strategy: Option<Strategy>,
     pub attempts: usize,
     pub successes: usize,
@@ -463,6 +462,8 @@ mod tests {
         );
         assert_eq!(result.observations[1].guidance, None);
         assert_eq!(result.observations[1].confidence, None);
+        let encoded = serde_json::to_value(&result).unwrap();
+        assert!(encoded["observations"][1]["strategy"].is_null());
     }
 
     #[test]

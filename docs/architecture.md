@@ -181,6 +181,8 @@ output contains attempt/success/failure/unknown counts and, when present, the
 most common controlled error class. Two or more known outcomes add a rounded
 success percentage, sample-count confidence, and deterministic `prefer`,
 `avoid`, or `mixed` guidance. One-off and all-unknown groups omit those fields.
+The `strategy` field is always present; unlabeled hook aggregates serialize it
+as `null` so consumers can parse one uniform observation shape.
 Ranking considers task relevance and verified guidance before raw sample count,
 so high-volume unknown activity cannot bury a smaller actionable strategy. It
 has no event-level output mode and rejects limits above 20 before querying

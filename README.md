@@ -163,7 +163,9 @@ an approximate 300-token serialized-output budget. It supports a controlled
 `--operation` filter, `--failures`, and ephemeral task-query ranking. Repeated
 known outcomes add a success rate, evidence confidence, and `prefer`, `avoid`,
 or `mixed` guidance; those fields are omitted until at least two known outcomes
-exist. Unknown activity volume does not outrank verified strategy evidence.
+exist. Every observation includes `strategy`; unlabeled hook aggregates use an
+explicit JSON `null`. Unknown activity volume does not outrank verified
+strategy evidence.
 Recall opens only existing history and keys read-only and does not create or
 chmod local state. It never returns event, session, or project identifiers,
 timestamps, paths, query text, or historical content. Query text is not
