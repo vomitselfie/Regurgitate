@@ -1,0 +1,45 @@
+# Rust build output
+/target/
+
+# Local collaboration notes and agent-specific instructions. Public project
+# documentation belongs under docs/, skills/, or the explicitly allowed README.
+/*.md
+!/README.md
+/.agents/
+/.agent-of-empires/
+/.aoe/
+/.codex/
+/.claude/
+/.aider*
+/.ai/
+/.mcp.json
+/notes/
+/scratch/
+
+# Local environment and editor state
+/.env
+/.env.*
+!/.env.example
+/.direnv/
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+*.log
+
+# Praxis runtime state must never be committed. Production state belongs in
+# XDG data/state directories, but these patterns defend local development too.
+/.praxis/
+/*.db
+/*.db-shm
+/*.db-wal
+/*.sqlite
+/*.sqlite3
+/*.key
+/*.pem
+
+# Local coverage and profiling output
+/coverage/
+*.profraw
+*.profdata

@@ -1,0 +1,16 @@
+{
+  "session_id": "session-fixture",
+  "transcript_path": "/home/alice/private/transcript.jsonl",
+  "cwd": "/home/alice/secret-project",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_use_id": "call-success",
+  "tool_input": {
+    "command": "TOKEN=sk-fixture-secret curl https://private.example.test/build"
+  },
+  "tool_response": {
+    "exit_code": 0,
+    "output": "password=hunter2\nsource code that must not survive"
+  }
+}
