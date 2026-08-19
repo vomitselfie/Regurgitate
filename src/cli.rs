@@ -28,6 +28,17 @@ pub(crate) enum Command {
     /// Print an AoE status-hook configuration snippet for manual installation.
     PrintAoeConfig,
 
+    /// Preview or add Praxis to an explicit global AoE config.
+    InstallAoeHook {
+        /// Global AoE config.toml file to update.
+        #[arg(long, value_name = "FILE")]
+        config: PathBuf,
+
+        /// Apply the displayed changes instead of previewing them.
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Preview or install the bundled agent recall skill without overwriting.
     InstallSkill {
         /// Agent host's skills directory; Praxis adds a praxis-recall child.
@@ -172,6 +183,31 @@ mod tests {
         .unwrap();
         let Command::InstallSkill { apply, .. } = applied.command else {
             panic!("expected install-skill command");
+        };
+        assert!(apply);
+    }
+
+    #[test]
+    fn aoe_hook_install_is_preview_only_unless_apply_is_explicit() {
+        let preview =
+            Cli::try_parse_from(["praxis", "install-aoe-hook", "--config", "/aoe/config.toml"])
+                .unwrap();
+        let Command::InstallAoeHook { config, apply } = preview.command else {
+            panic!("expected install-aoe-hook command");
+        };
+        assert_eq!(config, PathBuf::from("/aoe/config.toml"));
+        assert!(!apply);
+
+        let applied = Cli::try_parse_from([
+            "praxis",
+            "install-aoe-hook",
+            "--config",
+            "/aoe/config.toml",
+            "--apply",
+        ])
+        .unwrap();
+        let Command::InstallAoeHook { apply, .. } = applied.command else {
+            panic!("expected install-aoe-hook command");
         };
         assert!(apply);
     }

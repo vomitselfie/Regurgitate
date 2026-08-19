@@ -12,7 +12,7 @@ use crate::{
     application::{IngestionReport, IngestionService, SessionEventSource},
     cli::{Cli, Command},
     core::{AgentKind, DebugEvent},
-    packaging::install_skill,
+    packaging::{AOE_CONFIG_SNIPPET, install_aoe_hook, install_skill},
     query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
 };
@@ -37,6 +37,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::PrintAoeConfig => {
             println!("{AOE_CONFIG_SNIPPET}");
             Ok(())
+        }
+        Command::InstallAoeHook { config, apply } => {
+            let report = install_aoe_hook(&config, apply)?;
+            print_json(&report)
         }
         Command::InstallSkill { target, apply } => {
             let report = install_skill(&target, apply)?;
@@ -97,13 +101,6 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
     }
 }
-
-const AOE_CONFIG_SNIPPET: &str = r#"# Merge into the global or profile AoE config.
-# The handler reads only AOE_SESSION_ID, AOE_PROFILE, and AOE_TOOL.
-[status_hooks]
-enabled = true
-on_idle = "praxis aoe-hook"
-on_error = "praxis aoe-hook""#;
 
 #[derive(serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]

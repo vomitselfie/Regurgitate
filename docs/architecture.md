@@ -77,6 +77,13 @@ renaming it into place, is idempotent for identical files, and refuses to
 replace changed, non-directory, or symlinked destinations. Host path discovery
 and configuration mutation remain outside the installer.
 
+The same module can conservatively add the ingestion hook to an explicit AoE
+global config file. It parses with a comment-preserving TOML editor,
+rejects occupied `on_idle` or `on_error` slots, and refuses to enable a table
+that contains other dormant hooks. Apply reloads the file under AoE's adjacent
+global `.config.lock`, writes a temporary sibling, synchronizes it, and atomically
+replaces the file while preserving its permissions and any config symlink.
+
 ## Privacy boundary
 
 Raw records are short-lived adapter inputs. Prompts, responses, reasoning,
@@ -138,10 +145,11 @@ Implemented:
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
-- a preview-first, no-overwrite skill package installer; and
+- a preview-first, no-overwrite skill package installer;
+- a locked, atomic, conflict-refusing AoE hook config installer; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
 
-- host-specific installation-path discovery or config mutation;
+- automatic host-specific installation-path discovery;
 - retention, inspection, and forgetting commands.

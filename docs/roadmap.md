@@ -16,24 +16,23 @@ module boundaries.
 - identifier-only AoE idle/error hook ingestion with generated configuration;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
-  and
+- a locked, atomic installer for empty AoE idle/error hook slots; and
 - adversarial privacy, authentication, migration, project-isolation, and
   source-replacement tests.
 
 ## Next integration slice
 
-Package the existing integration surfaces without coupling them to the core:
+Add another agent source without coupling it to the core:
 
-1. package AoE hook configuration without silently replacing personal hooks;
-2. add adapter conformance fixtures before supporting another agent source;
-3. add safe status reporting before retention and inspection commands; and
-4. keep host discovery and installation code separate from query, ingestion,
-   and storage policy.
+1. define adapter conformance fixtures around the controlled event boundary;
+2. select the next native source based on stable hook/transcript support;
+3. reuse the existing ingestion service and encrypted storage ports; and
+4. keep native payload types and paths confined to the new adapter.
 
-The skill installer, hook handler, and configuration generator are implemented.
-The installer requires the host skills path instead of guessing it. A future
-AoE config installer may merge personal configuration only after an explicit
-preview and approval; the current repository never edits it.
+Both installers require explicit host paths instead of guessing them and are
+preview-only without `--apply`. The AoE installer preserves unrelated TOML but
+refuses occupied status slots because upstream supports one command string per
+transition rather than a composable command list.
 
 ## Later slices
 

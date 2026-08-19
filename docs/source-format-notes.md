@@ -31,9 +31,19 @@ The implemented host integration uses global/profile `[status_hooks]` entries
 for `on_idle` and `on_error`. AoE documents these hooks as best-effort,
 non-blocking commands and supplies `AOE_SESSION_ID`, `AOE_PROFILE`, `AOE_TOOL`,
 project/status context, and other metadata. Praxis reads only the first three.
-The generated snippet is intended for manual merge because status hooks are
-personal global/profile configuration and an existing hook must not be
-silently overwritten.
+
+Each status slot currently accepts one command string, not a command list. The
+installer therefore fills only absent idle/error slots and refuses to replace
+or synthesize shell composition around an existing command. It also refuses to
+set `enabled = true` when that would activate another dormant hook. Global
+config apply uses AoE's adjacent `.config.lock`, reloads after locking, and
+atomically replaces the config while preserving unrelated TOML and symlinked
+dotfile layouts. The non-mutating snippet remains available for manual global
+or profile composition.
+
+These assumptions were rechecked against the current upstream
+[configuration reference](https://github.com/agent-of-empires/agent-of-empires/blob/main/docs/guides/configuration.md)
+and config persistence implementation on the reconnaissance date above.
 
 ## Codex
 

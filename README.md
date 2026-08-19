@@ -40,6 +40,8 @@ cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- print-aoe-config
+cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
+cargo run -- install-aoe-hook --config /path/to/aoe/config.toml --apply
 cargo run -- install-skill --target /path/to/agent/skills
 cargo run -- install-skill --target /path/to/agent/skills --apply
 ```
@@ -59,11 +61,18 @@ or historical content. Query text is not persisted by Praxis, though text
 provided on a command line may still be retained by the user's shell history.
 
 For automatic recording, install the release binary somewhere available in the
-AoE host process's `PATH`, run `praxis print-aoe-config`, and manually merge the
-snippet into the desired global or profile AoE config. It invokes
-`praxis aoe-hook` on stable idle/error transitions. The handler reads only
-`AOE_SESSION_ID`, `AOE_PROFILE`, and `AOE_TOOL`; duplicate deliveries are safe.
-Unsupported agent types are ignored successfully.
+AoE host process's `PATH`. Either run `praxis print-aoe-config` and manually
+merge the snippet into a global/profile config, or pass the explicit global
+config file to `install-aoe-hook`. The install command previews by default and
+writes only with `--apply`. It preserves unrelated TOML and existing active
+hook slots, uses AoE's adjacent global-config lock, and refuses conflicting
+hooks or a change that would activate dormant personal hooks. AoE does not
+honor status hooks from repository configuration.
+
+The installed entries invoke `praxis aoe-hook` on stable idle/error
+transitions. The handler reads only `AOE_SESSION_ID`, `AOE_PROFILE`, and
+`AOE_TOOL`; duplicate deliveries are safe. Unsupported agent types are ignored
+successfully.
 
 ## Agent-facing recall
 

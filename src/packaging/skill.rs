@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::InstallStatus;
+
 const SKILL_NAME: &str = "praxis-recall";
 const SKILL_FILES: [PackagedFile; 2] = [
     PackagedFile {
@@ -29,14 +31,6 @@ const SKILL_FILES: [PackagedFile; 2] = [
 struct PackagedFile {
     relative_path: &'static str,
     contents: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InstallStatus {
-    Planned,
-    Installed,
-    AlreadyCurrent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
