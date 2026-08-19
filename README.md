@@ -28,10 +28,11 @@ implementation provides:
 - a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
-This is an early implementation. Manual and AoE status-hook ingestion are wired
-for Codex sessions, Claude Code can record tool completions directly, and
-task-specific bounded recall is available to any agent that can invoke the CLI.
-Automatic host-path discovery is not implemented.
+This is an early implementation. Codex and Claude Code can record tool
+completions directly through native hooks, while AoE status hooks provide a
+Codex transcript fallback. Task-specific bounded recall is available to any
+agent that can invoke the CLI. Automatic host-path discovery is not
+implemented.
 
 ## Installation
 
@@ -65,13 +66,14 @@ It never falls back to a plaintext key or plaintext history database.
 cargo test
 cargo run -- debug-hook < tests/fixtures/codex/post-tool-use-success.json
 cargo run -- debug-hook --agent claude < tests/fixtures/claude/post-tool-use-success.json
+cargo run -- record-hook --agent codex < tests/fixtures/codex/post-tool-use-success.json
 cargo run -- record-hook --agent claude < tests/fixtures/claude/post-tool-use-success.json
 cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- status
-cargo run -- status --aoe-config /path/to/aoe/config.toml --claude-config /path/to/claude/settings.json
+cargo run -- status --aoe-config /path/to/aoe/config.toml --codex-config /path/to/codex/config.toml --claude-config /path/to/claude/settings.json
 cargo run -- forget --project "$PWD"
 cargo run -- forget --project "$PWD" --apply
 cargo run -- prune --older-than-days 90
@@ -79,9 +81,12 @@ cargo run -- prune --older-than-days 90 --apply
 cargo run -- prune --keep-recent 10000
 cargo run -- prune --keep-recent 10000 --apply
 cargo run -- print-aoe-config
+cargo run -- print-codex-config
 cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml --apply
+cargo run -- install-codex-hook --config /path/to/codex/config.toml
+cargo run -- install-codex-hook --config /path/to/codex/config.toml --apply
 cargo run -- install-skill --target /path/to/agent/skills
 cargo run -- install-skill --target /path/to/agent/skills --apply
 ```
@@ -100,10 +105,12 @@ the overall installation and controlled readiness values for the key store and
 history database. The only data measurement it exposes is the aggregate event
 count. It does not create a missing key or database, migrate or repair an
 existing database, return paths or identifiers, or surface raw backend errors.
-Optional `--aoe-config` and `--claude-config` arguments add non-mutating hook
-checks for those exact files. Their output is limited to the provider name and
-`installed`, `not_installed`, `conflicting`, or `unavailable`; Praxis does not
-guess host paths or return config paths and command strings.
+Optional `--aoe-config`, `--codex-config`, and `--claude-config` arguments add
+non-mutating hook checks for those exact files. Their output is limited to the
+provider name and `installed`, `not_installed`, `conflicting`, or `unavailable`;
+Praxis does not guess host paths or return config paths and command strings.
+When both the AoE fallback and native Codex hook are found, the two are reported
+as `conflicting` because current source event IDs cannot be safely joined.
 
 `forget --project` previews only an aggregate event count. It opens existing
 history read-only and does not initialize missing state. Repeating with
@@ -129,19 +136,45 @@ returns event, session, or project identifiers, timestamps, paths, query text,
 or historical content. Query text is not persisted by Praxis, though text
 provided on a command line may still be retained by the user's shell history.
 
-For automatic recording, install the release binary somewhere available in the
-AoE host process's `PATH`. Either run `praxis print-aoe-config` and manually
-merge the snippet into a global/profile config, or pass the explicit global
-config file to `install-aoe-hook`. The install command previews by default and
-writes only with `--apply`. It preserves unrelated TOML and existing active
-hook slots, uses AoE's adjacent global-config lock, and refuses conflicting
-hooks or a change that would activate dormant personal hooks. AoE does not
-honor status hooks from repository configuration.
+For automatic Codex recording, install `praxis` somewhere available in the
+Codex process's `PATH`, then preview and apply the native hook to the explicit
+user config:
+
+```bash
+codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+praxis install-codex-hook --config "$codex_config"
+praxis install-codex-hook --config "$codex_config" --apply
+praxis status --codex-config "$codex_config"
+```
+
+The installer adds one matcherless `PostToolUse` group, preserving other
+settings and hook groups. It reloads under Codex's adjacent config lock and
+writes atomically. It refuses invalid hook structures or a config that
+explicitly disables lifecycle hooks. Non-managed Codex hooks require review;
+open `/hooks` in Codex and trust the Praxis command before testing it. Native
+recording uses the documented hook contract and can derive a controlled outcome
+only when the tool response contains explicit structural metadata. Current
+Codex shell hooks often omit exit status, so `unknown` is expected and is safer
+than inferring success from output text. Praxis never stores raw input or
+output.
+
+AoE's integration remains the transcript-based alternative. Choose native
+Codex recording or the Praxis AoE fallback for a given session, not both:
+current Codex hook IDs are not guaranteed to match transcript call IDs, so the
+two sources cannot be safely deduplicated. If the Praxis AoE hook is already
+installed, leave the Codex hook uninstalled unless those AoE entries are first
+removed. To use the fallback, run `praxis print-aoe-config` and manually merge
+the snippet into a global/profile config, or pass the explicit global config
+file to `install-aoe-hook`. The install command previews by default and writes
+only with `--apply`. It preserves unrelated TOML and existing active hook slots,
+uses AoE's adjacent global-config lock, and refuses conflicting hooks or a
+change that would activate dormant personal hooks. AoE does not honor status
+hooks from repository configuration.
 
 The installed AoE entries invoke `praxis aoe-hook` on stable idle/error
 transitions. The handler reads only `AOE_SESSION_ID`, `AOE_PROFILE`, and
-`AOE_TOOL`; duplicate deliveries are safe. Unsupported agent types are ignored
-successfully.
+`AOE_TOOL`; repeated deliveries from that same source are safe. Unsupported
+agent types are ignored successfully.
 
 For Claude Code, run `praxis print-claude-config` and manually merge the JSON
 fragment into user or project settings without replacing existing hooks. It

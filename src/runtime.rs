@@ -17,8 +17,9 @@ use crate::{
     cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
     packaging::{
-        AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, inspect_aoe_hook, inspect_claude_hook,
-        install_aoe_hook, install_skill,
+        AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
+        inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_codex_hook,
+        install_skill,
     },
     query::{RecallOptions, RecallResult, RecallService},
     storage::{
@@ -54,6 +55,10 @@ pub fn execute(cli: Cli) -> Result<()> {
             println!("{AOE_CONFIG_SNIPPET}");
             Ok(())
         }
+        Command::PrintCodexConfig => {
+            println!("{CODEX_CONFIG_SNIPPET}");
+            Ok(())
+        }
         Command::PrintClaudeConfig => {
             println!("{CLAUDE_CONFIG_SNIPPET}");
             Ok(())
@@ -61,15 +66,19 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Status {
             aoe_config,
             claude_config,
+            codex_config,
             data_home,
         } => {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let mut hooks = Vec::with_capacity(2);
+            let mut hooks = Vec::with_capacity(3);
             if let Some(config) = aoe_config {
                 hooks.push((HookProvider::Aoe, inspect_aoe_hook(&config)));
             }
             if let Some(config) = claude_config {
                 hooks.push((HookProvider::Claude, inspect_claude_hook(&config)));
+            }
+            if let Some(config) = codex_config {
+                hooks.push((HookProvider::Codex, inspect_codex_hook(&config)));
             }
             let report = health_status(data_home, SecretServiceKeyProvider::default(), hooks);
             print_json(&report)
@@ -107,6 +116,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
         Command::InstallAoeHook { config, apply } => {
             let report = install_aoe_hook(&config, apply)?;
+            print_json(&report)
+        }
+        Command::InstallCodexHook { config, apply } => {
+            let report = install_codex_hook(&config, apply)?;
             print_json(&report)
         }
         Command::InstallSkill { target, apply } => {
@@ -586,9 +599,65 @@ mod tests {
     }
 
     #[test]
+    fn native_codex_recording_is_encrypted_silent_and_idempotent() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("SECRET_CODEX_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "session_id": "SECRET_CODEX_SESSION",
+            "transcript_path": "/private/SECRET_TRANSCRIPT",
+            "cwd": project,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-1",
+            "duration_ms": 11,
+            "tool_input": {"command": "TOKEN=SECRET_TOKEN false"},
+            "tool_response": "PASSWORD=hunter2"
+        }))
+        .unwrap();
+        let data_home = temp.path().join("data");
+
+        let first = record_hook(
+            codex::normalize_post_tool_observation(payload.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let second = record_hook(
+            codex::normalize_post_tool_observation(payload.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
+        assert_eq!(second.already_present, 1);
+
+        let database = fs::read(data_home.join("praxis/history.db")).unwrap();
+        for forbidden in [
+            b"SECRET_CODEX_PROJECT".as_slice(),
+            b"SECRET_CODEX_SESSION",
+            b"SECRET_TRANSCRIPT",
+            b"SECRET_TOKEN",
+            b"hunter2",
+        ] {
+            assert!(
+                !database
+                    .windows(forbidden.len())
+                    .any(|window| window == forbidden)
+            );
+        }
+    }
+
+    #[test]
     fn generated_claude_config_uses_the_silent_native_handler() {
         assert!(CLAUDE_CONFIG_SNIPPET.contains("praxis record-hook --agent claude"));
         assert!(CLAUDE_CONFIG_SNIPPET.contains("PostToolUseFailure"));
+    }
+
+    #[test]
+    fn generated_codex_config_uses_the_silent_native_handler() {
+        assert!(CODEX_CONFIG_SNIPPET.contains("praxis record-hook --agent codex"));
+        assert!(CODEX_CONFIG_SNIPPET.contains("[[hooks.PostToolUse]]"));
     }
 
     #[test]
@@ -642,11 +711,12 @@ mod tests {
             FixedKeyProbe(Ok(false)),
             [
                 (HookProvider::Aoe, Ok(HookReadiness::Installed)),
+                (HookProvider::Codex, Ok(HookReadiness::Installed)),
                 (HookProvider::Claude, Ok(HookReadiness::Conflicting)),
             ],
         );
         assert_eq!(report.status, crate::application::OverallHealth::Degraded);
-        assert_eq!(report.hooks.len(), 2);
+        assert_eq!(report.hooks.len(), 3);
 
         let encoded = serde_json::to_string(&report).unwrap();
         for forbidden in ["config.toml", "settings.json", "praxis record-hook"] {

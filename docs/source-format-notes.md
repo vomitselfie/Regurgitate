@@ -70,7 +70,24 @@ location have no deserialization fields.
 
 Hosted tools such as web search do not currently use the local tool hook path.
 Transcript fallback may observe them, but should retain only a generic
-controlled operation.
+controlled operation. The official hook reference also describes
+`transcript_path` as a convenience rather than a stable API, reinforcing that
+the native hook payload—not transcript parsing—is the primary integration.
+
+Current [upstream hook reports](https://github.com/openai/codex/issues/34289)
+show that shell `tool_response` can be plain output text without an exit status,
+and native `tool_use_id` is not guaranteed to equal the corresponding JSONL
+call ID. Praxis therefore keeps those outcomes `unknown` and does not attempt
+content heuristics or cross-source joins. Native hooks and AoE transcript
+ingestion are alternative sources for a session, not a combined feed.
+
+Codex loads additive lifecycle hooks from inline `config.toml` tables and other
+active hook sources. A matcherless `[[hooks.PostToolUse]]` group observes all
+supported local tools without replacing existing matcher groups. Non-managed
+command hooks must be reviewed and trusted in Codex before they run. These
+assumptions were checked against the current official
+[Codex hooks reference](https://learn.chatgpt.com/docs/hooks) on the
+reconnaissance date above.
 
 ## Claude Code
 

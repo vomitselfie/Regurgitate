@@ -43,6 +43,9 @@ pub(crate) enum Command {
     /// Print an AoE status-hook configuration snippet for manual installation.
     PrintAoeConfig,
 
+    /// Print a Codex PostToolUse configuration snippet for manual installation.
+    PrintCodexConfig,
+
     /// Print a Claude Code hook configuration snippet for manual merging.
     PrintClaudeConfig,
 
@@ -55,6 +58,10 @@ pub(crate) enum Command {
         /// Explicit Claude settings file to inspect without modifying.
         #[arg(long, value_name = "FILE")]
         claude_config: Option<PathBuf>,
+
+        /// Explicit Codex config file to inspect without modifying.
+        #[arg(long, value_name = "FILE")]
+        codex_config: Option<PathBuf>,
 
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]
@@ -106,6 +113,17 @@ pub(crate) enum Command {
     /// Preview or add Praxis to an explicit global AoE config.
     InstallAoeHook {
         /// Global AoE config.toml file to update.
+        #[arg(long, value_name = "FILE")]
+        config: PathBuf,
+
+        /// Apply the displayed changes instead of previewing them.
+        #[arg(long)]
+        apply: bool,
+    },
+
+    /// Preview or add native recording to an explicit user Codex config.
+    InstallCodexHook {
+        /// User-level Codex config.toml file to update.
         #[arg(long, value_name = "FILE")]
         config: PathBuf,
 
@@ -270,11 +288,14 @@ mod tests {
             "/aoe/config.toml",
             "--claude-config",
             "/claude/settings.json",
+            "--codex-config",
+            "/codex/config.toml",
         ])
         .unwrap();
         let Command::Status {
             aoe_config,
             claude_config,
+            codex_config,
             data_home,
         } = status.command
         else {
@@ -282,6 +303,7 @@ mod tests {
         };
         assert_eq!(aoe_config, Some(PathBuf::from("/aoe/config.toml")));
         assert_eq!(claude_config, Some(PathBuf::from("/claude/settings.json")));
+        assert_eq!(codex_config, Some(PathBuf::from("/codex/config.toml")));
         assert!(data_home.is_none());
     }
 
@@ -383,6 +405,35 @@ mod tests {
         .unwrap();
         let Command::InstallAoeHook { apply, .. } = applied.command else {
             panic!("expected install-aoe-hook command");
+        };
+        assert!(apply);
+    }
+
+    #[test]
+    fn codex_hook_install_is_preview_only_unless_apply_is_explicit() {
+        let preview = Cli::try_parse_from([
+            "praxis",
+            "install-codex-hook",
+            "--config",
+            "/codex/config.toml",
+        ])
+        .unwrap();
+        let Command::InstallCodexHook { config, apply } = preview.command else {
+            panic!("expected install-codex-hook command");
+        };
+        assert_eq!(config, PathBuf::from("/codex/config.toml"));
+        assert!(!apply);
+
+        let applied = Cli::try_parse_from([
+            "praxis",
+            "install-codex-hook",
+            "--config",
+            "/codex/config.toml",
+            "--apply",
+        ])
+        .unwrap();
+        let Command::InstallCodexHook { apply, .. } = applied.command else {
+            panic!("expected install-codex-hook command");
         };
         assert!(apply);
     }

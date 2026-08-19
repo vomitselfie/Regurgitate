@@ -34,6 +34,7 @@ pub enum OverallHealth {
 pub enum HookProvider {
     Aoe,
     Claude,
+    Codex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -118,7 +119,7 @@ where
             }
             _ => OverallHealth::Degraded,
         };
-        let hooks = hooks
+        let mut hooks: Vec<_> = hooks
             .into_iter()
             .map(|(provider, readiness)| {
                 let hook_status = readiness.unwrap_or(HookReadiness::Unavailable);
@@ -131,6 +132,20 @@ where
                 }
             })
             .collect();
+        let aoe_installed = hooks.iter().any(|hook| {
+            hook.provider == HookProvider::Aoe && hook.status == HookReadiness::Installed
+        });
+        let codex_installed = hooks.iter().any(|hook| {
+            hook.provider == HookProvider::Codex && hook.status == HookReadiness::Installed
+        });
+        if aoe_installed && codex_installed {
+            for hook in &mut hooks {
+                if matches!(hook.provider, HookProvider::Aoe | HookProvider::Codex) {
+                    hook.status = HookReadiness::Conflicting;
+                }
+            }
+            status = OverallHealth::Degraded;
+        }
         HealthReport {
             status,
             key_store,
@@ -233,6 +248,30 @@ mod tests {
             !serde_json::to_string(&report)
                 .unwrap()
                 .contains("PRIVATE_CONFIG_PATH")
+        );
+    }
+
+    #[test]
+    fn simultaneous_codex_sources_are_reported_as_conflicting() {
+        let report = HealthService::new(KeyProbe(Ok(true)), HistoryProbe(Ok(Some(7))))
+            .inspect_with_hooks([
+                (HookProvider::Aoe, Ok(HookReadiness::Installed)),
+                (HookProvider::Codex, Ok(HookReadiness::Installed)),
+            ]);
+
+        assert_eq!(report.status, OverallHealth::Degraded);
+        assert_eq!(
+            report.hooks,
+            vec![
+                HookHealth {
+                    provider: HookProvider::Aoe,
+                    status: HookReadiness::Conflicting,
+                },
+                HookHealth {
+                    provider: HookProvider::Codex,
+                    status: HookReadiness::Conflicting,
+                },
+            ]
         );
     }
 }

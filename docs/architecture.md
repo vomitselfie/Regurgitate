@@ -33,7 +33,15 @@ The recording application service resolves the locator through encrypted
 project identity storage, adds the resulting UUID to the event, and appends it
 idempotently. It has no transcript or cursor dependency, so a native delivery
 cannot advance or corrupt the AoE/Codex transcript checkpoint. The stable event
-ID makes a repeated native delivery safe.
+ID makes a repeated native delivery safe within that source. Native Codex hook
+IDs are not guaranteed to match transcript call IDs, so Praxis does not claim
+cross-source deduplication. A deployment should select native recording or AoE
+transcript fallback for a given Codex session rather than enable both.
+
+Codex exposes `PostToolUse` for successful and non-zero local tool completions.
+Its adapter classifies only explicit structural response metadata and otherwise
+keeps the outcome `unknown`. `print-codex-config` emits a matcherless native
+hook, while `install-codex-hook` can add that group to an explicit user config.
 
 Claude exposes distinct `PostToolUse` and `PostToolUseFailure` events. Its
 adapter therefore derives outcome from the event name and does not inspect raw
@@ -98,14 +106,16 @@ installs them only beneath a caller-supplied skills directory. Installation is
 preview-only unless `--apply` is explicit. It stages a new package before
 renaming it into place, is idempotent for identical files, and refuses to
 replace changed, non-directory, or symlinked destinations. Host path discovery
-and configuration mutation remain outside the installer.
+and host configuration mutation remain outside the skill installer.
 
-The same module can conservatively add the ingestion hook to an explicit AoE
-global config file. It parses with a comment-preserving TOML editor,
-rejects occupied `on_idle` or `on_error` slots, and refuses to enable a table
-that contains other dormant hooks. Apply reloads the file under AoE's adjacent
-global `.config.lock`, writes a temporary sibling, synchronizes it, and atomically
-replaces the file while preserving its permissions and any config symlink.
+The same module can conservatively add hooks to explicit AoE and Codex config
+files. Provider-specific parsers and policies remain separate, while a small
+shared config-file module owns adjacent locking, symlink-safe atomic writes,
+permission preservation, and directory handling. The AoE installer rejects
+occupied `on_idle` or `on_error` slots and refuses to enable a table containing
+other dormant hooks. The Codex installer preserves existing matcher groups and
+refuses invalid hook structures or explicitly disabled lifecycle hooks. Both
+installers re-read under the provider's adjacent lock before applying.
 
 ## Privacy boundary
 
@@ -166,11 +176,13 @@ included in the report, so keyring messages, database paths, and damaged bytes
 cannot reach CLI JSON.
 
 Optional hook readiness follows the same reduction. The runtime inspects only
-AoE and Claude config paths explicitly supplied to `status`. AoE reuses the
-same comment-preserving, conflict-aware preview parser as its installer. Claude
+AoE, Codex, and Claude config paths explicitly supplied to `status`. AoE and
+Codex reuse their comment-preserving, conflict-aware preview parsers. Claude
 uses a typed view of only the two relevant hook arrays; unrelated settings are
 not represented, and personal command strings are transient comparison inputs.
-The health report retains only a controlled provider and readiness enum.
+If both the AoE fallback and native Codex hook are installed, the service marks
+both as conflicting to enforce the source-selection boundary. The health report
+retains only a controlled provider and readiness enum.
 
 ## Forgetting boundary
 
@@ -228,9 +240,11 @@ Implemented:
 - Linux Secret Service key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
+- native Codex hook config generation and a preview-first explicit-path
+  installer;
 - non-mutating Claude Code hook config generation;
 - non-mutating aggregate key-store and database health reporting;
-- explicit-path, non-mutating AoE and Claude hook readiness reporting;
+- explicit-path, non-mutating AoE, Codex, and Claude hook readiness reporting;
 - preview-first transactional project forgetting with race-safe tombstones;
 - preview-first age/count retention with bounded deletion transactions;
 - project-scoped aggregate recall with operation/failure filters and a hard
@@ -238,7 +252,7 @@ Implemented:
 - ephemeral task-query ranking and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
 - a preview-first, no-overwrite skill package installer;
-- a locked, atomic, conflict-refusing AoE hook config installer; and
+- locked, atomic, conflict-refusing AoE and Codex hook config installers; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:

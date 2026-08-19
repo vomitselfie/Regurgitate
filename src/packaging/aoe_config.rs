@@ -1,28 +1,21 @@
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{ErrorKind, Write},
+    fs,
     path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant},
 };
 
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-
 use anyhow::{Context, Result, bail};
-use fs2::FileExt;
 use serde::Serialize;
-use tempfile::NamedTempFile;
 use toml_edit::{DocumentMut, Table, table, value};
 
 use crate::application::HookReadiness;
 
-use super::InstallStatus;
+use super::{
+    InstallStatus,
+    config_file::{acquire_config_lock, atomic_write_config, containing_directory, read_config},
+};
 
 const AOE_HOOK_COMMAND: &str = "praxis aoe-hook";
 const CONFIG_LOCK_FILENAME: &str = ".config.lock";
-const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 const OTHER_STATUS_HOOKS: [&str; 4] = ["on_starting", "on_running", "on_waiting", "on_change"];
 
 pub const AOE_CONFIG_SNIPPET: &str = r#"# Merge into a global or profile AoE config.
@@ -44,7 +37,7 @@ pub struct AoeHookInstallReport {
 /// as controlled conflicts; read failures remain backend errors for the health
 /// service to sanitize.
 pub fn inspect_aoe_hook(config: &Path) -> Result<HookReadiness> {
-    let content = read_config(config)?;
+    let content = read_config(config, "AoE")?;
     Ok(match prepare_config(&content) {
         Ok(prepared) if prepared.changes.is_empty() => HookReadiness::Installed,
         Ok(_) => HookReadiness::NotInstalled,
@@ -60,7 +53,7 @@ struct PreparedConfig {
 /// Preview or conservatively add Praxis to one explicit global AoE config.
 /// Existing hook commands are never composed or replaced.
 pub fn install_aoe_hook(config: &Path, apply: bool) -> Result<AoeHookInstallReport> {
-    let prepared = prepare_config(&read_config(config)?)?;
+    let prepared = prepare_config(&read_config(config, "AoE")?)?;
     if prepared.changes.is_empty() {
         return Ok(report(
             InstallStatus::AlreadyCurrent,
@@ -79,11 +72,11 @@ pub fn install_aoe_hook(config: &Path, apply: bool) -> Result<AoeHookInstallRepo
             config_directory.display()
         )
     })?;
-    let _lock = acquire_config_lock(config_directory)?;
+    let _lock = acquire_config_lock(config_directory, CONFIG_LOCK_FILENAME, "AoE")?;
 
     // Load and validate again under AoE's adjacent config lock. The preview is
     // informational; only this fresh document may be written.
-    let prepared = prepare_config(&read_config(config)?)?;
+    let prepared = prepare_config(&read_config(config, "AoE")?)?;
     if prepared.changes.is_empty() {
         return Ok(report(
             InstallStatus::AlreadyCurrent,
@@ -91,7 +84,7 @@ pub fn install_aoe_hook(config: &Path, apply: bool) -> Result<AoeHookInstallRepo
             prepared.changes,
         ));
     }
-    atomic_write_config(config, prepared.content.as_bytes())?;
+    atomic_write_config(config, prepared.content.as_bytes(), "AoE")?;
     Ok(report(InstallStatus::Installed, config, prepared.changes))
 }
 
@@ -182,121 +175,6 @@ fn set_enabled(status_hooks: &mut Table) {
         *value.decor_mut() = decor;
     }
     *existing = replacement;
-}
-
-fn read_config(path: &Path) -> Result<String> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(content),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
-        Err(error) => {
-            Err(error).with_context(|| format!("could not read AoE config at {}", path.display()))
-        }
-    }
-}
-
-fn containing_directory(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-}
-
-struct ConfigLock {
-    file: File,
-}
-
-impl Drop for ConfigLock {
-    fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
-    }
-}
-
-fn acquire_config_lock(directory: &Path) -> Result<ConfigLock> {
-    let lock_path = directory.join(CONFIG_LOCK_FILENAME);
-    if fs::symlink_metadata(&lock_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        bail!("refusing to use symlinked AoE config lock");
-    }
-
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let file = options
-        .open(&lock_path)
-        .with_context(|| format!("could not open AoE config lock at {}", lock_path.display()))?;
-    let started = Instant::now();
-    loop {
-        match file.try_lock_exclusive() {
-            Ok(()) => return Ok(ConfigLock { file }),
-            Err(error)
-                if error.kind() == ErrorKind::WouldBlock
-                    && started.elapsed() < LOCK_WAIT_TIMEOUT =>
-            {
-                thread::sleep(LOCK_RETRY_INTERVAL);
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                bail!(
-                    "timed out waiting for AoE config lock at {}",
-                    lock_path.display()
-                );
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("could not lock AoE config at {}", lock_path.display())
-                });
-            }
-        }
-    }
-}
-
-fn atomic_write_config(config: &Path, content: &[u8]) -> Result<()> {
-    let write_path = resolved_write_path(config)?;
-    let directory = containing_directory(&write_path);
-    let existing_permissions = fs::metadata(&write_path)
-        .ok()
-        .map(|metadata| metadata.permissions());
-    let mut temporary = NamedTempFile::new_in(directory).with_context(|| {
-        format!(
-            "could not create temporary AoE config beside {}",
-            write_path.display()
-        )
-    })?;
-    temporary.write_all(content)?;
-    temporary.as_file().sync_all()?;
-    let persisted = temporary
-        .persist(&write_path)
-        .map_err(|error| error.error)?;
-    if let Some(permissions) = existing_permissions {
-        persisted.set_permissions(permissions)?;
-    }
-    if let Ok(directory_file) = File::open(directory) {
-        let _ = directory_file.sync_all();
-    }
-    Ok(())
-}
-
-fn resolved_write_path(config: &Path) -> Result<PathBuf> {
-    match fs::symlink_metadata(config) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            let target = fs::canonicalize(config).with_context(|| {
-                format!(
-                    "could not resolve symlinked AoE config at {}",
-                    config.display()
-                )
-            })?;
-            if !fs::metadata(&target)?.is_file() {
-                bail!("AoE config symlink does not resolve to a regular file");
-            }
-            Ok(target)
-        }
-        Ok(metadata) if metadata.is_file() => Ok(config.to_path_buf()),
-        Ok(_) => bail!(
-            "AoE config path is not a regular file: {}",
-            config.display()
-        ),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(config.to_path_buf()),
-        Err(error) => Err(error)
-            .with_context(|| format!("could not inspect AoE config at {}", config.display())),
-    }
 }
 
 fn report(

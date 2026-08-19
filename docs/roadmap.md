@@ -14,17 +14,20 @@ module boundaries.
 - transient task-query ranking with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
+- native Codex `PostToolUse` recording with generated configuration and a
+  preview-first explicit-path installer;
 - native Claude Code success/failure hook recording with generated
   configuration;
 - a shared, sanitized native-hook observation boundary and cross-adapter
   conformance fixtures;
 - read-only key-store and database health with aggregate-only output;
-- explicit-path AoE and Claude hook readiness with controlled output;
+- explicit-path AoE, Codex, and Claude hook readiness with controlled output;
 - preview-first project forgetting with transactional encrypted deletion;
 - preview-first age/count retention with fixed-size deletion transactions;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
-- a locked, atomic installer for empty AoE idle/error hook slots; and
+- locked, atomic installers for empty AoE idle/error slots and an additive
+  Codex matcher group;
 - version-gated CI releases with a verified Linux binary archive and checksum;
   and
 - adversarial privacy, authentication, migration, project-isolation, and
@@ -40,6 +43,17 @@ Claude Code was added without coupling its payload to the core:
    cursor-free recording service; and
 4. Claude payload types and its working-directory locator remain confined to
    the adapter boundary.
+
+## Completed native Codex slice
+
+Native Codex recording now complements the AoE transcript fallback:
+
+1. one additive matcherless `PostToolUse` group records supported local tools;
+2. the installer preserves unrelated TOML and hook groups, locks and writes
+   atomically, and refuses disabled or malformed lifecycle-hook structures;
+3. explicit-path health inspection reuses the same non-mutating parser; and
+4. documentation makes the source-selection boundary explicit because current
+   native hook IDs cannot be safely joined to transcript call IDs.
 
 ## Completed operational slice
 
@@ -90,7 +104,7 @@ Add human-only aggregate inspection without creating an event-export surface:
    and
 4. exclude identifiers, timestamps, paths, and event-level records.
 
-Both installers require explicit host paths instead of guessing them and are
+Host config installers require explicit paths instead of guessing them and are
 preview-only without `--apply`. The AoE installer preserves unrelated TOML but
 refuses occupied status slots because upstream supports one command string per
 transition rather than a composable command list.
