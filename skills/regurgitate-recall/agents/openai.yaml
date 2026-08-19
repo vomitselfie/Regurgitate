@@ -1,0 +1,4 @@
+interface:
+  display_name: "Regurgitate Recall"
+  short_description: "Recall bounded local procedural history"
+  default_prompt: "Use $regurgitate-recall to retrieve relevant local procedural history before acting on this task."

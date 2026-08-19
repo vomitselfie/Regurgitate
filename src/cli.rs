@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::core::{Operation, Outcome, Strategy};
 
 #[derive(Parser)]
-#[command(name = "praxis", version, about)]
+#[command(name = "regurgitate", version, about)]
 pub struct Cli {
     #[command(subcommand)]
     pub(crate) command: Command,
@@ -129,7 +129,7 @@ pub(crate) enum Command {
         data_home: Option<PathBuf>,
     },
 
-    /// Preview or add Praxis to an explicit global AoE config.
+    /// Preview or add Regurgitate to an explicit global AoE config.
     InstallAoeHook {
         /// Global AoE config.toml file to update.
         #[arg(long, value_name = "FILE")]
@@ -164,7 +164,7 @@ pub(crate) enum Command {
 
     /// Preview, install, or explicitly replace the bundled agent recall skill.
     InstallSkill {
-        /// Agent host's skills directory; Praxis adds a praxis-recall child.
+        /// Agent host's skills directory; Regurgitate adds a regurgitate-recall child.
         #[arg(long, value_name = "DIRECTORY")]
         target: PathBuf,
 
@@ -352,25 +352,26 @@ mod tests {
 
     #[test]
     fn debug_hook_defaults_to_codex_and_record_hook_requires_a_provider() {
-        let debug = Cli::try_parse_from(["praxis", "debug-hook"]).unwrap();
+        let debug = Cli::try_parse_from(["regurgitate", "debug-hook"]).unwrap();
         let Command::DebugHook { agent } = debug.command else {
             panic!("expected debug-hook command");
         };
         assert_eq!(agent, HookAgentArg::Codex);
 
-        let record = Cli::try_parse_from(["praxis", "record-hook", "--agent", "claude"]).unwrap();
+        let record =
+            Cli::try_parse_from(["regurgitate", "record-hook", "--agent", "claude"]).unwrap();
         let Command::RecordHook { agent, data_home } = record.command else {
             panic!("expected record-hook command");
         };
         assert_eq!(agent, HookAgentArg::Claude);
         assert!(data_home.is_none());
-        assert!(Cli::try_parse_from(["praxis", "record-hook"]).is_err());
+        assert!(Cli::try_parse_from(["regurgitate", "record-hook"]).is_err());
     }
 
     #[test]
     fn learning_requires_one_controlled_strategy_and_known_outcome() {
         let cli = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "learn",
             "--project",
             "/private/project",
@@ -395,7 +396,7 @@ mod tests {
         assert!(data_home.is_none());
         assert!(
             Cli::try_parse_from([
-                "praxis",
+                "regurgitate",
                 "learn",
                 "--project",
                 "/private/project",
@@ -408,7 +409,7 @@ mod tests {
         );
         assert!(
             Cli::try_parse_from([
-                "praxis",
+                "regurgitate",
                 "learn",
                 "--project",
                 "/private/project",
@@ -426,7 +427,7 @@ mod tests {
         ] {
             assert!(
                 Cli::try_parse_from([
-                    "praxis",
+                    "regurgitate",
                     "learn",
                     "--project",
                     "/private/project",
@@ -443,7 +444,7 @@ mod tests {
     #[test]
     fn status_checks_only_explicit_provider_configs() {
         let status = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "status",
             "--aoe-config",
             "/aoe/config.toml",
@@ -471,14 +472,15 @@ mod tests {
     #[test]
     fn forgetting_is_preview_only_unless_apply_is_explicit() {
         let preview =
-            Cli::try_parse_from(["praxis", "forget", "--project", "/private/project"]).unwrap();
+            Cli::try_parse_from(["regurgitate", "forget", "--project", "/private/project"])
+                .unwrap();
         let Command::Forget { apply, .. } = preview.command else {
             panic!("expected forget command");
         };
         assert!(!apply);
 
         let applied = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "forget",
             "--project",
             "/private/project",
@@ -493,7 +495,7 @@ mod tests {
 
     #[test]
     fn pruning_requires_exactly_one_policy_and_previews_by_default() {
-        let age = Cli::try_parse_from(["praxis", "prune", "--older-than-days", "30"]).unwrap();
+        let age = Cli::try_parse_from(["regurgitate", "prune", "--older-than-days", "30"]).unwrap();
         let Command::Prune {
             older_than_days,
             keep_recent,
@@ -507,10 +509,10 @@ mod tests {
         assert_eq!(keep_recent, None);
         assert!(!apply);
 
-        assert!(Cli::try_parse_from(["praxis", "prune"]).is_err());
+        assert!(Cli::try_parse_from(["regurgitate", "prune"]).is_err());
         assert!(
             Cli::try_parse_from([
-                "praxis",
+                "regurgitate",
                 "prune",
                 "--older-than-days",
                 "30",
@@ -524,7 +526,8 @@ mod tests {
     #[test]
     fn skill_install_is_preview_only_unless_apply_is_explicit() {
         let preview =
-            Cli::try_parse_from(["praxis", "install-skill", "--target", "/agent/skills"]).unwrap();
+            Cli::try_parse_from(["regurgitate", "install-skill", "--target", "/agent/skills"])
+                .unwrap();
         let Command::InstallSkill {
             target,
             apply,
@@ -538,7 +541,7 @@ mod tests {
         assert!(!replace);
 
         let applied = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-skill",
             "--target",
             "/agent/skills",
@@ -551,7 +554,7 @@ mod tests {
         assert!(apply);
 
         let replacement = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-skill",
             "--target",
             "/agent/skills",
@@ -567,9 +570,13 @@ mod tests {
 
     #[test]
     fn aoe_hook_install_is_preview_only_unless_apply_is_explicit() {
-        let preview =
-            Cli::try_parse_from(["praxis", "install-aoe-hook", "--config", "/aoe/config.toml"])
-                .unwrap();
+        let preview = Cli::try_parse_from([
+            "regurgitate",
+            "install-aoe-hook",
+            "--config",
+            "/aoe/config.toml",
+        ])
+        .unwrap();
         let Command::InstallAoeHook { config, apply } = preview.command else {
             panic!("expected install-aoe-hook command");
         };
@@ -577,7 +584,7 @@ mod tests {
         assert!(!apply);
 
         let applied = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-aoe-hook",
             "--config",
             "/aoe/config.toml",
@@ -593,7 +600,7 @@ mod tests {
     #[test]
     fn codex_hook_install_is_preview_only_unless_apply_is_explicit() {
         let preview = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-codex-hook",
             "--config",
             "/codex/config.toml",
@@ -606,7 +613,7 @@ mod tests {
         assert!(!apply);
 
         let applied = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-codex-hook",
             "--config",
             "/codex/config.toml",
@@ -622,7 +629,7 @@ mod tests {
     #[test]
     fn claude_hook_install_is_preview_only_unless_apply_is_explicit() {
         let preview = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-claude-hook",
             "--config",
             "/claude/settings.json",
@@ -635,7 +642,7 @@ mod tests {
         assert!(!apply);
 
         let applied = Cli::try_parse_from([
-            "praxis",
+            "regurgitate",
             "install-claude-hook",
             "--config",
             "/claude/settings.json",

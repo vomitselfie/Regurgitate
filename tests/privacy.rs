@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use praxis::{adapters::codex::normalize_post_tool_hook, core::DebugEvent};
+use regurgitate::{adapters::codex::normalize_post_tool_hook, core::DebugEvent};
 
 #[test]
 fn adversarial_hook_fixture_leaves_no_private_content() {

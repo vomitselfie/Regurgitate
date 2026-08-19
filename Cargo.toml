@@ -1,11 +1,11 @@
 [package]
-name = "praxis"
-version = "0.5.0"
+name = "regurgitate"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "Encrypted local procedural memory for AI agents"
-repository = "https://github.com/vomitselfie/Praxis"
+repository = "https://github.com/vomitselfie/Regurgitate"
 
 [dependencies]
 anyhow = "1.0"

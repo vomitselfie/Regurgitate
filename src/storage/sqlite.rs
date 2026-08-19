@@ -36,8 +36,9 @@ pub(super) struct StoredEvent {
 impl EncryptedStore {
     pub fn open(path: &Path, master_key: &MasterKey) -> Result<Self> {
         ensure_private_database_file(path)?;
-        let connection = Connection::open(path)
-            .with_context(|| format!("could not open Praxis database at {}", path.display()))?;
+        let connection = Connection::open(path).with_context(|| {
+            format!("could not open Regurgitate database at {}", path.display())
+        })?;
         Self::from_connection(connection, master_key)
     }
 
@@ -45,7 +46,7 @@ impl EncryptedStore {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
             .with_context(|| {
                 format!(
-                    "could not open existing Praxis database at {}",
+                    "could not open existing Regurgitate database at {}",
                     path.display()
                 )
             })?;
@@ -56,7 +57,7 @@ impl EncryptedStore {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| {
                 format!(
-                    "could not open existing Praxis database read-only at {}",
+                    "could not open existing Regurgitate database read-only at {}",
                     path.display()
                 )
             })?;
@@ -229,9 +230,12 @@ fn ensure_private_database_file(path: &Path) -> Result<()> {
     options.read(true).write(true).create(true);
     #[cfg(unix)]
     options.mode(0o600);
-    options
-        .open(path)
-        .with_context(|| format!("could not create Praxis database at {}", path.display()))?;
+    options.open(path).with_context(|| {
+        format!(
+            "could not create Regurgitate database at {}",
+            path.display()
+        )
+    })?;
 
     #[cfg(unix)]
     {

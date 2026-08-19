@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: praxis-${{ github.workflow }}-${{ github.ref }}
+  group: regurgitate-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -48,10 +48,10 @@ jobs:
           bash -n scripts/package-release.sh
           cargo build --locked
 
-          package_dist="$RUNNER_TEMP/praxis-package"
-          PRAXIS_DIST_DIR="$package_dist" \
-            scripts/package-release.sh linux-x86_64 target/debug/praxis
-          PRAXIS_DIST_DIR="$package_dist" \
+          package_dist="$RUNNER_TEMP/regurgitate-package"
+          REGURGITATE_DIST_DIR="$package_dist" \
+            scripts/package-release.sh linux-x86_64 target/debug/regurgitate
+          REGURGITATE_DIST_DIR="$package_dist" \
             scripts/verify-release-package.sh linux-x86_64
 
   build-release:
@@ -105,7 +105,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.rust_target }}/release/praxis"
+          binary="target/${{ matrix.rust_target }}/release/regurgitate"
           if readelf -l "$binary" | grep -Fq INTERP; then
             echo "release binary is dynamically linked" >&2
             exit 1
@@ -115,7 +115,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.rust_target }}/release/praxis"
+          binary="target/${{ matrix.rust_target }}/release/regurgitate"
           actual="$(lipo -archs "$binary")"
           test "$actual" = "${{ matrix.binary_arch }}"
 
@@ -124,14 +124,14 @@ jobs:
           set -euo pipefail
           scripts/package-release.sh \
             "${{ matrix.platform }}" \
-            "target/${{ matrix.rust_target }}/release/praxis"
+            "target/${{ matrix.rust_target }}/release/regurgitate"
           scripts/verify-release-package.sh "${{ matrix.platform }}"
 
       - name: Upload release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: praxis-${{ matrix.platform }}
-          path: dist/praxis-v*-${{ matrix.platform }}.tar.gz
+          name: regurgitate-${{ matrix.platform }}
+          path: dist/regurgitate-v*-${{ matrix.platform }}.tar.gz
           if-no-files-found: error
 
   release:
@@ -160,17 +160,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          package_id="$(cargo pkgid -p praxis)"
+          package_id="$(cargo pkgid -p regurgitate)"
           version="${package_id##*@}"
           if [[ "$version" == "$package_id" ]]; then
-            echo "could not determine the Praxis package version" >&2
+            echo "could not determine the Regurgitate package version" >&2
             exit 1
           fi
           tag="v${version}"
           required_assets=(
-            "praxis-${tag}-linux-x86_64.tar.gz"
-            "praxis-${tag}-macos-aarch64.tar.gz"
-            "praxis-${tag}-macos-x86_64.tar.gz"
+            "regurgitate-${tag}-linux-x86_64.tar.gz"
+            "regurgitate-${tag}-macos-aarch64.tar.gz"
+            "regurgitate-${tag}-macos-x86_64.tar.gz"
             "SHA256SUMS"
           )
           tag_commit="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)"
@@ -216,9 +216,9 @@ jobs:
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
           archives=(
-            "dist/praxis-${tag}-linux-x86_64.tar.gz"
-            "dist/praxis-${tag}-macos-aarch64.tar.gz"
-            "dist/praxis-${tag}-macos-x86_64.tar.gz"
+            "dist/regurgitate-${tag}-linux-x86_64.tar.gz"
+            "dist/regurgitate-${tag}-macos-aarch64.tar.gz"
+            "dist/regurgitate-${tag}-macos-x86_64.tar.gz"
           )
           for archive in "${archives[@]}"; do
             test -f "$archive"
@@ -226,9 +226,9 @@ jobs:
           (
             cd dist
             sha256sum \
-              "praxis-${tag}-linux-x86_64.tar.gz" \
-              "praxis-${tag}-macos-aarch64.tar.gz" \
-              "praxis-${tag}-macos-x86_64.tar.gz" \
+              "regurgitate-${tag}-linux-x86_64.tar.gz" \
+              "regurgitate-${tag}-macos-aarch64.tar.gz" \
+              "regurgitate-${tag}-macos-x86_64.tar.gz" \
               > SHA256SUMS
             sha256sum --check SHA256SUMS
           )
@@ -241,9 +241,9 @@ jobs:
           set -euo pipefail
           tag="${{ steps.release.outputs.tag }}"
           archives=(
-            "dist/praxis-${tag}-linux-x86_64.tar.gz"
-            "dist/praxis-${tag}-macos-aarch64.tar.gz"
-            "dist/praxis-${tag}-macos-x86_64.tar.gz"
+            "dist/regurgitate-${tag}-linux-x86_64.tar.gz"
+            "dist/regurgitate-${tag}-macos-aarch64.tar.gz"
+            "dist/regurgitate-${tag}-macos-x86_64.tar.gz"
           )
 
           if [[ "${{ steps.release.outputs.mode }}" == repair ]]; then
@@ -260,7 +260,7 @@ jobs:
           gh release create "$tag" "${archives[@]}" dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Praxis $tag" \
+            --title "Regurgitate $tag" \
             --generate-notes \
             "${release_flags[@]}"
 

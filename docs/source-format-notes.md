@@ -14,9 +14,9 @@ under the XDG configuration directory. The fields needed by the adapter are:
   record.
 
 Other observed fields include titles, commands, timestamps, group paths, and UI
-state. Praxis does not deserialize them.
+state. Regurgitate does not deserialize them.
 
-Without an explicit `XDG_CONFIG_HOME`, Praxis follows AoE's platform defaults:
+Without an explicit `XDG_CONFIG_HOME`, Regurgitate follows AoE's platform defaults:
 `~/.config/agent-of-empires` on Linux and `~/.agent-of-empires` on macOS.
 
 AoE currently provides three useful integration surfaces:
@@ -28,11 +28,11 @@ AoE currently provides three useful integration surfaces:
 
 The plugin system is useful for installation, commands, settings, and UI, but
 has no post-install callback and its worker contract is not itself a complete
-tool-event feed. Praxis therefore waits for an explicit setup action before
+tool-event feed. Regurgitate therefore waits for an explicit setup action before
 adding an agent hook and skill. Status/lifecycle hooks remain useful for
 automatic session-boundary ingestion.
 
-Praxis therefore ships a release-binary plugin as an operational layer over the
+Regurgitate therefore ships a release-binary plugin as an operational layer over the
 same executable. Its worker publishes aggregate health and handles controlled
 status, refresh, and setup methods; it does not receive or reconstruct provider
 tool events. Contributed setup commands cover hosts where settings-page actions
@@ -43,7 +43,7 @@ the daemon.
 The implemented host integration uses global/profile `[status_hooks]` entries
 for `on_idle` and `on_error`. AoE documents these hooks as best-effort,
 non-blocking commands and supplies `AOE_SESSION_ID`, `AOE_PROFILE`, `AOE_TOOL`,
-project/status context, and other metadata. Praxis reads only the first three.
+project/status context, and other metadata. Regurgitate reads only the first three.
 
 Each status slot currently accepts one command string, not a command list. The
 installer therefore fills only absent idle/error slots and refuses to replace
@@ -69,7 +69,7 @@ and `response_item`. Tool activity appears as paired response items:
 - `custom_tool_call` / `custom_tool_call_output` in current code-mode records.
 
 Calls carry a tool name and call identifier. They also carry arguments or input,
-which Praxis must discard. Outputs may be a string or content-block array and
+which Regurgitate must discard. Outputs may be a string or content-block array and
 must also be discarded after deriving a controlled outcome. Older shell results
 contain a stable `Process exited with code N` marker. Newer code-mode transcript
 output does not always expose an exit code, so the transcript fallback reports
@@ -91,7 +91,7 @@ the native hook payload—not transcript parsing—is the primary integration.
 Current [upstream hook reports](https://github.com/openai/codex/issues/34289)
 show that shell `tool_response` can be plain output text without an exit status,
 and native `tool_use_id` is not guaranteed to equal the corresponding JSONL
-call ID. Praxis therefore keeps those outcomes `unknown` and does not attempt
+call ID. Regurgitate therefore keeps those outcomes `unknown` and does not attempt
 content heuristics or cross-source joins. Native hooks and AoE transcript
 ingestion are alternative sources for a session, not a combined feed.
 
@@ -123,7 +123,7 @@ includes `session_id`, `transcript_path`, `cwd`, `permission_mode`, and
 the same tool identity plus an `error`, optional interruption state, and
 optional duration.
 
-Praxis registers both terminal events. It allowlists only the session ID,
+Regurgitate registers both terminal events. It allowlists only the session ID,
 working directory, event name, tool name, tool-use ID, and optional duration.
 The distinct hook event names are sufficient to derive success or failure, so
 the adapter has no fields for tool input, tool response, error, transcript path,
@@ -136,7 +136,7 @@ reconnaissance date above. No Claude transcript parser is implemented.
 
 ## Current ingestion compatibility
 
-`praxis ingest --session <id>` composes the AoE registry lookup and Codex
+`regurgitate ingest --session <id>` composes the AoE registry lookup and Codex
 transcript normalizer through a generic session-event source. Its encrypted
 cursor records a committed byte offset, the SHA-256 digest of the committed
 prefix, the last observed source length, and any pending call as controlled

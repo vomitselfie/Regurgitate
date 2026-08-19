@@ -5,7 +5,7 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::application::HistoryReadinessProbe;
 
-/// Read-only inspection adapter for an existing Praxis history database.
+/// Read-only inspection adapter for an existing Regurgitate history database.
 pub struct HistoryDatabaseProbe {
     path: PathBuf,
 }

@@ -1,6 +1,6 @@
 # Architecture
 
-Praxis uses a ports-and-adapters layout so host integrations, application
+Regurgitate uses a ports-and-adapters layout so host integrations, application
 coordination, and storage can evolve independently.
 
 ```text
@@ -37,7 +37,7 @@ project identity storage, adds the resulting UUID to the event, and appends it
 idempotently. It has no transcript or cursor dependency, so a native delivery
 cannot advance or corrupt the AoE/Codex transcript checkpoint. The stable event
 ID makes a repeated native delivery safe within that source. Native Codex hook
-IDs are not guaranteed to match transcript call IDs, so Praxis does not claim
+IDs are not guaranteed to match transcript call IDs, so Regurgitate does not claim
 cross-source deduplication. A deployment should select native recording or AoE
 transcript fallback for a given Codex session rather than enable both.
 
@@ -52,12 +52,12 @@ response or failure content. The `record-hook` runtime path is silent on
 success. `print-claude-config` still emits a fragment for manual use, while
 `install-claude-hook` safely adds both events to an explicit user settings file.
 The installer preserves unrelated settings and personal hook groups, and
-refuses malformed, disabled, or matcher-restricted Praxis configurations.
+refuses malformed, disabled, or matcher-restricted Regurgitate configurations.
 
 ## Explicit learning flow
 
 Some provider contracts cannot reliably distinguish semantic success from
-failure. `praxis learn` fills that gap without opening a free-text memory path.
+failure. `regurgitate learn` fills that gap without opening a free-text memory path.
 It accepts only a project locator, one fixed strategy enum, and an explicit
 `success` or `failure`. Each learnable strategy maps to one canonical
 capability/operation pair in the core model; arbitrary labels and `unknown`
@@ -120,7 +120,7 @@ writer rather than immediately failing with a busy error.
 The repository root also carries an AoE API-v12 manifest. Its release-asset
 template selects Linux x86-64, Apple Silicon, or Intel macOS using AoE's host
 OS and architecture substitutions. Every archive exposes the same root
-`praxis` path, so packaging stays separate from worker dispatch. AoE launches
+`regurgitate` path, so packaging stays separate from worker dispatch. AoE launches
 that binary with no arguments plus the exact `AOE_PLUGIN_ID`; the binary enters
 worker mode only for that combination, while every ordinary invocation
 continues through the CLI. The plugin protocol and UI projection live in their
@@ -152,7 +152,7 @@ transcript fallback—records into the same encrypted store.
 
 ## Agent recall integration
 
-The `skills/praxis-recall` package is a thin consumer of the public recall CLI.
+The `skills/regurgitate-recall` package is a thin consumer of the public recall CLI.
 Its `SKILL.md` waits for task context, requests a bounded aggregate, and tells
 the agent to verify observations against current state. It does not depend on
 AoE, Codex transcript formats, SQLite, or key management.
@@ -160,7 +160,7 @@ AoE, Codex transcript formats, SQLite, or key management.
 An agent command sandbox may deny access to the operating-system credential
 store even when the user's desktop session has unlocked it. In that case the
 skill permits one retry through the host's standard per-command approval path,
-scoped to the exact `praxis recall` or `praxis learn` prefix. The binary cannot
+scoped to the exact `regurgitate recall` or `regurgitate learn` prefix. The binary cannot
 and does not escape the sandbox itself, and the workflow never approves a shell
 wrapper or changes credentials, storage, filesystem, or network policy.
 
@@ -209,6 +209,14 @@ paths, session IDs, cursor offsets, digests, and pending state are encrypted.
 The master key is held by Linux Secret Service or macOS Keychain and is never
 stored beside the database.
 
+The v0.6 rename migrates local state without rewriting encrypted records.
+Read-only commands fall back to the legacy data directory and credential-store
+service without mutating either. The next recording operation atomically
+renames the complete legacy data directory and copies the existing master key
+to Regurgitate's credential-store service. Version-one encryption and lookup
+domain separators remain byte-for-byte stable format identifiers, so all
+existing authenticated envelopes and project tokens remain valid.
+
 Debug commands expose only `DebugEvent`, which omits identifiers and timestamps.
 The ingestion command exposes only aggregate counts; the native recording
 command emits no success output.
@@ -246,14 +254,14 @@ evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 The agent-facing instruction bundle is part of the same context boundary. A
 regression test keeps the embedded `SKILL.md` at or below 3,000 bytes; the v0.2
 bundle was 2,540 bytes; the current bundle, including sandbox recovery guidance,
-is 2,923 bytes, down from the initial 4,819. Using the CLI's conservative
-four-bytes-per-token estimate, that is approximately 731 tokens instead of
+is 2,983 bytes, down from the initial 4,819. Using the CLI's conservative
+four-bytes-per-token estimate, that is approximately 746 tokens instead of
 1,205. Together with the default recall budget reduction from 600 to 300, the
-Praxis-controlled ceiling for an activated default recall is roughly 1,031
-tokens instead of 1,805, a 43% reduction. Successful recording hooks remain
-silent and therefore add no Praxis output to agent context. AoE-rendered skills
+Regurgitate-controlled ceiling for an activated default recall is roughly 1,046
+tokens instead of 1,805, a 42% reduction. Successful recording hooks remain
+silent and therefore add no Regurgitate output to agent context. AoE-rendered skills
 also include one instruction containing the local worker path, whose length is
-host-dependent. These figures describe the tracked skill and Praxis-owned
+host-dependent. These figures describe the tracked skill and Regurgitate-owned
 serialized payloads; provider tokenization and host-added tool-call scaffolding
 are outside this boundary.
 

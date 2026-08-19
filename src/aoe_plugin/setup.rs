@@ -81,10 +81,11 @@ pub(super) struct SetupService {
 
 impl SetupService {
     pub fn from_environment() -> Result<Self> {
-        let executable = env::current_exe().context("could not locate the Praxis plugin binary")?;
+        let executable =
+            env::current_exe().context("could not locate the Regurgitate plugin binary")?;
         let executable = executable
             .to_str()
-            .context("Praxis plugin binary path is not valid UTF-8")?;
+            .context("Regurgitate plugin binary path is not valid UTF-8")?;
         Ok(Self {
             executable_command: shell_quote(executable)?,
             paths: SetupPaths::from_environment()?,
@@ -221,7 +222,7 @@ fn shell_quote(path: &str) -> Result<String> {
             .chars()
             .any(|character| character.is_control() || character == '`')
     {
-        bail!("Praxis executable path cannot be represented safely in an agent command");
+        bail!("Regurgitate executable path cannot be represented safely in an agent command");
     }
     Ok(format!("'{}'", path.replace('\'', "'\"'\"'")))
 }
@@ -246,7 +247,8 @@ mod tests {
     #[test]
     fn codex_setup_is_complete_and_idempotent_without_path_lookup() {
         let temp = tempdir().unwrap();
-        let service = SetupService::new("/plugin home/praxis", fixture_paths(temp.path())).unwrap();
+        let service =
+            SetupService::new("/plugin home/regurgitate", fixture_paths(temp.path())).unwrap();
 
         assert_eq!(
             service.setup(SetupTarget::Codex).unwrap(),
@@ -260,13 +262,18 @@ mod tests {
         );
 
         let config = fs::read_to_string(&service.paths.codex_config).unwrap();
-        let skill =
-            fs::read_to_string(service.paths.codex_skills.join("praxis-recall/SKILL.md")).unwrap();
-        assert!(config.contains("'/plugin home/praxis' record-hook --agent codex"));
+        let skill = fs::read_to_string(
+            service
+                .paths
+                .codex_skills
+                .join("regurgitate-recall/SKILL.md"),
+        )
+        .unwrap();
+        assert!(config.contains("'/plugin home/regurgitate' record-hook --agent codex"));
         assert!(skill.contains(
-            "Replace the leading `praxis` in every command and approval prefix below with `'/plugin home/praxis'`"
+            "Replace the leading `regurgitate` in every command and approval prefix below with `'/plugin home/regurgitate'`"
         ));
-        assert!(skill.contains("praxis recall"));
+        assert!(skill.contains("regurgitate recall"));
     }
 
     #[test]
@@ -279,7 +286,7 @@ mod tests {
             r#"{"model":"PRIVATE_MODEL","hooks":{"Stop":[{"hooks":[]}]}}"#,
         )
         .unwrap();
-        let service = SetupService::new("/plugins/praxis", paths).unwrap();
+        let service = SetupService::new("/plugins/regurgitate", paths).unwrap();
 
         assert_eq!(
             service.setup(SetupTarget::Claude).unwrap(),
@@ -289,7 +296,7 @@ mod tests {
         let config = fs::read_to_string(&service.paths.claude_config).unwrap();
         assert!(config.contains("PRIVATE_MODEL"));
         assert!(config.contains("\"Stop\""));
-        assert!(config.contains("'/plugins/praxis' record-hook --agent claude"));
+        assert!(config.contains("'/plugins/regurgitate' record-hook --agent claude"));
         assert_eq!(service.inspect().claude.hook, IntegrationReadiness::Ready);
         assert_eq!(service.inspect().claude.skill, IntegrationReadiness::Ready);
     }
@@ -300,7 +307,7 @@ mod tests {
         let paths = fixture_paths(temp.path());
         fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
         fs::write(&paths.codex_config, "[features]\nhooks = false\n").unwrap();
-        let service = SetupService::new("/plugins/praxis", paths).unwrap();
+        let service = SetupService::new("/plugins/regurgitate", paths).unwrap();
 
         assert!(service.setup(SetupTarget::Codex).is_err());
         assert!(!service.paths.codex_skills.exists());
@@ -313,10 +320,10 @@ mod tests {
     #[test]
     fn executable_paths_are_shell_quoted_without_allowing_command_syntax() {
         assert_eq!(
-            shell_quote("/plugin's home/praxis").unwrap(),
-            r#"'/plugin'"'"'s home/praxis'"#
+            shell_quote("/plugin's home/regurgitate").unwrap(),
+            r#"'/plugin'"'"'s home/regurgitate'"#
         );
-        assert!(shell_quote("/plugin/`private`/praxis").is_err());
-        assert!(shell_quote("/plugin\nhome/praxis").is_err());
+        assert!(shell_quote("/plugin/`private`/regurgitate").is_err());
+        assert!(shell_quote("/plugin\nhome/regurgitate").is_err());
     }
 }

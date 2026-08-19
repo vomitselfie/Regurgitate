@@ -1,6 +1,6 @@
 # Roadmap
 
-Praxis is being built in small vertical slices. Each slice keeps host-specific
+Regurgitate is being built in small vertical slices. Each slice keeps host-specific
 discovery, application policy, query logic, and persistence behind separate
 module boundaries.
 
@@ -122,7 +122,7 @@ strategies.
 
 ## Completed AoE plugin slice
 
-Praxis now participates in AoE without moving AoE concerns into the memory
+Regurgitate now participates in AoE without moving AoE concerns into the memory
 core:
 
 1. the repository manifest installs the existing static release asset through

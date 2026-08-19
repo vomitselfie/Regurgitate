@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 
-use praxis::{
+use regurgitate::{
     adapters::codex::normalize_post_tool_hook,
     storage::{EncryptedStore, MasterKey},
 };

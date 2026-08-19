@@ -1,7 +1,4 @@
-use std::{fs, io, path::PathBuf};
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::{io, path::PathBuf};
 
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
@@ -26,7 +23,8 @@ use crate::{
     query::{RecallOptions, RecallResult, RecallService},
     storage::{
         EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
-        SystemKeyProvider,
+        SystemKeyProvider, existing_history_database, history_database_for_read,
+        prepare_history_database,
     },
 };
 
@@ -244,10 +242,9 @@ fn ingest_session(
     data_home: PathBuf,
     key_provider: &impl MasterKeyProvider,
 ) -> Result<IngestionReport> {
-    let praxis_dir = data_home.join("praxis");
-    prepare_private_directory(&praxis_dir)?;
+    let database = prepare_history_database(&data_home)?;
     let key = key_provider.get_or_create()?;
-    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    let store = EncryptedStore::open(&database, &key)?;
     IngestionService::new(source, store).ingest_session(session_id)
 }
 
@@ -256,10 +253,9 @@ fn record_hook(
     data_home: PathBuf,
     key_provider: &impl MasterKeyProvider,
 ) -> Result<RecordingReport> {
-    let praxis_dir = data_home.join("praxis");
-    prepare_private_directory(&praxis_dir)?;
+    let database = prepare_history_database(&data_home)?;
     let key = key_provider.get_or_create()?;
-    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    let store = EncryptedStore::open(&database, &key)?;
     RecordingService::new(store).record(observation)
 }
 
@@ -270,10 +266,9 @@ fn learn_practice(
     data_home: PathBuf,
     key_provider: &impl MasterKeyProvider,
 ) -> Result<LearningReport> {
-    let praxis_dir = data_home.join("praxis");
-    prepare_private_directory(&praxis_dir)?;
+    let database = prepare_history_database(&data_home)?;
     let key = key_provider.get_or_create()?;
-    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    let store = EncryptedStore::open(&database, &key)?;
     LearningService::new(store).learn(ProjectLocator::new(project), strategy, outcome)
 }
 
@@ -282,7 +277,7 @@ fn health_status(
     key_probe: impl crate::application::KeyReadinessProbe,
     hooks: impl IntoIterator<Item = (HookProvider, Result<HookReadiness>)>,
 ) -> HealthReport {
-    let history = HistoryDatabaseProbe::new(data_home.join("praxis/history.db"));
+    let history = HistoryDatabaseProbe::new(history_database_for_read(&data_home));
     HealthService::new(key_probe, history).inspect_with_hooks(hooks)
 }
 
@@ -332,16 +327,12 @@ fn open_existing_history(
     writable: bool,
     key_provider: &impl ExistingMasterKeyProvider,
 ) -> Result<Option<EncryptedStore>> {
-    let database = data_home.join("praxis/history.db");
-    match fs::metadata(&database) {
-        Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => anyhow::bail!("Praxis history database is not a regular file"),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("could not inspect Praxis history database"),
-    }
+    let Some(database) = existing_history_database(data_home, writable)? else {
+        return Ok(None);
+    };
     let key = key_provider
         .get_existing()?
-        .context("Praxis history exists but its master key is unavailable")?;
+        .context("Regurgitate history exists but its master key is unavailable")?;
     let store = if writable {
         EncryptedStore::open_existing(&database, &key)?
     } else {
@@ -364,23 +355,6 @@ fn recall_project(
     RecallService::new(&store).recall(&ProjectLocator::new(project), options, task_query)
 }
 
-fn prepare_private_directory(path: &std::path::Path) -> Result<()> {
-    fs::create_dir_all(path).with_context(|| {
-        format!(
-            "could not create Praxis data directory at {}",
-            path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(path, permissions)?;
-    }
-    Ok(())
-}
-
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     serde_json::to_writer_pretty(io::stdout().lock(), value)?;
     println!();
@@ -393,6 +367,9 @@ mod tests {
         fs::{self, OpenOptions},
         io::Write,
     };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     use tempfile::tempdir;
 
@@ -524,7 +501,7 @@ mod tests {
             assert!(!recalled_json.contains(forbidden));
         }
 
-        let database = fs::read(data_home.join("praxis/history.db")).unwrap();
+        let database = fs::read(data_home.join("regurgitate/history.db")).unwrap();
         for forbidden in [
             b"PLAINTEXT_SENTINEL_PROJECT".as_slice(),
             b"SECRET_ARGUMENT",
@@ -546,16 +523,16 @@ mod tests {
     #[test]
     fn runtime_data_directory_is_owner_only() {
         let temp = tempdir().unwrap();
-        let praxis_dir = temp.path().join("data/praxis");
-        prepare_private_directory(&praxis_dir).unwrap();
-        let mode = fs::metadata(praxis_dir).unwrap().permissions().mode() & 0o777;
+        let regurgitate_dir = temp.path().join("data/regurgitate");
+        prepare_history_database(&temp.path().join("data")).unwrap();
+        let mode = fs::metadata(regurgitate_dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
     }
 
     #[test]
     fn generated_aoe_config_uses_the_identifier_only_handler() {
-        assert!(AOE_CONFIG_SNIPPET.contains("on_idle = \"praxis aoe-hook\""));
-        assert!(AOE_CONFIG_SNIPPET.contains("on_error = \"praxis aoe-hook\""));
+        assert!(AOE_CONFIG_SNIPPET.contains("on_idle = \"regurgitate aoe-hook\""));
+        assert!(AOE_CONFIG_SNIPPET.contains("on_error = \"regurgitate aoe-hook\""));
         for forbidden in [
             "AOE_PROJECT_PATH",
             "AOE_SESSION_TITLE",
@@ -574,7 +551,7 @@ mod tests {
         let payload = serde_json::to_vec(&serde_json::json!({
             "session_id": "SECRET_CLAUDE_SESSION",
             "transcript_path": "/private/SECRET_TRANSCRIPT",
-            "cwd": project,
+            "cwd": &project,
             "hook_event_name": "PostToolUseFailure",
             "tool_name": "Bash",
             "tool_use_id": "tool-1",
@@ -600,7 +577,7 @@ mod tests {
         assert_eq!(first.inserted, 1);
         assert_eq!(second.already_present, 1);
 
-        let database = fs::read(data_home.join("praxis/history.db")).unwrap();
+        let database = fs::read(data_home.join("regurgitate/history.db")).unwrap();
         for forbidden in [
             b"SECRET_CLAUDE_PROJECT".as_slice(),
             b"SECRET_CLAUDE_SESSION",
@@ -624,7 +601,7 @@ mod tests {
         let payload = serde_json::to_vec(&serde_json::json!({
             "session_id": "SECRET_CODEX_SESSION",
             "transcript_path": "/private/SECRET_TRANSCRIPT",
-            "cwd": project,
+            "cwd": &project,
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",
             "tool_use_id": "tool-1",
@@ -650,7 +627,7 @@ mod tests {
         assert_eq!(first.inserted, 1);
         assert_eq!(second.already_present, 1);
 
-        let database = fs::read(data_home.join("praxis/history.db")).unwrap();
+        let database = fs::read(data_home.join("regurgitate/history.db")).unwrap();
         for forbidden in [
             b"SECRET_CODEX_PROJECT".as_slice(),
             b"SECRET_CODEX_SESSION",
@@ -685,7 +662,7 @@ mod tests {
             assert_eq!(report.status, crate::application::LearningStatus::Recorded);
         }
 
-        let database_path = data_home.join("praxis/history.db");
+        let database_path = data_home.join("regurgitate/history.db");
         let before_recall = fs::read(&database_path).unwrap();
         let result = recall_project(
             project,
@@ -733,14 +710,80 @@ mod tests {
     }
 
     #[test]
+    fn legacy_history_is_read_in_place_then_migrated_on_recording() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("LEGACY_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        let legacy_database = data_home.join("praxis/history.db");
+        fs::create_dir_all(legacy_database.parent().unwrap()).unwrap();
+        let store =
+            EncryptedStore::open(&legacy_database, &MasterKey::from_bytes([23; 32])).unwrap();
+        let first = serde_json::to_vec(&serde_json::json!({
+            "session_id": "legacy-session",
+            "cwd": &project,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "tool_use_id": "legacy-tool",
+            "tool_input": {},
+            "tool_response": {}
+        }))
+        .unwrap();
+        RecordingService::new(store)
+            .record(claude::normalize_tool_hook(first.as_slice()).unwrap())
+            .unwrap();
+
+        let recalled = recall_project(
+            project.clone(),
+            RecallOptions::default(),
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(recalled.observations.len(), 1);
+        assert!(legacy_database.is_file());
+        assert!(!data_home.join("regurgitate").exists());
+
+        let second = serde_json::to_vec(&serde_json::json!({
+            "session_id": "legacy-session",
+            "cwd": &project,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "new-tool",
+            "tool_input": {},
+            "tool_response": {}
+        }))
+        .unwrap();
+        record_hook(
+            claude::normalize_tool_hook(second.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+
+        assert!(!legacy_database.exists());
+        assert!(data_home.join("regurgitate/history.db").is_file());
+        let recalled = recall_project(
+            project,
+            RecallOptions::default(),
+            None,
+            data_home,
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(recalled.observations.len(), 2);
+    }
+
+    #[test]
     fn generated_claude_config_uses_the_silent_native_handler() {
-        assert!(CLAUDE_CONFIG_SNIPPET.contains("praxis record-hook --agent claude"));
+        assert!(CLAUDE_CONFIG_SNIPPET.contains("regurgitate record-hook --agent claude"));
         assert!(CLAUDE_CONFIG_SNIPPET.contains("PostToolUseFailure"));
     }
 
     #[test]
     fn generated_codex_config_uses_the_silent_native_handler() {
-        assert!(CODEX_CONFIG_SNIPPET.contains("praxis record-hook --agent codex"));
+        assert!(CODEX_CONFIG_SNIPPET.contains("regurgitate record-hook --agent codex"));
         assert!(CODEX_CONFIG_SNIPPET.contains("[[hooks.PostToolUse]]"));
     }
 
@@ -767,9 +810,9 @@ mod tests {
     fn health_status_sanitizes_keyring_and_database_failures() {
         let temp = tempdir().unwrap();
         let data_home = temp.path().join("data");
-        fs::create_dir_all(data_home.join("praxis")).unwrap();
+        fs::create_dir_all(data_home.join("regurgitate")).unwrap();
         fs::write(
-            data_home.join("praxis/history.db"),
+            data_home.join("regurgitate/history.db"),
             b"PRIVATE_DATABASE_FAILURE",
         )
         .unwrap();
@@ -803,7 +846,7 @@ mod tests {
         assert_eq!(report.hooks.len(), 3);
 
         let encoded = serde_json::to_string(&report).unwrap();
-        for forbidden in ["config.toml", "settings.json", "praxis record-hook"] {
+        for forbidden in ["config.toml", "settings.json", "regurgitate record-hook"] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
     }
@@ -831,7 +874,7 @@ mod tests {
         )
         .unwrap();
 
-        let database_path = data_home.join("praxis/history.db");
+        let database_path = data_home.join("regurgitate/history.db");
         let before_preview = fs::read(&database_path).unwrap();
         let preview =
             forget_project(project.clone(), false, data_home.clone(), &FixedKeyProvider).unwrap();
@@ -923,7 +966,7 @@ mod tests {
             .unwrap();
         }
 
-        let database_path = data_home.join("praxis/history.db");
+        let database_path = data_home.join("regurgitate/history.db");
         let before_preview = fs::read(&database_path).unwrap();
         let policy = RetentionPolicy::KeepRecent(1)
             .validate(chrono::Utc::now())

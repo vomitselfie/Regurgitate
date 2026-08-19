@@ -16,10 +16,10 @@ use super::{
 
 const HOST_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const FIRST_OUTBOUND_ID: u64 = 1_000_000;
-const STATUS_COMMAND: &str = "plugin.vomitselfie.praxis.status";
-const REFRESH_COMMAND: &str = "plugin.vomitselfie.praxis.refresh";
-const SETUP_CODEX_COMMAND: &str = "plugin.vomitselfie.praxis.setup-codex";
-const SETUP_CLAUDE_COMMAND: &str = "plugin.vomitselfie.praxis.setup-claude";
+const STATUS_COMMAND: &str = "plugin.vomitselfie.regurgitate.status";
+const REFRESH_COMMAND: &str = "plugin.vomitselfie.regurgitate.refresh";
+const SETUP_CODEX_COMMAND: &str = "plugin.vomitselfie.regurgitate.setup-codex";
+const SETUP_CLAUDE_COMMAND: &str = "plugin.vomitselfie.regurgitate.setup-claude";
 
 enum Incoming {
     Message(Value),
@@ -189,21 +189,21 @@ impl<W: Write> Worker<W> {
         };
         let id = message.get("id").cloned();
         match method {
-            "praxis.status" => {
+            "regurgitate.status" => {
                 if let Some(id) = id {
                     self.send_response(id, serde_json::to_value(inspect().health)?)?;
                 }
             }
-            "praxis.refresh" => {
+            "regurgitate.refresh" => {
                 if let Some(id) = id {
                     self.send_response(id, json!({"accepted": true}))?;
                 }
                 self.refresh_due = true;
             }
-            "praxis.setup.codex" => {
+            "regurgitate.setup.codex" => {
                 self.run_setup(SetupTarget::Codex, id, setup)?;
             }
-            "praxis.setup.claude" => {
+            "regurgitate.setup.claude" => {
                 self.run_setup(SetupTarget::Claude, id, setup)?;
             }
             "plugin.settings.changed" => {
@@ -229,7 +229,7 @@ impl<W: Write> Worker<W> {
                         "id": id,
                         "error": {
                             "code": -32602,
-                            "message": "unknown Praxis plugin command"
+                            "message": "unknown Regurgitate plugin command"
                         }
                     }))?;
                 }
@@ -241,7 +241,7 @@ impl<W: Write> Worker<W> {
                         "id": id,
                         "error": {
                             "code": -32601,
-                            "message": "unknown Praxis plugin method"
+                            "message": "unknown Regurgitate plugin method"
                         }
                     }))?;
                 }
@@ -318,8 +318,8 @@ mod tests {
         let input = [
             json!({"jsonrpc": "2.0", "id": 1_000_000, "result": {"ok": true}}),
             json!({"jsonrpc": "2.0", "id": 1_000_001, "result": {"ok": true}}),
-            json!({"jsonrpc": "2.0", "id": 7, "method": "praxis.status", "params": {}}),
-            json!({"jsonrpc": "2.0", "id": 8, "method": "praxis.refresh", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 7, "method": "regurgitate.status", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 8, "method": "regurgitate.refresh", "params": {}}),
             json!({"jsonrpc": "2.0", "id": 1_000_002, "result": {"ok": true}}),
             json!({"jsonrpc": "2.0", "id": 1_000_003, "result": {"ok": true}}),
         ]

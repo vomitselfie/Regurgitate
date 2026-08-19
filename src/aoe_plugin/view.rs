@@ -9,10 +9,10 @@ use super::{
 
 pub(super) fn status_bar(report: &HealthReport) -> Value {
     let text = match (report.status, report.history.event_count) {
-        (OverallHealth::Ready, Some(events)) => format!("Praxis {events}"),
-        (OverallHealth::Ready, None) => "Praxis ready".to_owned(),
-        (OverallHealth::NotConfigured, _) => "Praxis not configured".to_owned(),
-        (OverallHealth::Degraded, _) => "Praxis degraded".to_owned(),
+        (OverallHealth::Ready, Some(events)) => format!("Regurgitate {events}"),
+        (OverallHealth::Ready, None) => "Regurgitate ready".to_owned(),
+        (OverallHealth::NotConfigured, _) => "Regurgitate not configured".to_owned(),
+        (OverallHealth::Degraded, _) => "Regurgitate degraded".to_owned(),
     };
     json!({
         "text": text,
@@ -29,22 +29,22 @@ pub(super) fn settings_page(snapshot: &PluginSnapshot, last_setup: Option<SetupN
         .any(integration_ready);
     let (title, detail, tone) = match report.status {
         OverallHealth::Ready => (
-            "Praxis is ready",
+            "Regurgitate is ready",
             "Encrypted procedural observations are available to bounded agent recall.",
             "success",
         ),
         OverallHealth::NotConfigured if any_connected => (
-            "Praxis is connected",
+            "Regurgitate is connected",
             "Use your agent normally; the first supported event will initialize encrypted history.",
             "info",
         ),
         OverallHealth::NotConfigured => (
-            "Praxis is not configured yet",
-            "Choose an agent below. Praxis will install its recording hook and recall skill.",
+            "Regurgitate is not configured yet",
+            "Choose an agent below. Regurgitate will install its recording hook and recall skill.",
             "neutral",
         ),
         OverallHealth::Degraded => (
-            "Praxis needs attention",
+            "Regurgitate needs attention",
             "The operating system credential store or encrypted history database is unavailable.",
             "warn",
         ),
@@ -82,21 +82,21 @@ pub(super) fn settings_page(snapshot: &PluginSnapshot, last_setup: Option<SetupN
                 {
                     "kind": "action",
                     "label": "Set up Codex",
-                    "method": "praxis.setup.codex",
+                    "method": "regurgitate.setup.codex",
                     "icon": "plug",
                     "variant": "primary"
                 },
                 {
                     "kind": "action",
                     "label": "Set up Claude Code",
-                    "method": "praxis.setup.claude",
+                    "method": "regurgitate.setup.claude",
                     "icon": "plug"
                 }
             ]
         }),
         json!({
             "kind": "note",
-            "text": "Setup changes only the selected agent's user hook and Praxis skill. Existing settings and personal hooks are preserved. Restart that agent after setup.",
+            "text": "Setup changes only the selected agent's user hook and Regurgitate skill. Existing settings and personal hooks are preserved. Restart that agent after setup.",
             "tone": "info"
         }),
         json!({
@@ -125,19 +125,19 @@ pub(super) fn settings_page(snapshot: &PluginSnapshot, last_setup: Option<SetupN
         }),
         json!({
             "kind": "note",
-            "text": "Recording stays provider-native. Praxis exposes only controlled aggregate health to AoE and never sends prompts, responses, commands, paths, or tool output.",
+            "text": "Recording stays provider-native. Regurgitate exposes only controlled aggregate health to AoE and never sends prompts, responses, commands, paths, or tool output.",
             "tone": "info"
         }),
         json!({
             "kind": "action",
             "label": "Refresh",
-            "method": "praxis.refresh",
+            "method": "regurgitate.refresh",
             "icon": "refresh-cw"
         }),
     ]);
 
     json!({
-        "title": "Praxis",
+        "title": "Regurgitate",
         "icon": "brain-circuit",
         "blocks": blocks
     })
@@ -161,7 +161,7 @@ fn setup_notice(notice: SetupNotice) -> Value {
         ),
         SetupOutcome::Failed => (
             format!("{agent} setup needs attention"),
-            "Praxis preserved the existing configuration. Review that agent's user settings or use the standalone installer for details.",
+            "Regurgitate preserved the existing configuration. Review that agent's user settings or use the standalone installer for details.",
             "warn",
         ),
     };
@@ -269,12 +269,15 @@ mod tests {
     #[test]
     fn ready_view_contains_only_controlled_aggregate_health() {
         let snapshot = snapshot(OverallHealth::Ready, ComponentReadiness::Ready);
-        assert_eq!(status_bar(&snapshot.health)["text"], json!("Praxis 493"));
+        assert_eq!(
+            status_bar(&snapshot.health)["text"],
+            json!("Regurgitate 493")
+        );
         assert_eq!(status_bar(&snapshot.health)["tone"], json!("success"));
 
         let page = settings_page(&snapshot, None);
-        assert_eq!(page["title"], json!("Praxis"));
-        assert_eq!(page["blocks"][1]["title"], json!("Praxis is ready"));
+        assert_eq!(page["title"], json!("Regurgitate"));
+        assert_eq!(page["blocks"][1]["title"], json!("Regurgitate is ready"));
         assert_eq!(
             page["blocks"][5]["children"][2]["value"],
             json!("493 events")
@@ -290,7 +293,7 @@ mod tests {
         let snapshot = snapshot(OverallHealth::Degraded, ComponentReadiness::Unavailable);
         assert_eq!(
             status_bar(&snapshot.health)["text"],
-            json!("Praxis degraded")
+            json!("Regurgitate degraded")
         );
         assert_eq!(status_bar(&snapshot.health)["tone"], json!("warn"));
         assert_eq!(
@@ -313,8 +316,8 @@ mod tests {
             }),
         );
         let encoded = serde_json::to_string(&page).unwrap();
-        assert!(encoded.contains("praxis.setup.codex"));
-        assert!(encoded.contains("praxis.setup.claude"));
+        assert!(encoded.contains("regurgitate.setup.codex"));
+        assert!(encoded.contains("regurgitate.setup.claude"));
         assert!(encoded.contains("Codex setup complete"));
         assert!(!encoded.contains("/home/"));
     }

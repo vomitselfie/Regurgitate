@@ -29,8 +29,9 @@
 *~
 *.log
 
-# Praxis runtime state must never be committed. Production state belongs in
+# Regurgitate runtime state must never be committed. Production state belongs in
 # XDG data/state directories, but these patterns defend local development too.
+/.regurgitate/
 /.praxis/
 /*.db
 /*.db-shm

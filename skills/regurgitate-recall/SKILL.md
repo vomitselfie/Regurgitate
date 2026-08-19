@@ -1,11 +1,11 @@
 ---
-name: praxis-recall
+name: regurgitate-recall
 description: Recall bounded, privacy-safe procedural evidence for the current project. Use after the task is understood when prior local strategies could prevent repeated exploration, after a meaningful failure, or before declaring an approach blocked. Never use it to recover raw history or secrets.
 ---
 
-# Praxis Recall
+# Regurgitate Recall
 
-Treat Praxis aggregates as advisory evidence, never current truth.
+Treat Regurgitate aggregates as advisory evidence, never current truth.
 
 ## Recall once
 
@@ -13,12 +13,12 @@ After the task is understood, recall only when a procedural pattern could avoid
 repeated exploration:
 
 ```bash
-praxis recall --project "$PWD" --query "<short non-secret category>" --token-budget 300
+regurgitate recall --project "$PWD" --query "<short non-secret category>" --token-budget 300
 ```
 
 Use generic terms such as `test failure` or `dependency update`; never place
 prompts, source, commands, paths, credentials, or private values in `--query`.
-Continue normally if Praxis is unavailable or empty. Do not change credentials
+Continue normally if Regurgitate is unavailable or empty. Do not change credentials
 or privacy settings to make recall work. Validate relevant evidence against the
 current repository and constraints before acting.
 
@@ -26,7 +26,7 @@ current repository and constraints before acting.
 
 If the sandbox blocks the operating system credential store and the host
 supports per-command approval, retry once outside the sandbox. Scope approval
-to the exact `praxis recall` or `praxis learn` prefix. Never approve a shell
+to the exact `regurgitate recall` or `regurgitate learn` prefix. Never approve a shell
 wrapper, combine commands, broaden access, or change credentials or storage. If
 the retry is unavailable or fails, continue normally.
 
@@ -36,10 +36,10 @@ After a meaningful approach is directly verified by a test, validation,
 provider result, or user confirmation, record at most one outcome:
 
 ```bash
-praxis learn --project "$PWD" --strategy <controlled-strategy> --outcome <success|failure>
+regurgitate learn --project "$PWD" --strategy <controlled-strategy> --outcome <success|failure>
 ```
 
-Use only an exact `praxis learn --help` strategy, never a vague substitute.
+Use only an exact `regurgitate learn --help` strategy, never a vague substitute.
 Skip ambiguous outcomes, low-level tool calls, duplicate milestones, or work
 with no exact strategy. Store no explanation or text.
 
@@ -55,7 +55,7 @@ Research strategies have exact meanings:
 After a meaningful failure, make at most one focused follow-up:
 
 ```bash
-praxis recall --project "$PWD" --failures --query "<short non-secret category>" --token-budget 200
+regurgitate recall --project "$PWD" --failures --query "<short non-secret category>" --token-budget 200
 ```
 
 Do not issue overlapping recalls to reconstruct history or evade output limits.
@@ -65,7 +65,7 @@ treat `common_error` only as a class to investigate.
 
 ## Preserve the boundary
 
-Never inspect or export Praxis databases, keys, cursors, identifiers, or
+Never inspect or export Regurgitate databases, keys, cursors, identifiers, or
 individual records. Never infer conversations, source, commands, output,
 paths, timestamps, or secrets from aggregates. If asked for raw history,
-explain that Praxis deliberately cannot provide it.
+explain that Regurgitate deliberately cannot provide it.

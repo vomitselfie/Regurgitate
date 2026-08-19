@@ -14,7 +14,8 @@ use super::{
     config_file::{acquire_config_lock, atomic_write_config, containing_directory, read_config},
 };
 
-const CLAUDE_HOOK_COMMAND: &str = "praxis record-hook --agent claude";
+const CLAUDE_HOOK_COMMAND: &str = "regurgitate record-hook --agent claude";
+const LEGACY_CLAUDE_HOOK_COMMAND: &str = "praxis record-hook --agent claude";
 const CONFIG_LOCK_FILENAME: &str = "settings.json.lock";
 const HOOK_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
 
@@ -25,7 +26,7 @@ pub const CLAUDE_CONFIG_SNIPPET: &str = r#"{
         "hooks": [
           {
             "type": "command",
-            "command": "praxis record-hook --agent claude"
+            "command": "regurgitate record-hook --agent claude"
           }
         ]
       }
@@ -35,7 +36,7 @@ pub const CLAUDE_CONFIG_SNIPPET: &str = r#"{
         "hooks": [
           {
             "type": "command",
-            "command": "praxis record-hook --agent claude"
+            "command": "regurgitate record-hook --agent claude"
           }
         ]
       }
@@ -69,7 +70,7 @@ pub fn inspect_claude_hook_command(config: &Path, hook_command: &str) -> Result<
     })
 }
 
-/// Preview or add Praxis to both terminal Claude tool events. Existing settings,
+/// Preview or add Regurgitate to both terminal Claude tool events. Existing settings,
 /// matcher groups, and personal commands are retained.
 pub fn install_claude_hook(config: &Path, apply: bool) -> Result<ClaudeHookInstallReport> {
     install_claude_hook_command(config, CLAUDE_HOOK_COMMAND, apply)
@@ -130,12 +131,18 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .with_context(|| format!("Claude hooks.{event} must be an array"))?;
-        match praxis_hook_coverage(groups, hook_command)? {
-            PraxisHookCoverage::AllTools => continue,
-            PraxisHookCoverage::Restricted => {
-                bail!("Praxis Claude {event} hook is already restricted by a matcher")
+        let migrated = migrate_legacy_hooks(groups, hook_command)?;
+        match regurgitate_hook_coverage(groups, hook_command)? {
+            RegurgitateHookCoverage::AllTools => {
+                if migrated {
+                    changes.push(event);
+                }
+                continue;
             }
-            PraxisHookCoverage::Missing => {}
+            RegurgitateHookCoverage::Restricted => {
+                bail!("Regurgitate Claude {event} hook is already restricted by a matcher")
+            }
+            RegurgitateHookCoverage::Missing => {}
         }
         groups.push(json!({
             "hooks": [{
@@ -151,14 +158,68 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     Ok(PreparedConfig { content, changes })
 }
 
+fn migrate_legacy_hooks(groups: &mut [Value], hook_command: &str) -> Result<bool> {
+    let mut migrated = false;
+    for group in groups {
+        let group = group
+            .as_object_mut()
+            .context("Claude hook groups must be JSON objects")?;
+        let restricted = match group.get("matcher") {
+            None => false,
+            Some(Value::String(matcher)) => !matcher.is_empty() && matcher != "*",
+            Some(_) => bail!("Claude hook matcher must be a string"),
+        };
+        let Some(handlers) = group.get_mut("hooks") else {
+            continue;
+        };
+        let handlers = handlers
+            .as_array_mut()
+            .context("Claude hook group handlers must be an array")?;
+        for handler in handlers {
+            let handler = handler
+                .as_object_mut()
+                .context("Claude hook handlers must be JSON objects")?;
+            if handler.get("type").and_then(Value::as_str) != Some("command") {
+                continue;
+            }
+            let Some(command) = handler.get("command").and_then(Value::as_str) else {
+                continue;
+            };
+            if !is_legacy_hook_command(command) {
+                continue;
+            }
+            if restricted {
+                bail!("legacy Regurgitate Claude hook is restricted by a matcher");
+            }
+            handler.insert("command".to_owned(), Value::String(hook_command.to_owned()));
+            migrated = true;
+        }
+    }
+    Ok(migrated)
+}
+
+fn is_legacy_hook_command(command: &str) -> bool {
+    if command == LEGACY_CLAUDE_HOOK_COMMAND {
+        return true;
+    }
+    command
+        .strip_suffix(" record-hook --agent claude")
+        .is_some_and(|executable| {
+            executable.ends_with("/praxis") || executable.ends_with("/praxis'")
+        })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PraxisHookCoverage {
+enum RegurgitateHookCoverage {
     Missing,
     AllTools,
     Restricted,
 }
 
-fn praxis_hook_coverage(groups: &[Value], hook_command: &str) -> Result<PraxisHookCoverage> {
+fn regurgitate_hook_coverage(
+    groups: &[Value],
+    hook_command: &str,
+) -> Result<RegurgitateHookCoverage> {
     let mut found_restricted = false;
     for group in groups {
         let group = group
@@ -170,7 +231,7 @@ fn praxis_hook_coverage(groups: &[Value], hook_command: &str) -> Result<PraxisHo
         let handlers = handlers
             .as_array()
             .context("Claude hook group handlers must be an array")?;
-        let contains_praxis = handlers.iter().try_fold(false, |found, handler| {
+        let contains_regurgitate = handlers.iter().try_fold(false, |found, handler| {
             let handler = handler
                 .as_object()
                 .context("Claude hook handlers must be JSON objects")?;
@@ -183,28 +244,28 @@ fn praxis_hook_coverage(groups: &[Value], hook_command: &str) -> Result<PraxisHo
                     });
             Ok::<_, anyhow::Error>(found || matches)
         })?;
-        if !contains_praxis {
+        if !contains_regurgitate {
             continue;
         }
         match group.get("matcher") {
-            None => return Ok(PraxisHookCoverage::AllTools),
+            None => return Ok(RegurgitateHookCoverage::AllTools),
             Some(Value::String(matcher)) if matcher.is_empty() || matcher == "*" => {
-                return Ok(PraxisHookCoverage::AllTools);
+                return Ok(RegurgitateHookCoverage::AllTools);
             }
             Some(Value::String(_)) => found_restricted = true,
             Some(_) => bail!("Claude hook matcher must be a string"),
         }
     }
     Ok(if found_restricted {
-        PraxisHookCoverage::Restricted
+        RegurgitateHookCoverage::Restricted
     } else {
-        PraxisHookCoverage::Missing
+        RegurgitateHookCoverage::Missing
     })
 }
 
 fn validate_hook_command(command: &str) -> Result<()> {
     if command.is_empty() || command.chars().any(|character| character.is_control()) {
-        bail!("Praxis hook command must be non-empty and single-line");
+        bail!("Regurgitate hook command must be non-empty and single-line");
     }
     Ok(())
 }
@@ -333,7 +394,7 @@ mod tests {
     fn explicit_worker_command_is_installed_and_recognized() {
         let temp = tempdir().unwrap();
         let config = temp.path().join("settings.json");
-        let command = "'/plugin home/praxis' record-hook --agent claude";
+        let command = "'/plugin home/regurgitate' record-hook --agent claude";
 
         install_claude_hook_command(&config, command, true).unwrap();
 
@@ -342,6 +403,25 @@ mod tests {
             HookReadiness::Installed
         );
         assert!(fs::read_to_string(config).unwrap().contains(command));
+    }
+
+    #[test]
+    fn legacy_hooks_are_replaced_instead_of_duplicated() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("settings.json");
+        fs::write(
+            &config,
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"praxis record-hook --agent claude"}]}],"PostToolUseFailure":[{"hooks":[{"type":"command","command":"praxis record-hook --agent claude"}]}]}}"#,
+        )
+        .unwrap();
+
+        let preview = install_claude_hook(&config, false).unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+        install_claude_hook(&config, true).unwrap();
+
+        let written = fs::read_to_string(config).unwrap();
+        assert_eq!(written.matches(CLAUDE_HOOK_COMMAND).count(), 2);
+        assert!(!written.contains(LEGACY_CLAUDE_HOOK_COMMAND));
     }
 
     #[cfg(unix)]

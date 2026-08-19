@@ -8,10 +8,10 @@ use anyhow::Result;
 
 use crate::{
     application::{HealthReport, HealthService},
-    storage::{HistoryDatabaseProbe, SystemKeyProvider},
+    storage::{HistoryDatabaseProbe, SystemKeyProvider, history_database_for_read},
 };
 
-pub const PLUGIN_ID: &str = "vomitselfie.praxis";
+pub const PLUGIN_ID: &str = "vomitselfie.regurgitate";
 
 pub fn is_worker_invocation() -> bool {
     matches_worker_invocation(
@@ -46,7 +46,7 @@ fn matches_worker_invocation(plugin_id: Option<&OsStr>, argument_count: usize) -
 }
 
 fn inspect_health(data_home: &std::path::Path) -> HealthReport {
-    let history = HistoryDatabaseProbe::new(data_home.join("praxis/history.db"));
+    let history = HistoryDatabaseProbe::new(history_database_for_read(data_home));
     HealthService::new(SystemKeyProvider::default(), history).inspect()
 }
 
@@ -79,9 +79,9 @@ mod tests {
         assert_eq!(manifest["runtime"]["kind"].as_str(), Some("release-binary"));
         assert_eq!(
             manifest["runtime"]["asset"].as_str(),
-            Some("praxis-v${version}-${os}-${arch}.tar.gz")
+            Some("regurgitate-v${version}-${os}-${arch}.tar.gz")
         );
-        assert_eq!(manifest["runtime"]["bin"].as_str(), Some("praxis"));
+        assert_eq!(manifest["runtime"]["bin"].as_str(), Some("regurgitate"));
 
         let capabilities: Vec<_> = manifest["capabilities"]
             .as_array()

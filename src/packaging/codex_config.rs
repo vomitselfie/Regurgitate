@@ -14,7 +14,8 @@ use super::{
     config_file::{acquire_config_lock, atomic_write_config, containing_directory, read_config},
 };
 
-const CODEX_HOOK_COMMAND: &str = "praxis record-hook --agent codex";
+const CODEX_HOOK_COMMAND: &str = "regurgitate record-hook --agent codex";
+const LEGACY_CODEX_HOOK_COMMAND: &str = "praxis record-hook --agent codex";
 const CONFIG_LOCK_FILENAME: &str = "config.toml.lock";
 
 pub const CODEX_CONFIG_SNIPPET: &str = r#"# Merge into the user-level Codex config.toml.
@@ -22,7 +23,7 @@ pub const CODEX_CONFIG_SNIPPET: &str = r#"# Merge into the user-level Codex conf
 
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "praxis record-hook --agent codex"
+command = "regurgitate record-hook --agent codex"
 timeout = 5"#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -57,7 +58,7 @@ pub fn install_codex_hook(config: &Path, apply: bool) -> Result<CodexHookInstall
     install_codex_hook_command(config, CODEX_HOOK_COMMAND, apply)
 }
 
-/// Preview or install a PostToolUse hook using a specific Praxis executable.
+/// Preview or install a PostToolUse hook using a specific Regurgitate executable.
 /// This is used by the AoE worker, whose downloaded binary is not on PATH.
 pub fn install_codex_hook_command(
     config: &Path,
@@ -110,17 +111,22 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let groups = hooks["PostToolUse"]
         .as_array_of_tables_mut()
         .context("Codex hooks.PostToolUse must be an array of tables")?;
-    match praxis_hook_coverage(groups, hook_command) {
-        PraxisHookCoverage::AllTools => {
+    let migrated = migrate_legacy_hooks(groups, hook_command)?;
+    match regurgitate_hook_coverage(groups, hook_command) {
+        RegurgitateHookCoverage::AllTools => {
             return Ok(PreparedConfig {
                 content: document.to_string(),
-                changes: Vec::new(),
+                changes: if migrated {
+                    vec!["hooks.PostToolUse"]
+                } else {
+                    Vec::new()
+                },
             });
         }
-        PraxisHookCoverage::Restricted => {
-            bail!("Praxis Codex hook is already restricted by a matcher");
+        RegurgitateHookCoverage::Restricted => {
+            bail!("Regurgitate Codex hook is already restricted by a matcher");
         }
-        PraxisHookCoverage::Missing => {}
+        RegurgitateHookCoverage::Missing => {}
     }
 
     let mut handler = Table::new();
@@ -138,6 +144,54 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
         content: document.to_string(),
         changes: vec!["hooks.PostToolUse"],
     })
+}
+
+fn migrate_legacy_hooks(groups: &mut ArrayOfTables, hook_command: &str) -> Result<bool> {
+    let mut migrated = false;
+    for group in groups.iter_mut() {
+        let restricted = match group.get("matcher") {
+            None => false,
+            Some(item) => match item.as_str() {
+                Some("" | "*") => false,
+                Some(_) => true,
+                None => bail!("Codex hook matcher must be a string"),
+            },
+        };
+        let Some(handlers) = group
+            .get_mut("hooks")
+            .and_then(Item::as_array_of_tables_mut)
+        else {
+            continue;
+        };
+        for handler in handlers.iter_mut() {
+            if handler.get("type").and_then(Item::as_str) != Some("command") {
+                continue;
+            }
+            let Some(command) = handler.get("command").and_then(Item::as_str) else {
+                continue;
+            };
+            if !is_legacy_hook_command(command) {
+                continue;
+            }
+            if restricted {
+                bail!("legacy Regurgitate Codex hook is restricted by a matcher");
+            }
+            handler.insert("command", value(hook_command));
+            migrated = true;
+        }
+    }
+    Ok(migrated)
+}
+
+fn is_legacy_hook_command(command: &str) -> bool {
+    if command == LEGACY_CODEX_HOOK_COMMAND {
+        return true;
+    }
+    command
+        .strip_suffix(" record-hook --agent codex")
+        .is_some_and(|executable| {
+            executable.ends_with("/praxis") || executable.ends_with("/praxis'")
+        })
 }
 
 fn ensure_hooks_enabled(document: &DocumentMut) -> Result<()> {
@@ -161,16 +215,19 @@ fn ensure_hooks_enabled(document: &DocumentMut) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PraxisHookCoverage {
+enum RegurgitateHookCoverage {
     Missing,
     AllTools,
     Restricted,
 }
 
-fn praxis_hook_coverage(groups: &ArrayOfTables, hook_command: &str) -> PraxisHookCoverage {
+fn regurgitate_hook_coverage(
+    groups: &ArrayOfTables,
+    hook_command: &str,
+) -> RegurgitateHookCoverage {
     let mut found_restricted = false;
     for group in groups {
-        let contains_praxis =
+        let contains_regurgitate =
             group
                 .get("hooks")
                 .and_then(Item::as_array_of_tables)
@@ -182,24 +239,24 @@ fn praxis_hook_coverage(groups: &ArrayOfTables, hook_command: &str) -> PraxisHoo
                             )
                     })
                 });
-        if !contains_praxis {
+        if !contains_regurgitate {
             continue;
         }
         match group.get("matcher").and_then(Item::as_str) {
-            None | Some("" | "*") => return PraxisHookCoverage::AllTools,
+            None | Some("" | "*") => return RegurgitateHookCoverage::AllTools,
             Some(_) => found_restricted = true,
         }
     }
     if found_restricted {
-        PraxisHookCoverage::Restricted
+        RegurgitateHookCoverage::Restricted
     } else {
-        PraxisHookCoverage::Missing
+        RegurgitateHookCoverage::Missing
     }
 }
 
 fn validate_hook_command(command: &str) -> Result<()> {
     if command.is_empty() || command.chars().any(|character| character.is_control()) {
-        bail!("Praxis hook command must be non-empty and single-line");
+        bail!("Regurgitate hook command must be non-empty and single-line");
     }
     Ok(())
 }
@@ -298,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn restricted_existing_praxis_hook_is_preserved_and_reported_as_conflicting() {
+    fn restricted_existing_regurgitate_hook_is_preserved_and_reported_as_conflicting() {
         let temp = tempdir().unwrap();
         let config = temp.path().join("config.toml");
         let original = concat!(
@@ -306,7 +363,7 @@ mod tests {
             "matcher = \"^Bash$\"\n",
             "[[hooks.PostToolUse.hooks]]\n",
             "type = \"command\"\n",
-            "command = \"praxis record-hook --agent codex\"\n",
+            "command = \"regurgitate record-hook --agent codex\"\n",
         );
         fs::write(&config, original).unwrap();
 
@@ -318,6 +375,26 @@ mod tests {
             inspect_codex_hook(&config).unwrap(),
             HookReadiness::Conflicting
         );
+    }
+
+    #[test]
+    fn legacy_hook_is_replaced_instead_of_duplicated() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        fs::write(
+            &config,
+            "[[hooks.PostToolUse]]\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"'/plugins/vomitselfie.praxis/0.5.0/praxis' record-hook --agent codex\"\n",
+        )
+        .unwrap();
+
+        let preview = install_codex_hook(&config, false).unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+        install_codex_hook(&config, true).unwrap();
+
+        let written = fs::read_to_string(config).unwrap();
+        assert!(written.contains(CODEX_HOOK_COMMAND));
+        assert!(!written.contains(LEGACY_CODEX_HOOK_COMMAND));
+        assert_eq!(written.matches("record-hook --agent codex").count(), 1);
     }
 
     #[cfg(unix)]

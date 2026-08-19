@@ -12,9 +12,11 @@ use zeroize::Zeroizing;
 use super::MasterKey;
 
 pub(super) const PRIVATE_ENVELOPE_VERSION: u32 = 1;
-const PRIVATE_KEY_INFO: &[u8] = b"praxis:private-metadata-encryption:v1";
-const LOOKUP_KEY_INFO: &[u8] = b"praxis:private-metadata-lookup:v1";
-const AAD_DOMAIN: &[u8] = b"praxis:private-metadata-envelope";
+// Version-one domain separators are immutable format identifiers. Keeping
+// their original bytes allows Regurgitate to authenticate existing history.
+const V1_PRIVATE_KEY_INFO: &[u8] = b"praxis:private-metadata-encryption:v1";
+const V1_LOOKUP_KEY_INFO: &[u8] = b"praxis:private-metadata-lookup:v1";
+const V1_AAD_DOMAIN: &[u8] = b"praxis:private-metadata-envelope";
 const NONCE_BYTES: usize = 24;
 
 #[derive(Clone, Copy)]
@@ -38,21 +40,24 @@ impl PrivateMetadataCipher {
     pub fn new(master_key: &MasterKey) -> Result<Self> {
         let hkdf = Hkdf::<Sha256>::new(None, master_key.as_bytes());
         let mut encryption_key = Zeroizing::new([0_u8; 32]);
-        hkdf.expand(PRIVATE_KEY_INFO, encryption_key.as_mut())
-            .map_err(|_| anyhow!("could not derive the Praxis private metadata key"))?;
-        let cipher = XChaCha20Poly1305::new_from_slice(encryption_key.as_ref())
-            .map_err(|_| anyhow!("derived Praxis private metadata key has an invalid length"))?;
+        hkdf.expand(V1_PRIVATE_KEY_INFO, encryption_key.as_mut())
+            .map_err(|_| anyhow!("could not derive the Regurgitate private metadata key"))?;
+        let cipher = XChaCha20Poly1305::new_from_slice(encryption_key.as_ref()).map_err(|_| {
+            anyhow!("derived Regurgitate private metadata key has an invalid length")
+        })?;
 
         let mut lookup_key = Zeroizing::new([0_u8; 32]);
-        hkdf.expand(LOOKUP_KEY_INFO, lookup_key.as_mut())
-            .map_err(|_| anyhow!("could not derive the Praxis metadata lookup key"))?;
+        hkdf.expand(V1_LOOKUP_KEY_INFO, lookup_key.as_mut())
+            .map_err(|_| anyhow!("could not derive the Regurgitate metadata lookup key"))?;
         Ok(Self { cipher, lookup_key })
     }
 
     pub fn lookup_token(&self, kind: PrivateRecordKind, identity: &[u8]) -> Result<[u8; 32]> {
         let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(self.lookup_key.as_ref())
-            .map_err(|_| anyhow!("derived Praxis metadata lookup key has an invalid length"))?;
-        mac.update(AAD_DOMAIN);
+            .map_err(|_| {
+                anyhow!("derived Regurgitate metadata lookup key has an invalid length")
+            })?;
+        mac.update(V1_AAD_DOMAIN);
         mac.update(&[kind as u8]);
         mac.update(&(identity.len() as u64).to_be_bytes());
         mac.update(identity);
@@ -78,7 +83,7 @@ impl PrivateMetadataCipher {
                     aad: &associated_data(kind, lookup_token),
                 },
             )
-            .map_err(|_| anyhow!("could not encrypt Praxis private metadata"))?;
+            .map_err(|_| anyhow!("could not encrypt Regurgitate private metadata"))?;
         let mut nonce_bytes = [0_u8; NONCE_BYTES];
         nonce_bytes.copy_from_slice(&nonce);
         Ok(SealedPrivateRecord {
@@ -96,7 +101,7 @@ impl PrivateMetadataCipher {
         ciphertext: &[u8],
     ) -> Result<T> {
         if envelope_version != PRIVATE_ENVELOPE_VERSION {
-            bail!("unsupported Praxis private metadata envelope version {envelope_version}");
+            bail!("unsupported Regurgitate private metadata envelope version {envelope_version}");
         }
         let nonce = XNonce::try_from(nonce)
             .map_err(|_| anyhow!("invalid private metadata nonce length"))?;
@@ -117,8 +122,8 @@ impl PrivateMetadataCipher {
 }
 
 fn associated_data(kind: PrivateRecordKind, lookup_token: &[u8; 32]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 1 + 4 + lookup_token.len());
-    aad.extend_from_slice(AAD_DOMAIN);
+    let mut aad = Vec::with_capacity(V1_AAD_DOMAIN.len() + 1 + 4 + lookup_token.len());
+    aad.extend_from_slice(V1_AAD_DOMAIN);
     aad.push(kind as u8);
     aad.extend_from_slice(&PRIVATE_ENVELOPE_VERSION.to_be_bytes());
     aad.extend_from_slice(lookup_token);

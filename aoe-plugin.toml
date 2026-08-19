@@ -1,6 +1,6 @@
-id = "vomitselfie.praxis"
-name = "Praxis"
-version = "0.5.0"
+id = "vomitselfie.regurgitate"
+name = "Regurgitate"
+version = "0.6.0"
 api_version = 12
 aoe_version = ">=1.14.0, <2.0.0"
 description = "Private, encrypted procedural memory for AI coding agents."
@@ -10,22 +10,22 @@ capabilities = ["runtime.worker", "fs.read", "fs.write"]
 
 [[commands]]
 id = "status"
-title = "Praxis: status"
-description = "Inspect aggregate Praxis readiness without creating local state."
+title = "Regurgitate: status"
+description = "Inspect aggregate Regurgitate readiness without creating local state."
 
 [[commands]]
 id = "refresh"
-title = "Praxis: refresh"
-description = "Refresh the aggregate Praxis health shown by Agent of Empires."
+title = "Regurgitate: refresh"
+description = "Refresh the aggregate Regurgitate health shown by Agent of Empires."
 
 [[commands]]
 id = "setup-codex"
-title = "Praxis: set up Codex"
+title = "Regurgitate: set up Codex"
 description = "Install the Codex recording hook and recall skill without replacing existing settings."
 
 [[commands]]
 id = "setup-claude"
-title = "Praxis: set up Claude Code"
+title = "Regurgitate: set up Claude Code"
 description = "Install the Claude Code recording hooks and recall skill without replacing existing settings."
 
 [[ui]]
@@ -38,5 +38,5 @@ id = "overview"
 
 [runtime]
 kind = "release-binary"
-asset = "praxis-v${version}-${os}-${arch}.tar.gz"
-bin = "praxis"
+asset = "regurgitate-v${version}-${os}-${arch}.tar.gz"
+bin = "regurgitate"

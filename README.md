@@ -75,11 +75,11 @@ aoe serve
 
 Open the plugin settings page in AoE and click **Set up Codex** or **Set up
 Claude Code**. The same actions are available in AoE's command palette as
-`Praxis: set up Codex` and `Praxis: set up Claude Code`.
+`Regurgitate: set up Codex` and `Regurgitate: set up Claude Code`.
 
 That setup action installs both pieces an agent needs: a recording hook and a
 small recall skill. It uses the executable AoE already downloaded, so you do
-not need to install `praxis` on your `PATH` or merge configuration by hand.
+not need to install `regurgitate` on your `PATH` or merge configuration by hand.
 Existing settings and personal hooks are preserved; if Regurgitate cannot add
 itself safely, it stops and reports that the setup needs attention. Restart
 the selected agent afterward.
@@ -91,22 +91,40 @@ inspect and add the hook and skill beneath the selected agent's user config.
 Installing the plugin alone downloads the complete Regurgitate program but
 does not silently edit Codex or Claude Code. The explicit setup action makes
 that final connection. Once connected, recording and recall continue to work
-without the AoE page being open. If you already have the plugin, update it
-with:
+without the AoE page being open. Future Regurgitate releases update with:
 
 ```bash
-aoe plugin update vomitselfie.praxis
+aoe plugin update vomitselfie.regurgitate
 ```
+
+#### Moving from Praxis
+
+The new plugin ID means AoE treats Regurgitate as a new plugin rather than an
+update to Praxis. Install Regurgitate, use its settings page to set up each
+agent you previously connected, then remove the old plugin:
+
+```bash
+aoe plugin install gh:vomitselfie/Regurgitate
+aoe serve
+# After completing agent setup in AoE and closing it:
+aoe plugin uninstall vomitselfie.praxis
+```
+
+Setup replaces old Praxis hook commands instead of adding duplicates. It moves
+an existing `praxis-recall` skill into a hidden `.regurgitate-retired`
+directory before installing `regurgitate-recall`, preserving any personal
+changes for review. Existing encrypted history remains readable immediately;
+the data directory and credential-store key migrate on the next recorded
+event. The encryption format retains compatibility with all existing events.
 
 Do not also enable the AoE transcript fallback for Codex after connecting the
 native Codex hook; the two sources can observe the same session.
 
 ### Standalone installation
 
-You can also install Regurgitate without AoE. The current executable and AoE
-plugin ID retain their original `praxis` name. There are two pieces:
+You can also install Regurgitate without AoE. There are two pieces:
 
-1. The `praxis` program records and reads encrypted history.
+1. The `regurgitate` program records and reads encrypted history.
 2. A small agent skill tells your agent when to use it.
 
 #### 1. Install the program
@@ -120,11 +138,11 @@ and download the archive for your computer:
 | Apple Silicon Mac | `macos-aarch64.tar.gz` |
 | Intel Mac | `macos-x86_64.tar.gz` |
 
-Extract the archive and put the `praxis` file in a directory on your `PATH`,
+Extract the archive and put the `regurgitate` file in a directory on your `PATH`,
 such as `~/.local/bin`. Then check it:
 
 ```bash
-praxis --version
+regurgitate --version
 ```
 
 If that says `command not found`, reopen your terminal or ask your agent to add
@@ -134,7 +152,7 @@ If “put it on your PATH” is unfamiliar, ask your coding agent:
 
 > Install the latest Regurgitate release from vomitselfie/Regurgitate for this
 > computer. Verify it against SHA256SUMS, place it in ~/.local/bin, and confirm
-> that `praxis --version` works.
+> that `regurgitate --version` works.
 
 <details>
 <summary>Terminal install using GitHub CLI</summary>
@@ -147,7 +165,7 @@ case "$(uname -s)-$(uname -m)" in
   Darwin-x86_64) platform="macos-x86_64" ;;
   *) echo "Regurgitate has no release for this platform." >&2; return 1 ;;
 esac
-archive="praxis-${release}-${platform}.tar.gz"
+archive="regurgitate-${release}-${platform}.tar.gz"
 gh release download "$release" --repo vomitselfie/Regurgitate \
   --pattern "$archive" --pattern SHA256SUMS
 checksum="$(grep -F "  $archive" SHA256SUMS)"
@@ -159,8 +177,8 @@ fi
 unpack_dir="$(mktemp -d)"
 tar -xzf "$archive" -C "$unpack_dir"
 mkdir -p "$HOME/.local/bin"
-install -m 0755 "$unpack_dir/praxis" "$HOME/.local/bin/praxis"
-praxis --version
+install -m 0755 "$unpack_dir/regurgitate" "$HOME/.local/bin/regurgitate"
+regurgitate --version
 ```
 
 </details>
@@ -174,13 +192,14 @@ local encrypted history.
 
 ```bash
 codex_home="${CODEX_HOME:-$HOME/.codex}"
-praxis install-codex-hook --config "$codex_home/config.toml" --apply
-praxis install-skill --target "$codex_home/skills" --apply
+regurgitate install-codex-hook --config "$codex_home/config.toml" --apply
+regurgitate install-skill --target "$codex_home/skills" --apply
 ```
 
 Restart Codex. The first recall or learning request may ask for permission to
 reach your operating system's credential store. Approve only the exact
-`praxis recall` or `praxis learn` command—not a general shell command. Codex's
+`regurgitate recall` or `regurgitate learn` command—not a general shell
+command. Codex's
 [command rules](https://learn.chatgpt.com/docs/agent-configuration/rules) can
 remember that narrow approval.
 
@@ -188,8 +207,8 @@ remember that narrow approval.
 
 ```bash
 claude_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-praxis install-claude-hook --config "$claude_home/settings.json" --apply
-praxis install-skill --target "$claude_home/skills" --apply
+regurgitate install-claude-hook --config "$claude_home/settings.json" --apply
+regurgitate install-skill --target "$claude_home/skills" --apply
 ```
 
 Restart Claude Code. The installer adds to both terminal tool events while
@@ -203,7 +222,7 @@ Older AoE/Codex setups can record at session boundaries instead of using the
 native Codex hook:
 
 ```bash
-praxis install-aoe-hook \
+regurgitate install-aoe-hook \
   --config "$HOME/.config/agent-of-empires/config.toml" \
   --apply
 ```
@@ -215,8 +234,8 @@ Use this only when the native Codex hook is not installed.
 Use your agent normally for a moment, then run:
 
 ```bash
-praxis status
-praxis recall --project "$PWD" --query "what approach should I try?"
+regurgitate status
+regurgitate recall --project "$PWD" --query "what approach should I try?"
 ```
 
 `not_configured` before the first recorded event is normal. Once a hook records
@@ -235,13 +254,13 @@ Useful commands:
 
 | Command | What it does |
 | --- | --- |
-| `praxis status` | Checks the key store and encrypted history |
-| `praxis recall --project "$PWD"` | Shows bounded aggregate evidence for this project |
-| `praxis forget --project "$PWD"` | Previews deleting this project's history |
-| `praxis forget --project "$PWD" --apply` | Deletes this project's history |
-| `praxis prune --keep-recent 10000` | Previews a global retention cleanup |
-| `praxis prune --keep-recent 10000 --apply` | Applies that cleanup |
-| `praxis --help` | Lists every command |
+| `regurgitate status` | Checks the key store and encrypted history |
+| `regurgitate recall --project "$PWD"` | Shows bounded aggregate evidence for this project |
+| `regurgitate forget --project "$PWD"` | Previews deleting this project's history |
+| `regurgitate forget --project "$PWD" --apply` | Deletes this project's history |
+| `regurgitate prune --keep-recent 10000` | Previews a global retention cleanup |
+| `regurgitate prune --keep-recent 10000 --apply` | Applies that cleanup |
+| `regurgitate --help` | Lists every command |
 
 Destructive commands preview what they will remove unless you add `--apply`.
 
@@ -250,7 +269,7 @@ Destructive commands preview what they will remove unless you add `--apply`.
 Recording adds no chat output: successful hooks are silent. Recall defaults to
 an approximate 300-token output limit and returns aggregates instead of
 replaying history. The core skill plus a default recall has a
-Regurgitate-controlled ceiling of about 1,031 tokens, 43% smaller than the
+Regurgitate-controlled ceiling of about 1,046 tokens, 42% smaller than the
 original implementation. AoE setup adds one short instruction containing its
 local executable path, so that exact total varies slightly by computer.
 
@@ -263,7 +282,8 @@ investigation or asking you to paste old context.
 - Regurgitate fails closed if Secret Service or Keychain is unavailable or
   locked.
 - It never falls back to a plaintext key or plaintext history.
-- Agent sandbox access should be granted only to exact `praxis` subcommands.
+- Agent sandbox access should be granted only to exact `regurgitate`
+  subcommands.
 - `status`, recall, and deletion previews do not create missing state.
 - Hook input is reduced to an allowlisted event before storage.
 
@@ -273,6 +293,6 @@ investigation or asking you to paste old context.
 - [Roadmap](docs/roadmap.md)
 - [Upstream source-format notes](docs/source-format-notes.md)
 - [Contributor and release guide](docs/releasing.md)
-- [`praxis-recall` skill](skills/praxis-recall/SKILL.md)
+- [`regurgitate-recall` skill](skills/regurgitate-recall/SKILL.md)
 
 Regurgitate is MIT licensed.

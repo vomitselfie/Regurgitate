@@ -10,7 +10,7 @@ fi
 platform="$1"
 binary="$2"
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-dist_dir="${PRAXIS_DIST_DIR:-$repo_root/dist}"
+dist_dir="${REGURGITATE_DIST_DIR:-$repo_root/dist}"
 
 if [[ ! "$platform" =~ ^(linux|macos)-(x86_64|aarch64)$ ]]; then
     echo "invalid release platform: $platform" >&2
@@ -22,18 +22,18 @@ if [[ ! -f "$binary" || ! -x "$binary" ]]; then
     exit 2
 fi
 
-package_id="$(cargo pkgid --manifest-path "$repo_root/Cargo.toml" -p praxis)"
+package_id="$(cargo pkgid --manifest-path "$repo_root/Cargo.toml" -p regurgitate)"
 version="${package_id##*@}"
 if [[ "$version" == "$package_id" ]]; then
-    echo "could not determine the Praxis package version" >&2
+    echo "could not determine the Regurgitate package version" >&2
     exit 1
 fi
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+[-+0-9A-Za-z.]*$ ]]; then
-    echo "invalid Praxis package version: $version" >&2
+    echo "invalid Regurgitate package version: $version" >&2
     exit 1
 fi
 
-archive_name="praxis-v${version}-${platform}.tar.gz"
+archive_name="regurgitate-v${version}-${platform}.tar.gz"
 staging_root="$(mktemp -d)"
 
 cleanup() {
@@ -42,7 +42,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p -- "$dist_dir"
-install -m 0755 -- "$binary" "$staging_root/praxis"
+install -m 0755 -- "$binary" "$staging_root/regurgitate"
 install -m 0644 -- "$repo_root/README.md" "$repo_root/LICENSE" "$staging_root/"
 
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" show -s --format=%ct HEAD)}"
@@ -56,12 +56,12 @@ write_archive() {
             --numeric-owner \
             -C "$staging_root" \
             -cf - \
-            LICENSE README.md praxis
+            LICENSE README.md regurgitate
     else
         COPYFILE_DISABLE=1 tar \
             -C "$staging_root" \
             -cf - \
-            LICENSE README.md praxis
+            LICENSE README.md regurgitate
     fi
 }
 

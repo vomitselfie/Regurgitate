@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use praxis::{
+use regurgitate::{
     adapters::{claude, codex},
     application::HookObservation,
     core::{AgentKind, CURRENT_SCHEMA_VERSION, Outcome},
