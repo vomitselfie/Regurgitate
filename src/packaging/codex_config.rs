@@ -38,8 +38,13 @@ struct PreparedConfig {
 }
 
 pub fn inspect_codex_hook(config: &Path) -> Result<HookReadiness> {
+    inspect_codex_hook_command(config, CODEX_HOOK_COMMAND)
+}
+
+pub fn inspect_codex_hook_command(config: &Path, hook_command: &str) -> Result<HookReadiness> {
+    validate_hook_command(hook_command)?;
     let content = read_config(config, "Codex")?;
-    Ok(match prepare_config(&content) {
+    Ok(match prepare_config(&content, hook_command) {
         Ok(prepared) if prepared.changes.is_empty() => HookReadiness::Installed,
         Ok(_) => HookReadiness::NotInstalled,
         Err(_) => HookReadiness::Conflicting,
@@ -49,7 +54,18 @@ pub fn inspect_codex_hook(config: &Path) -> Result<HookReadiness> {
 /// Preview or append one additive PostToolUse group to an explicit user-level
 /// Codex config. Existing matcher groups and handlers are preserved.
 pub fn install_codex_hook(config: &Path, apply: bool) -> Result<CodexHookInstallReport> {
-    let prepared = prepare_config(&read_config(config, "Codex")?)?;
+    install_codex_hook_command(config, CODEX_HOOK_COMMAND, apply)
+}
+
+/// Preview or install a PostToolUse hook using a specific Praxis executable.
+/// This is used by the AoE worker, whose downloaded binary is not on PATH.
+pub fn install_codex_hook_command(
+    config: &Path,
+    hook_command: &str,
+    apply: bool,
+) -> Result<CodexHookInstallReport> {
+    validate_hook_command(hook_command)?;
+    let prepared = prepare_config(&read_config(config, "Codex")?, hook_command)?;
     if prepared.changes.is_empty() {
         return Ok(report(InstallStatus::AlreadyCurrent, config, Vec::new()));
     }
@@ -63,7 +79,7 @@ pub fn install_codex_hook(config: &Path, apply: bool) -> Result<CodexHookInstall
 
     // The preview is informational. Re-read and validate while holding the
     // same adjacent lock used by Codex config writers.
-    let prepared = prepare_config(&read_config(config, "Codex")?)?;
+    let prepared = prepare_config(&read_config(config, "Codex")?, hook_command)?;
     if prepared.changes.is_empty() {
         return Ok(report(InstallStatus::AlreadyCurrent, config, Vec::new()));
     }
@@ -71,7 +87,7 @@ pub fn install_codex_hook(config: &Path, apply: bool) -> Result<CodexHookInstall
     Ok(report(InstallStatus::Installed, config, prepared.changes))
 }
 
-fn prepare_config(content: &str) -> Result<PreparedConfig> {
+fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let mut document = if content.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -94,7 +110,7 @@ fn prepare_config(content: &str) -> Result<PreparedConfig> {
     let groups = hooks["PostToolUse"]
         .as_array_of_tables_mut()
         .context("Codex hooks.PostToolUse must be an array of tables")?;
-    match praxis_hook_coverage(groups) {
+    match praxis_hook_coverage(groups, hook_command) {
         PraxisHookCoverage::AllTools => {
             return Ok(PreparedConfig {
                 content: document.to_string(),
@@ -109,7 +125,7 @@ fn prepare_config(content: &str) -> Result<PreparedConfig> {
 
     let mut handler = Table::new();
     handler.insert("type", value("command"));
-    handler.insert("command", value(CODEX_HOOK_COMMAND));
+    handler.insert("command", value(hook_command));
     handler.insert("timeout", value(5));
     let mut handlers = ArrayOfTables::new();
     handlers.push(handler);
@@ -151,18 +167,21 @@ enum PraxisHookCoverage {
     Restricted,
 }
 
-fn praxis_hook_coverage(groups: &ArrayOfTables) -> PraxisHookCoverage {
+fn praxis_hook_coverage(groups: &ArrayOfTables, hook_command: &str) -> PraxisHookCoverage {
     let mut found_restricted = false;
     for group in groups {
-        let contains_praxis = group
-            .get("hooks")
-            .and_then(Item::as_array_of_tables)
-            .is_some_and(|handlers| {
-                handlers.iter().any(|handler| {
-                    handler.get("type").and_then(Item::as_str) == Some("command")
-                        && handler.get("command").and_then(Item::as_str) == Some(CODEX_HOOK_COMMAND)
-                })
-            });
+        let contains_praxis =
+            group
+                .get("hooks")
+                .and_then(Item::as_array_of_tables)
+                .is_some_and(|handlers| {
+                    handlers.iter().any(|handler| {
+                        handler.get("type").and_then(Item::as_str) == Some("command")
+                            && handler.get("command").and_then(Item::as_str).is_some_and(
+                                |command| command == hook_command || command == CODEX_HOOK_COMMAND,
+                            )
+                    })
+                });
         if !contains_praxis {
             continue;
         }
@@ -176,6 +195,13 @@ fn praxis_hook_coverage(groups: &ArrayOfTables) -> PraxisHookCoverage {
     } else {
         PraxisHookCoverage::Missing
     }
+}
+
+fn validate_hook_command(command: &str) -> Result<()> {
+    if command.is_empty() || command.chars().any(|character| character.is_control()) {
+        bail!("Praxis hook command must be non-empty and single-line");
+    }
+    Ok(())
 }
 
 fn report(

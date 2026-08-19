@@ -19,8 +19,8 @@ use crate::{
     core::{AgentKind, DebugEvent, Outcome, Strategy},
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
-        inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_codex_hook,
-        install_skill,
+        inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_claude_hook,
+        install_codex_hook, install_skill,
     },
     paths::default_data_home,
     query::{RecallOptions, RecallResult, RecallService},
@@ -128,6 +128,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
         Command::InstallCodexHook { config, apply } => {
             let report = install_codex_hook(&config, apply)?;
+            print_json(&report)
+        }
+        Command::InstallClaudeHook { config, apply } => {
+            let report = install_claude_hook(&config, apply)?;
             print_json(&report)
         }
         Command::InstallSkill {

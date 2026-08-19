@@ -151,6 +151,17 @@ pub(crate) enum Command {
         apply: bool,
     },
 
+    /// Preview or add native recording to an explicit Claude settings file.
+    InstallClaudeHook {
+        /// User-level Claude settings.json file to update.
+        #[arg(long, value_name = "FILE")]
+        config: PathBuf,
+
+        /// Apply the displayed changes instead of previewing them.
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Preview, install, or explicitly replace the bundled agent recall skill.
     InstallSkill {
         /// Agent host's skills directory; Praxis adds a praxis-recall child.
@@ -604,6 +615,35 @@ mod tests {
         .unwrap();
         let Command::InstallCodexHook { apply, .. } = applied.command else {
             panic!("expected install-codex-hook command");
+        };
+        assert!(apply);
+    }
+
+    #[test]
+    fn claude_hook_install_is_preview_only_unless_apply_is_explicit() {
+        let preview = Cli::try_parse_from([
+            "praxis",
+            "install-claude-hook",
+            "--config",
+            "/claude/settings.json",
+        ])
+        .unwrap();
+        let Command::InstallClaudeHook { config, apply } = preview.command else {
+            panic!("expected install-claude-hook command");
+        };
+        assert_eq!(config, PathBuf::from("/claude/settings.json"));
+        assert!(!apply);
+
+        let applied = Cli::try_parse_from([
+            "praxis",
+            "install-claude-hook",
+            "--config",
+            "/claude/settings.json",
+            "--apply",
+        ])
+        .unwrap();
+        let Command::InstallClaudeHook { apply, .. } = applied.command else {
+            panic!("expected install-claude-hook command");
         };
         assert!(apply);
     }

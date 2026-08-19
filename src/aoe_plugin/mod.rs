@@ -1,4 +1,5 @@
 mod protocol;
+mod setup;
 mod view;
 
 use std::{env, ffi::OsStr, io};
@@ -21,12 +22,23 @@ pub fn is_worker_invocation() -> bool {
 
 pub fn run() -> Result<()> {
     let data_home = crate::paths::default_data_home()?;
-    let inspect = move || inspect_health(&data_home);
+    let setup = setup::SetupService::from_environment()?;
+    let inspect = || PluginSnapshot {
+        health: inspect_health(&data_home),
+        integrations: setup.inspect(),
+    };
+    let configure = |target| setup.setup(target);
     protocol::run(
         io::BufReader::new(io::stdin()),
         io::stdout().lock(),
         inspect,
+        configure,
     )
+}
+
+pub(super) struct PluginSnapshot {
+    health: HealthReport,
+    integrations: setup::IntegrationOverview,
 }
 
 fn matches_worker_invocation(plugin_id: Option<&OsStr>, argument_count: usize) -> bool {
@@ -70,5 +82,24 @@ mod tests {
             Some("praxis-v${version}-${os}-${arch}.tar.gz")
         );
         assert_eq!(manifest["runtime"]["bin"].as_str(), Some("praxis"));
+
+        let capabilities: Vec<_> = manifest["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert_eq!(capabilities, ["runtime.worker", "fs.read", "fs.write"]);
+
+        let command_ids: Vec<_> = manifest["commands"]
+            .as_array_of_tables()
+            .unwrap()
+            .iter()
+            .filter_map(|command| command["id"].as_str())
+            .collect();
+        assert_eq!(
+            command_ids,
+            ["status", "refresh", "setup-codex", "setup-claude"]
+        );
     }
 }

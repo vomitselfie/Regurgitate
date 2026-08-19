@@ -27,14 +27,18 @@ AoE currently provides three useful integration surfaces:
 3. a stable plugin system using manifest API version 12 and JSON-RPC workers.
 
 The plugin system is useful for installation, commands, settings, and UI, but
-the documented worker contract is not itself a complete tool-event feed.
-Status/lifecycle hooks remain useful for automatic session-boundary ingestion.
+has no post-install callback and its worker contract is not itself a complete
+tool-event feed. Praxis therefore waits for an explicit setup action before
+adding an agent hook and skill. Status/lifecycle hooks remain useful for
+automatic session-boundary ingestion.
 
 Praxis therefore ships a release-binary plugin as an operational layer over the
 same executable. Its worker publishes aggregate health and handles controlled
-status/refresh methods; it does not receive or reconstruct provider tool
-events. AoE 1.14.x launches workers only from `aoe serve`, so the standalone
-CLI and recording hooks remain supported independently of the daemon.
+status, refresh, and setup methods; it does not receive or reconstruct provider
+tool events. Contributed setup commands cover hosts where settings-page actions
+are not interactive. AoE 1.14.x launches workers only from `aoe serve`, so the
+standalone CLI and installed recording hooks remain supported independently of
+the daemon.
 
 The implemented host integration uses global/profile `[status_hooks]` entries
 for `on_idle` and `on_error`. AoE documents these hooks as best-effort,

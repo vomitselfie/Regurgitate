@@ -19,12 +19,12 @@ module boundaries.
 - transient task-query ranking with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
-- an installable AoE API-v12 release-binary plugin with aggregate health
-  commands, status-bar state, and a settings page;
+- an installable AoE API-v12 release-binary plugin with aggregate health,
+  status UI, and explicit one-action Codex/Claude setup;
 - native Codex `PostToolUse` recording with generated configuration and a
   preview-first explicit-path installer;
 - native Claude Code success/failure hook recording with generated
-  configuration;
+  configuration and a preserving installer;
 - a shared, sanitized native-hook observation boundary and cross-adapter
   conformance fixtures;
 - read-only key-store and database health with aggregate-only output;
@@ -33,8 +33,8 @@ module boundaries.
 - preview-first age/count retention with fixed-size deletion transactions;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
-- locked, atomic installers for empty AoE idle/error slots and an additive
-  Codex matcher group;
+- locked, atomic installers for empty AoE idle/error slots, an additive Codex
+  matcher group, and additive Claude terminal events;
 - version-gated CI releases with verified Linux x86-64, Apple Silicon, and
   Intel macOS archives plus combined checksums;
   and
@@ -130,8 +130,12 @@ core:
 2. the binary enters worker mode only for AoE's exact plugin identity and
    otherwise remains the normal provider-neutral CLI;
 3. isolated protocol and view modules publish only aggregate health to the
-   status bar and settings page; and
-4. recording stays on native provider hooks or the AoE transcript fallback
+   status bar and settings page;
+4. explicit setup actions install the selected agent's native hook and recall
+   skill using the AoE-managed executable, without requiring a PATH install;
+5. existing user configuration is preserved and unsafe conflicts fail closed;
+   and
+6. recording stays on native provider hooks or the AoE transcript fallback
    because the plugin API is not a normalized tool-completion source.
 
 ## Next integration slice

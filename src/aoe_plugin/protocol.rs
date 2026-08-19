@@ -8,25 +8,30 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::application::HealthReport;
-
-use super::view;
+use super::{
+    PluginSnapshot,
+    setup::{SetupNotice, SetupOutcome, SetupTarget},
+    view,
+};
 
 const HOST_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const FIRST_OUTBOUND_ID: u64 = 1_000_000;
 const STATUS_COMMAND: &str = "plugin.vomitselfie.praxis.status";
 const REFRESH_COMMAND: &str = "plugin.vomitselfie.praxis.refresh";
+const SETUP_CODEX_COMMAND: &str = "plugin.vomitselfie.praxis.setup-codex";
+const SETUP_CLAUDE_COMMAND: &str = "plugin.vomitselfie.praxis.setup-claude";
 
 enum Incoming {
     Message(Value),
     End,
 }
 
-pub(super) fn run<R, W, F>(reader: R, writer: W, inspect: F) -> Result<()>
+pub(super) fn run<R, W, F, S>(reader: R, writer: W, inspect: F, setup: S) -> Result<()>
 where
     R: BufRead + Send + 'static,
     W: Write,
-    F: Fn() -> HealthReport,
+    F: Fn() -> PluginSnapshot,
+    S: Fn(SetupTarget) -> Result<SetupOutcome>,
 {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -44,7 +49,7 @@ where
         let _ = sender.send(Incoming::End);
     });
 
-    Worker::new(writer, receiver).serve(inspect)
+    Worker::new(writer, receiver).serve(inspect, setup)
 }
 
 struct Worker<W> {
@@ -52,6 +57,7 @@ struct Worker<W> {
     receiver: Receiver<Incoming>,
     next_id: u64,
     refresh_due: bool,
+    last_setup: Option<SetupNotice>,
     stopped: bool,
 }
 
@@ -62,15 +68,20 @@ impl<W: Write> Worker<W> {
             receiver,
             next_id: FIRST_OUTBOUND_ID,
             refresh_due: false,
+            last_setup: None,
             stopped: false,
         }
     }
 
-    fn serve(&mut self, inspect: impl Fn() -> HealthReport) -> Result<()> {
-        self.publish_health(&inspect(), &inspect)?;
+    fn serve<F, S>(&mut self, inspect: F, setup: S) -> Result<()>
+    where
+        F: Fn() -> PluginSnapshot,
+        S: Fn(SetupTarget) -> Result<SetupOutcome>,
+    {
+        self.publish_health(&inspect(), &inspect, &setup)?;
         while !self.stopped {
             match self.receiver.recv() {
-                Ok(Incoming::Message(message)) => self.handle_inbound(message, &inspect)?,
+                Ok(Incoming::Message(message)) => self.handle_inbound(message, &inspect, &setup)?,
                 Ok(Incoming::End) | Err(_) => {
                     self.stopped = true;
                     continue;
@@ -78,26 +89,32 @@ impl<W: Write> Worker<W> {
             }
             if self.refresh_due && !self.stopped {
                 self.refresh_due = false;
-                self.publish_health(&inspect(), &inspect)?;
+                self.publish_health(&inspect(), &inspect, &setup)?;
             }
         }
         Ok(())
     }
 
-    fn publish_health(
+    fn publish_health<F, S>(
         &mut self,
-        report: &HealthReport,
-        inspect: &impl Fn() -> HealthReport,
-    ) -> Result<()> {
+        snapshot: &PluginSnapshot,
+        inspect: &F,
+        setup: &S,
+    ) -> Result<()>
+    where
+        F: Fn() -> PluginSnapshot,
+        S: Fn(SetupTarget) -> Result<SetupOutcome>,
+    {
         if self
             .call_host(
                 "ui.state.set",
                 json!({
                     "slot": "status-bar",
                     "id": "health",
-                    "payload": view::status_bar(report)
+                    "payload": view::status_bar(&snapshot.health)
                 }),
                 inspect,
+                setup,
             )?
             .is_none()
         {
@@ -108,19 +125,25 @@ impl<W: Write> Worker<W> {
             json!({
                 "slot": "settings-page",
                 "id": "overview",
-                "payload": view::settings_page(report)
+                "payload": view::settings_page(snapshot, self.last_setup)
             }),
             inspect,
+            setup,
         )?;
         Ok(())
     }
 
-    fn call_host(
+    fn call_host<F, S>(
         &mut self,
         method: &str,
         params: Value,
-        inspect: &impl Fn() -> HealthReport,
-    ) -> Result<Option<Value>> {
+        inspect: &F,
+        setup: &S,
+    ) -> Result<Option<Value>>
+    where
+        F: Fn() -> PluginSnapshot,
+        S: Fn(SetupTarget) -> Result<SetupOutcome>,
+    {
         let id = self.next_id;
         self.next_id += 1;
         self.send(json!({
@@ -144,7 +167,7 @@ impl<W: Write> Worker<W> {
                         .unwrap_or(-32603);
                     bail!("AoE host rejected {method} with JSON-RPC code {code}");
                 }
-                Ok(Incoming::Message(message)) => self.handle_inbound(message, inspect)?,
+                Ok(Incoming::Message(message)) => self.handle_inbound(message, inspect, setup)?,
                 Ok(Incoming::End) | Err(RecvTimeoutError::Disconnected) => {
                     self.stopped = true;
                     return Ok(None);
@@ -156,7 +179,11 @@ impl<W: Write> Worker<W> {
         }
     }
 
-    fn handle_inbound(&mut self, message: Value, inspect: impl Fn() -> HealthReport) -> Result<()> {
+    fn handle_inbound<F, S>(&mut self, message: Value, inspect: &F, setup: &S) -> Result<()>
+    where
+        F: Fn() -> PluginSnapshot,
+        S: Fn(SetupTarget) -> Result<SetupOutcome>,
+    {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Ok(());
         };
@@ -164,7 +191,7 @@ impl<W: Write> Worker<W> {
         match method {
             "praxis.status" => {
                 if let Some(id) = id {
-                    self.send_response(id, serde_json::to_value(inspect())?)?;
+                    self.send_response(id, serde_json::to_value(inspect().health)?)?;
                 }
             }
             "praxis.refresh" => {
@@ -172,6 +199,12 @@ impl<W: Write> Worker<W> {
                     self.send_response(id, json!({"accepted": true}))?;
                 }
                 self.refresh_due = true;
+            }
+            "praxis.setup.codex" => {
+                self.run_setup(SetupTarget::Codex, id, setup)?;
+            }
+            "praxis.setup.claude" => {
+                self.run_setup(SetupTarget::Claude, id, setup)?;
             }
             "plugin.settings.changed" => {
                 if let Some(id) = id {
@@ -186,6 +219,10 @@ impl<W: Write> Worker<W> {
                         self.send_response(id, json!({"accepted": true}))?;
                     }
                     self.refresh_due = true;
+                } else if command == Some(SETUP_CODEX_COMMAND) {
+                    self.run_setup(SetupTarget::Codex, id, setup)?;
+                } else if command == Some(SETUP_CLAUDE_COMMAND) {
+                    self.run_setup(SetupTarget::Claude, id, setup)?;
                 } else if let Some(id) = id {
                     self.send(json!({
                         "jsonrpc": "2.0",
@@ -213,6 +250,19 @@ impl<W: Write> Worker<W> {
         Ok(())
     }
 
+    fn run_setup<S>(&mut self, target: SetupTarget, id: Option<Value>, setup: &S) -> Result<()>
+    where
+        S: Fn(SetupTarget) -> Result<SetupOutcome>,
+    {
+        let outcome = setup(target).unwrap_or(SetupOutcome::Failed);
+        self.last_setup = Some(SetupNotice { target, outcome });
+        if let Some(id) = id {
+            self.send_response(id, json!({"accepted": true}))?;
+        }
+        self.refresh_due = true;
+        Ok(())
+    }
+
     fn send_response(&mut self, id: Value, result: Value) -> Result<()> {
         self.send(json!({"jsonrpc": "2.0", "id": id, "result": result}))
     }
@@ -231,18 +281,36 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::application::{ComponentReadiness, HistoryHealth, OverallHealth};
+    use crate::aoe_plugin::setup::{IntegrationOverview, IntegrationReadiness, IntegrationState};
+    use crate::application::{ComponentReadiness, HealthReport, HistoryHealth, OverallHealth};
 
-    fn ready_report() -> HealthReport {
-        HealthReport {
-            status: OverallHealth::Ready,
-            key_store: ComponentReadiness::Ready,
-            history: HistoryHealth {
-                status: ComponentReadiness::Ready,
-                event_count: Some(9),
+    fn ready_snapshot() -> PluginSnapshot {
+        PluginSnapshot {
+            health: HealthReport {
+                status: OverallHealth::Ready,
+                key_store: ComponentReadiness::Ready,
+                history: HistoryHealth {
+                    status: ComponentReadiness::Ready,
+                    event_count: Some(9),
+                },
+                hooks: vec![],
             },
-            hooks: vec![],
+            integrations: IntegrationOverview {
+                codex: ready_integration(),
+                claude: ready_integration(),
+            },
         }
+    }
+
+    fn ready_integration() -> IntegrationState {
+        IntegrationState {
+            hook: IntegrationReadiness::Ready,
+            skill: IntegrationReadiness::Ready,
+        }
+    }
+
+    fn unchanged_setup(_: SetupTarget) -> Result<SetupOutcome> {
+        Ok(SetupOutcome::AlreadyCurrent)
     }
 
     #[test]
@@ -261,7 +329,13 @@ mod tests {
         .join("\n");
         let mut output = Vec::new();
 
-        run(Cursor::new(input), &mut output, ready_report).unwrap();
+        run(
+            Cursor::new(input),
+            &mut output,
+            ready_snapshot,
+            unchanged_setup,
+        )
+        .unwrap();
 
         let messages: Vec<Value> = String::from_utf8(output)
             .unwrap()
@@ -298,7 +372,13 @@ mod tests {
         .join("\n");
         let mut output = Vec::new();
 
-        run(Cursor::new(input), &mut output, ready_report).unwrap();
+        run(
+            Cursor::new(input),
+            &mut output,
+            ready_snapshot,
+            unchanged_setup,
+        )
+        .unwrap();
 
         let encoded = String::from_utf8(output).unwrap();
         assert!(encoded.contains(r#""code":-32601"#));
@@ -325,7 +405,13 @@ mod tests {
         .join("\n");
         let mut output = Vec::new();
 
-        run(Cursor::new(input), &mut output, ready_report).unwrap();
+        run(
+            Cursor::new(input),
+            &mut output,
+            ready_snapshot,
+            unchanged_setup,
+        )
+        .unwrap();
 
         let messages: Vec<Value> = String::from_utf8(output)
             .unwrap()
@@ -337,5 +423,41 @@ mod tests {
         assert_eq!(messages[3]["params"]["slot"], json!("settings-page"));
         let encoded = serde_json::to_string(&messages).unwrap();
         assert!(!encoded.contains("opaque-session"));
+    }
+
+    #[test]
+    fn setup_command_runs_selected_installer_and_publishes_bounded_result() {
+        let input = [
+            json!({"jsonrpc": "2.0", "id": 1_000_000, "result": {"ok": true}}),
+            json!({"jsonrpc": "2.0", "id": 1_000_001, "result": {"ok": true}}),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "plugin.command.invoke",
+                "params": {"command": SETUP_CODEX_COMMAND, "private": "PRIVATE_VALUE"}
+            }),
+            json!({"jsonrpc": "2.0", "id": 1_000_002, "result": {"ok": true}}),
+            json!({"jsonrpc": "2.0", "id": 1_000_003, "result": {"ok": true}}),
+        ]
+        .into_iter()
+        .map(|value| serde_json::to_string(&value).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+        let mut output = Vec::new();
+
+        run(Cursor::new(input), &mut output, ready_snapshot, |target| {
+            assert_eq!(target, SetupTarget::Codex);
+            Ok(SetupOutcome::Installed)
+        })
+        .unwrap();
+
+        let messages: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(messages.len(), 4);
+        let encoded = serde_json::to_string(&messages).unwrap();
+        assert!(encoded.contains("Codex setup complete"));
+        assert!(!encoded.contains("PRIVATE_VALUE"));
     }
 }

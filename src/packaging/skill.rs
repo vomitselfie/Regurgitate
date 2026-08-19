@@ -11,26 +11,61 @@ use uuid::Uuid;
 use super::InstallStatus;
 
 const SKILL_NAME: &str = "praxis-recall";
-const SKILL_FILES: [PackagedFile; 2] = [
-    PackagedFile {
-        relative_path: "SKILL.md",
-        contents: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/skills/praxis-recall/SKILL.md"
-        )),
-    },
-    PackagedFile {
-        relative_path: "agents/openai.yaml",
-        contents: include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/skills/praxis-recall/agents/openai.yaml"
-        )),
-    },
-];
+const SKILL_CONTENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/skills/praxis-recall/SKILL.md"
+));
+const OPENAI_METADATA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/skills/praxis-recall/agents/openai.yaml"
+));
+const SKILL_PATHS: [&str; 2] = ["SKILL.md", "agents/openai.yaml"];
 
-struct PackagedFile {
+struct PackagedFile<'a> {
     relative_path: &'static str,
-    contents: &'static str,
+    contents: &'a str,
+}
+
+struct SkillPackage {
+    skill: String,
+}
+
+impl SkillPackage {
+    fn standard() -> Self {
+        Self {
+            skill: SKILL_CONTENT.to_owned(),
+        }
+    }
+
+    fn for_command(command: &str) -> Result<Self> {
+        if command.is_empty()
+            || command
+                .chars()
+                .any(|character| character.is_control() || character == '`')
+        {
+            bail!("Praxis skill command must be non-empty, single-line, and contain no backticks");
+        }
+        let heading = "# Praxis Recall\n";
+        let instruction = format!(
+            "{heading}\nReplace the leading `praxis` in every command and approval prefix below with `{command}`; invoke it directly, never through a shell wrapper.\n"
+        );
+        Ok(Self {
+            skill: SKILL_CONTENT.replacen(heading, &instruction, 1),
+        })
+    }
+
+    fn files(&self) -> [PackagedFile<'_>; 2] {
+        [
+            PackagedFile {
+                relative_path: SKILL_PATHS[0],
+                contents: &self.skill,
+            },
+            PackagedFile {
+                relative_path: SKILL_PATHS[1],
+                contents: OPENAI_METADATA,
+            },
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,10 +90,31 @@ pub fn install_skill(
     apply: bool,
     replace: bool,
 ) -> Result<SkillInstallReport> {
+    install_skill_package(skills_directory, apply, replace, &SkillPackage::standard())
+}
+
+/// Install the same bounded skill with every Praxis invocation pinned to one
+/// executable. AoE uses this because release-binary workers are not on PATH.
+pub fn install_skill_with_command(
+    skills_directory: &Path,
+    command: &str,
+    apply: bool,
+    replace: bool,
+) -> Result<SkillInstallReport> {
+    let package = SkillPackage::for_command(command)?;
+    install_skill_package(skills_directory, apply, replace, &package)
+}
+
+fn install_skill_package(
+    skills_directory: &Path,
+    apply: bool,
+    replace: bool,
+    package: &SkillPackage,
+) -> Result<SkillInstallReport> {
     validate_skills_directory(skills_directory)?;
     let destination = skills_directory.join(SKILL_NAME);
 
-    match inspect_existing_install(&destination)? {
+    match inspect_existing_install(&destination, package)? {
         ExistingInstall::Current => {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
@@ -81,7 +137,7 @@ pub fn install_skill(
 
     // Recheck after creating the parent so concurrent installers cannot turn a
     // preview into an overwrite.
-    let existing = inspect_existing_install(&destination)?;
+    let existing = inspect_existing_install(&destination, package)?;
     match existing {
         ExistingInstall::Current => {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
@@ -94,7 +150,7 @@ pub fn install_skill(
 
     let staging =
         skills_directory.join(format!(".{SKILL_NAME}.install-{}", Uuid::new_v4().simple()));
-    if let Err(error) = write_staging_package(&staging) {
+    if let Err(error) = write_staging_package(&staging, package) {
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
     }
@@ -106,7 +162,7 @@ pub fn install_skill(
 
     if let Err(rename_error) = fs::rename(&staging, &destination) {
         let _ = fs::remove_dir_all(&staging);
-        if inspect_existing_install(&destination)? == ExistingInstall::Current {
+        if inspect_existing_install(&destination, package)? == ExistingInstall::Current {
             return Ok(report(InstallStatus::AlreadyCurrent, destination));
         }
         return Err(rename_error).with_context(|| {
@@ -130,7 +186,7 @@ fn validate_skills_directory(path: &Path) -> Result<()> {
     }
 }
 
-fn inspect_existing_install(destination: &Path) -> Result<ExistingInstall> {
+fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Result<ExistingInstall> {
     let metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ExistingInstall::Missing),
@@ -157,7 +213,7 @@ fn inspect_existing_install(destination: &Path) -> Result<ExistingInstall> {
         );
     }
 
-    for packaged in &SKILL_FILES {
+    for packaged in package.files() {
         let path = destination.join(packaged.relative_path);
         let file_metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -182,7 +238,10 @@ fn inspect_existing_install(destination: &Path) -> Result<ExistingInstall> {
         let current = fs::read(&path).with_context(|| {
             format!("could not read installed skill file at {}", path.display())
         })?;
-        if current != packaged.contents.as_bytes() {
+        let standard_skill_is_compatible = packaged.relative_path == "SKILL.md"
+            && package.skill != SKILL_CONTENT
+            && current == SKILL_CONTENT.as_bytes();
+        if current != packaged.contents.as_bytes() && !standard_skill_is_compatible {
             return Ok(ExistingInstall::Different);
         }
     }
@@ -214,7 +273,7 @@ fn replace_staging_package(
     Ok(())
 }
 
-fn write_staging_package(staging: &Path) -> Result<()> {
+fn write_staging_package(staging: &Path, package: &SkillPackage) -> Result<()> {
     fs::create_dir(staging).with_context(|| {
         format!(
             "could not create temporary skill directory at {}",
@@ -222,7 +281,7 @@ fn write_staging_package(staging: &Path) -> Result<()> {
         )
     })?;
 
-    for packaged in &SKILL_FILES {
+    for packaged in package.files() {
         let path = staging.join(packaged.relative_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| {
@@ -242,7 +301,7 @@ fn report(status: InstallStatus, destination: PathBuf) -> SkillInstallReport {
     SkillInstallReport {
         status,
         destination,
-        files: SKILL_FILES.iter().map(|file| file.relative_path).collect(),
+        files: SKILL_PATHS.to_vec(),
     }
 }
 
@@ -254,7 +313,7 @@ mod tests {
     #[test]
     fn agent_instruction_bundle_stays_compact() {
         assert!(
-            SKILL_FILES[0].contents.len() <= 3_000,
+            SKILL_CONTENT.len() <= 3_000,
             "SKILL.md should stay below its 750-token conservative byte budget"
         );
     }
@@ -278,7 +337,8 @@ mod tests {
 
         let installed = install_skill(&target, true, false).unwrap();
         assert_eq!(installed.status, InstallStatus::Installed);
-        for packaged in &SKILL_FILES {
+        let package = SkillPackage::standard();
+        for packaged in package.files() {
             assert_eq!(
                 fs::read(installed.destination.join(packaged.relative_path)).unwrap(),
                 packaged.contents.as_bytes()
@@ -320,10 +380,7 @@ mod tests {
 
         let replaced = install_skill(&target, true, true).unwrap();
         assert_eq!(replaced.status, InstallStatus::Replaced);
-        assert_eq!(
-            fs::read(&skill_file).unwrap(),
-            SKILL_FILES[0].contents.as_bytes()
-        );
+        assert_eq!(fs::read(&skill_file).unwrap(), SKILL_CONTENT.as_bytes());
         assert!(fs::read_dir(&target).unwrap().all(|entry| {
             !entry
                 .unwrap()
@@ -349,5 +406,22 @@ mod tests {
 
         assert!(error.to_string().contains("symlinked skill destination"));
         assert!(fs::read_dir(elsewhere).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn explicit_command_is_rendered_without_changing_the_source_bundle() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("agent-skills");
+        let command = "'/plugin home/praxis'";
+
+        let installed = install_skill_with_command(&target, command, true, false).unwrap();
+
+        let rendered = fs::read_to_string(installed.destination.join("SKILL.md")).unwrap();
+        assert!(rendered.contains(
+            "Replace the leading `praxis` in every command and approval prefix below with `'/plugin home/praxis'`; invoke it directly, never through a shell wrapper."
+        ));
+        assert!(rendered.contains("praxis recall"));
+        assert!(rendered.contains("praxis learn"));
+        assert!(!SKILL_CONTENT.contains(command));
     }
 }

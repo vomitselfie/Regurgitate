@@ -7,7 +7,7 @@ coordination, and storage can evolve independently.
 CLI/runtime composition
     ├── AoE discovery + Codex transcript adapter
     ├── Codex / Claude native-hook adapters
-    ├── AoE JSON-RPC plugin worker + aggregate health view
+    ├── AoE JSON-RPC plugin worker + guided agent setup
     ├── cursor-based ingestion or cursor-free recording service
     └── encrypted SQLite adapter + operating-system key provider
 
@@ -49,8 +49,10 @@ hook, while `install-codex-hook` can add that group to an explicit user config.
 Claude exposes distinct `PostToolUse` and `PostToolUseFailure` events. Its
 adapter therefore derives outcome from the event name and does not inspect raw
 response or failure content. The `record-hook` runtime path is silent on
-success. `print-claude-config` emits a fragment for manual merging instead of
-mutating hook arrays that may contain personal commands.
+success. `print-claude-config` still emits a fragment for manual use, while
+`install-claude-hook` safely adds both events to an explicit user settings file.
+The installer preserves unrelated settings and personal hook groups, and
+refuses malformed, disabled, or matcher-restricted Praxis configurations.
 
 ## Explicit learning flow
 
@@ -127,16 +129,26 @@ event model.
 
 The worker speaks newline-delimited JSON-RPC over stdio, keeps stdout exclusive
 to protocol messages, and exits when the host closes stdin. It uses the normal
-read-only health service to publish a global status segment and settings page,
-and answers bounded `praxis.status` and `praxis.refresh` requests. The view
-contains only controlled readiness values and the aggregate encrypted event
-count. Backend errors, paths, identifiers, and event data cannot enter it.
+read-only health service to publish a global status segment and settings page.
+It also offers explicit Codex and Claude Code setup actions through the
+settings page and contributed commands. Plugin installation itself never
+mutates another program's configuration because AoE has no post-install setup
+contract and such a mutation should require a user action.
+
+The setup service resolves the plugin's own release binary and writes that
+absolute executable path into the selected agent's hook and generated skill.
+Plugin-only users therefore do not need a second download or a `PATH` change.
+Before writing either destination it previews both, preserves existing user
+settings and hooks, and refuses unsafe conflicts. The manifest declares
+`fs.read` and `fs.write` for this narrowly scoped user-config operation. Setup
+results, like health, are reduced to controlled states; backend errors, paths,
+identifiers, and event data cannot enter the AoE view.
 
 AoE currently supervises plugin workers only from `aoe serve`. Its plugin API
 does not provide a normalized provider tool-completion feed, so the plugin is a
-packaging and operational surface rather than a replacement ingestion path.
-Native agent hooks or the AoE idle/error transcript fallback remain responsible
-for recording into the same encrypted store.
+packaging, setup, and operational surface rather than an ingestion path by
+itself. The native hook installed by the setup action—or the AoE idle/error
+transcript fallback—records into the same encrypted store.
 
 ## Agent recall integration
 
@@ -164,17 +176,20 @@ renaming it into place and is idempotent for identical files. Different
 content is preserved unless `--replace` is explicit; replacement swaps the
 whole staged directory through a private backup and restores the old directory
 if installation fails. Non-directory and symlinked destinations are always
-rejected. Host path discovery and host configuration mutation remain outside
-the skill installer.
+rejected. The AoE setup service can render one additional instruction that
+pins skill commands to the worker executable; the tracked provider-neutral
+skill remains unchanged. Host path discovery remains outside the installer.
 
-The same module can conservatively add hooks to explicit AoE and Codex config
+The same module can conservatively add hooks to explicit AoE, Codex, and Claude config
 files. Provider-specific parsers and policies remain separate, while a small
 shared config-file module owns adjacent locking, symlink-safe atomic writes,
 permission preservation, and directory handling. The AoE installer rejects
 occupied `on_idle` or `on_error` slots and refuses to enable a table containing
 other dormant hooks. The Codex installer preserves existing matcher groups and
-refuses invalid hook structures or explicitly disabled lifecycle hooks. Both
-installers re-read under the provider's adjacent lock before applying.
+refuses invalid hook structures or explicitly disabled lifecycle hooks. The
+Claude installer preserves existing JSON settings and hook groups while adding
+both terminal events. All installers re-read under the provider's adjacent
+lock before applying.
 
 ## Privacy boundary
 
@@ -236,9 +251,11 @@ four-bytes-per-token estimate, that is approximately 731 tokens instead of
 1,205. Together with the default recall budget reduction from 600 to 300, the
 Praxis-controlled ceiling for an activated default recall is roughly 1,031
 tokens instead of 1,805, a 43% reduction. Successful recording hooks remain
-silent and therefore add no Praxis output to agent context. These figures
-describe Praxis-owned serialized payloads; provider tokenization and host-added
-tool-call scaffolding are outside this boundary.
+silent and therefore add no Praxis output to agent context. AoE-rendered skills
+also include one instruction containing the local worker path, whose length is
+host-dependent. These figures describe the tracked skill and Praxis-owned
+serialized payloads; provider tokenization and host-added tool-call scaffolding
+are outside this boundary.
 
 ## Health boundary
 
@@ -322,10 +339,12 @@ Implemented:
 - Linux Secret Service and macOS Keychain key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
-- an AoE API-v12 release-binary plugin with supervised JSON-RPC health UI;
+- an AoE API-v12 release-binary plugin with supervised JSON-RPC health and
+  explicit Codex/Claude setup UI;
 - native Codex hook config generation and a preview-first explicit-path
   installer;
-- non-mutating Claude Code hook config generation;
+- Claude Code hook config generation and a preview-first explicit-path
+  installer;
 - non-mutating aggregate key-store and database health reporting;
 - explicit-path, non-mutating AoE, Codex, and Claude hook readiness reporting;
 - preview-first transactional project forgetting with race-safe tombstones;
@@ -336,10 +355,11 @@ Implemented:
 - ephemeral task-query ranking and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
 - a preview-first skill package installer with explicit atomic replacement;
-- locked, atomic, conflict-refusing AoE and Codex hook config installers; and
+- locked, atomic, conflict-refusing AoE, Codex, and Claude hook config
+  installers; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
 
-- automatic host-specific installation-path discovery;
+- automatic host-specific installation-path discovery outside the AoE worker;
 - human-only inspection and key-maintenance commands.

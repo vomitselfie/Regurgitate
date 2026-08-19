@@ -55,7 +55,7 @@ metadata—see [Architecture](docs/architecture.md).
 - macOS on Apple Silicon or Intel
 - Codex native recording hooks
 - Claude Code native recording hooks
-- Agent of Empires plugin health UI and Codex transcript fallback
+- Agent of Empires plugin with guided Codex and Claude Code setup
 - Bounded recall from any agent that can run the CLI
 
 Windows is not supported. Praxis is still an early project, so keep normal
@@ -63,15 +63,50 @@ project documentation and backups.
 
 ## Get Praxis running
 
-There are two pieces:
+### Easiest: install through Agent of Empires
 
-1. The `praxis` program records and reads the encrypted history.
+If you use AoE 1.14 or newer, it can download Praxis and connect your agent:
+
+```bash
+aoe plugin install gh:vomitselfie/aoe-praxis
+aoe serve
+```
+
+Open the Praxis settings page in AoE and click **Set up Codex** or **Set up
+Claude Code**. The same actions are available in AoE's command palette as
+`Praxis: set up Codex` and `Praxis: set up Claude Code`.
+
+That setup action installs both pieces an agent needs: a recording hook and a
+small recall skill. It uses the executable AoE already downloaded, so you do
+not need to install `praxis` on your `PATH` or merge configuration by hand.
+Existing settings and personal hooks are preserved; if Praxis cannot add
+itself safely, it stops and reports that the setup needs attention. Restart the
+selected agent afterward.
+
+AoE will ask to approve `runtime.worker`, `fs.read`, and `fs.write`. The worker
+permission powers the Praxis status/setup page. File access is used only to
+inspect and add the hook and skill beneath the selected agent's user config.
+
+Installing the plugin alone downloads the complete Praxis program but does not
+silently edit Codex or Claude Code. The explicit setup action makes that final
+connection. Once connected, recording and recall continue to work without the
+AoE page being open. If you already have an older Praxis plugin, update it with:
+
+```bash
+aoe plugin update vomitselfie.praxis
+```
+
+Do not also enable the AoE transcript fallback for Codex after connecting the
+native Codex hook; the two sources can observe the same session.
+
+### Standalone installation
+
+You can also install Praxis without AoE. There are two pieces:
+
+1. The `praxis` program records and reads encrypted history.
 2. A small agent skill tells your agent when to use it.
 
-The Agent of Empires plugin is optional. It provides health and status inside
-AoE, but does not replace the recording hook.
-
-### 1. Install the program
+#### 1. Install the program
 
 Open the [latest release](https://github.com/vomitselfie/aoe-praxis/releases/latest)
 and download the archive for your computer:
@@ -127,7 +162,7 @@ praxis --version
 
 </details>
 
-### 2. Connect your agent
+#### 2. Connect your agent
 
 Choose the agent you use. You can connect more than one; they share the same
 local encrypted history.
@@ -148,34 +183,21 @@ remember that narrow approval.
 
 #### Claude Code
 
-Install the skill:
-
 ```bash
-praxis install-skill --target "$HOME/.claude/skills" --apply
+claude_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+praxis install-claude-hook --config "$claude_home/settings.json" --apply
+praxis install-skill --target "$claude_home/skills" --apply
 ```
 
-Then run `praxis print-claude-config` and merge the printed `hooks` entries into
-`~/.claude/settings.json`. Preserve any hooks already there. If you would rather
-not edit JSON, ask Claude. These are Claude Code's documented user-level
-[skill](https://code.claude.com/docs/en/skills) and
+Restart Claude Code. The installer adds to both terminal tool events while
+preserving existing settings and personal hooks. These are Claude Code's
+documented user-level [skill](https://code.claude.com/docs/en/skills) and
 [hook](https://code.claude.com/docs/en/hooks) locations.
 
-> Run `praxis print-claude-config` and safely merge its hooks into my user
-> settings without replacing anything already configured.
+#### Optional AoE transcript fallback
 
-#### Agent of Empires
-
-With AoE 1.14 or newer, install the optional plugin:
-
-```bash
-aoe plugin install gh:vomitselfie/aoe-praxis
-aoe plugin info vomitselfie.praxis
-```
-
-If you already installed the Codex hook above, stop here. Do not also enable the
-AoE transcript recorder for the same Codex sessions.
-
-To use AoE's transcript fallback instead of the Codex hook:
+Older AoE/Codex setups can record at session boundaries instead of using the
+native Codex hook:
 
 ```bash
 praxis install-aoe-hook \
@@ -183,10 +205,9 @@ praxis install-aoe-hook \
   --apply
 ```
 
-The plugin worker runs with `aoe serve`. A TUI-only AoE process can install the
-plugin but does not run plugin workers.
+Use this only when the native Codex hook is not installed.
 
-### 3. Check it
+#### 3. Check it
 
 Use your agent normally for a moment, then run:
 
@@ -223,9 +244,11 @@ Destructive commands preview what they will remove unless you add `--apply`.
 ## Token impact
 
 Recording adds no chat output: successful hooks are silent. Recall defaults to
-an approximate 300-token output limit and returns aggregates instead of replaying
-history. The installed skill plus a default recall has a Praxis-controlled
+an approximate 300-token output limit and returns aggregates instead of
+replaying history. The core skill plus a default recall has a Praxis-controlled
 ceiling of about 1,031 tokens, 43% smaller than the original implementation.
+AoE setup adds one short instruction containing its local executable path, so
+that exact total varies slightly by computer.
 
 That is a context-size ceiling, not a promise about provider billing. The
 payoff comes when a small recall prevents an agent from repeating a much larger
