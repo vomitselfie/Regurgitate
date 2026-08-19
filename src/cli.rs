@@ -76,6 +76,33 @@ pub(crate) enum Command {
         data_home: Option<PathBuf>,
     },
 
+    /// Preview or prune encrypted history using one bounded retention policy.
+    Prune {
+        /// Delete events strictly older than this many days.
+        #[arg(
+            long,
+            conflicts_with = "keep_recent",
+            required_unless_present = "keep_recent"
+        )]
+        older_than_days: Option<u32>,
+
+        /// Keep only this many newest events globally; zero selects all events.
+        #[arg(
+            long,
+            conflicts_with = "older_than_days",
+            required_unless_present = "older_than_days"
+        )]
+        keep_recent: Option<u64>,
+
+        /// Apply deletion batches instead of previewing the aggregate count.
+        #[arg(long)]
+        apply: bool,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
     /// Preview or add Praxis to an explicit global AoE config.
     InstallAoeHook {
         /// Global AoE config.toml file to update.
@@ -279,6 +306,36 @@ mod tests {
             panic!("expected forget command");
         };
         assert!(apply);
+    }
+
+    #[test]
+    fn pruning_requires_exactly_one_policy_and_previews_by_default() {
+        let age = Cli::try_parse_from(["praxis", "prune", "--older-than-days", "30"]).unwrap();
+        let Command::Prune {
+            older_than_days,
+            keep_recent,
+            apply,
+            ..
+        } = age.command
+        else {
+            panic!("expected prune command");
+        };
+        assert_eq!(older_than_days, Some(30));
+        assert_eq!(keep_recent, None);
+        assert!(!apply);
+
+        assert!(Cli::try_parse_from(["praxis", "prune"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "praxis",
+                "prune",
+                "--older-than-days",
+                "30",
+                "--keep-recent",
+                "100",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

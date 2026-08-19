@@ -11,7 +11,8 @@ use crate::{
     application::{
         ForgetReport, ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation,
         HookProvider, HookReadiness, IngestionReport, IngestionService, ProjectLocator,
-        RecordingReport, RecordingService, SessionEventSource,
+        RecordingReport, RecordingService, RetentionPolicy, RetentionReport, RetentionService,
+        RetentionStatus, SessionEventSource, ValidatedRetentionPolicy,
     },
     cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
@@ -81,6 +82,23 @@ pub fn execute(cli: Cli) -> Result<()> {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
             let report = forget_project(
                 project,
+                apply,
+                data_home,
+                &SecretServiceKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
+        Command::Prune {
+            older_than_days,
+            keep_recent,
+            apply,
+            data_home,
+        } => {
+            let policy =
+                retention_policy(older_than_days, keep_recent)?.validate(chrono::Utc::now())?;
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = prune_history(
+                policy,
                 apply,
                 data_home,
                 &SecretServiceKeyProvider::default(),
@@ -235,27 +253,62 @@ fn forget_project(
     data_home: PathBuf,
     key_provider: &impl ExistingMasterKeyProvider,
 ) -> Result<ForgetReport> {
+    let Some(store) = open_existing_history(&data_home, apply, key_provider)? else {
+        return Ok(ForgetReport {
+            status: ForgetStatus::NotFound,
+            events: 0,
+        });
+    };
+    ForgetService::new(store).forget(&ProjectLocator::new(project), apply)
+}
+
+fn retention_policy(
+    older_than_days: Option<u32>,
+    keep_recent: Option<u64>,
+) -> Result<RetentionPolicy> {
+    match (older_than_days, keep_recent) {
+        (Some(days), None) => Ok(RetentionPolicy::OlderThanDays(days)),
+        (None, Some(count)) => Ok(RetentionPolicy::KeepRecent(count)),
+        _ => anyhow::bail!("exactly one retention policy is required"),
+    }
+}
+
+fn prune_history(
+    policy: ValidatedRetentionPolicy,
+    apply: bool,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<RetentionReport> {
+    let Some(store) = open_existing_history(&data_home, apply, key_provider)? else {
+        return Ok(RetentionReport {
+            status: RetentionStatus::NoChanges,
+            events: 0,
+        });
+    };
+    RetentionService::new(store).enforce(policy, apply)
+}
+
+fn open_existing_history(
+    data_home: &std::path::Path,
+    writable: bool,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<Option<EncryptedStore>> {
     let database = data_home.join("praxis/history.db");
     match fs::metadata(&database) {
         Ok(metadata) if metadata.is_file() => {}
         Ok(_) => anyhow::bail!("Praxis history database is not a regular file"),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(ForgetReport {
-                status: ForgetStatus::NotFound,
-                events: 0,
-            });
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("could not inspect Praxis history database"),
     }
     let key = key_provider
         .get_existing()?
         .context("Praxis history exists but its master key is unavailable")?;
-    let store = if apply {
+    let store = if writable {
         EncryptedStore::open_existing(&database, &key)?
     } else {
         EncryptedStore::open_read_only(&database, &key)?
     };
-    ForgetService::new(store).forget(&ProjectLocator::new(project), apply)
+    Ok(Some(store))
 }
 
 fn recall_project(
@@ -685,5 +738,77 @@ mod tests {
         .unwrap();
         assert_eq!(report.status, ForgetStatus::NotFound);
         assert!(!data_home.exists());
+    }
+
+    #[test]
+    fn retention_previews_then_prunes_with_aggregate_output_only() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("PRIVATE_RETENTION_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        for tool_use_id in [
+            "PRIVATE_EVENT_ONE",
+            "PRIVATE_EVENT_TWO",
+            "PRIVATE_EVENT_THREE",
+        ] {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "session_id": "PRIVATE_RETENTION_SESSION",
+                "cwd": &project,
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Write",
+                "tool_use_id": tool_use_id,
+                "tool_input": {"content": "PRIVATE_RETENTION_CONTENT"},
+                "tool_response": {"content": "PRIVATE_RETENTION_RESULT"}
+            }))
+            .unwrap();
+            record_hook(
+                claude::normalize_tool_hook(payload.as_slice()).unwrap(),
+                data_home.clone(),
+                &FixedKeyProvider,
+            )
+            .unwrap();
+        }
+
+        let database_path = data_home.join("praxis/history.db");
+        let before_preview = fs::read(&database_path).unwrap();
+        let policy = RetentionPolicy::KeepRecent(1)
+            .validate(chrono::Utc::now())
+            .unwrap();
+        let preview = prune_history(policy, false, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(preview.status, RetentionStatus::Planned);
+        assert_eq!(preview.events, 2);
+        assert_eq!(fs::read(&database_path).unwrap(), before_preview);
+
+        let pruned = prune_history(policy, true, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(pruned.status, RetentionStatus::Pruned);
+        assert_eq!(pruned.events, 2);
+        let store =
+            EncryptedStore::open_read_only(&database_path, &MasterKey::from_bytes([23; 32]))
+                .unwrap();
+        assert_eq!(store.count().unwrap(), 1);
+
+        let encoded = serde_json::to_string(&pruned).unwrap();
+        for forbidden in [
+            "PRIVATE_RETENTION_PROJECT",
+            "PRIVATE_RETENTION_SESSION",
+            "PRIVATE_EVENT",
+            "PRIVATE_RETENTION_CONTENT",
+        ] {
+            assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
+        }
+    }
+
+    #[test]
+    fn retention_missing_history_does_not_initialize_state() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+        let policy = RetentionPolicy::OlderThanDays(30)
+            .validate(chrono::Utc::now())
+            .unwrap();
+        let report = prune_history(policy, false, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(report.status, RetentionStatus::NoChanges);
+        assert!(!data_home.exists());
+        assert!(retention_policy(None, None).is_err());
+        assert!(retention_policy(Some(30), Some(100)).is_err());
     }
 }

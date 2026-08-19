@@ -24,6 +24,7 @@ implementation provides:
   budgets;
 - non-mutating key-store and history-database health reporting;
 - preview-first, project-scoped encrypted history forgetting;
+- preview-first global age/count retention in bounded transactions;
 - a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
@@ -50,6 +51,10 @@ cargo run -- status
 cargo run -- status --aoe-config /path/to/aoe/config.toml --claude-config /path/to/claude/settings.json
 cargo run -- forget --project "$PWD"
 cargo run -- forget --project "$PWD" --apply
+cargo run -- prune --older-than-days 90
+cargo run -- prune --older-than-days 90 --apply
+cargo run -- prune --keep-recent 10000
+cargo run -- prune --keep-recent 10000 --apply
 cargo run -- print-aoe-config
 cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
@@ -85,6 +90,14 @@ plus a count. A keyed tombstone blocks a concurrently delivered hook that still
 holds the deleted project identity; existing ingestion cursors remain so old
 transcripts are not replayed. The project path itself may still be retained by
 the user's shell history when supplied on a command line.
+
+`prune` accepts exactly one global policy: delete events strictly older than
+`--older-than-days`, or keep only the newest `--keep-recent` events. It previews
+an aggregate candidate count by default without modifying or initializing
+history. A keep count of zero selects all events. `--apply` deletes at most 500
+rows per immediate transaction, making an interrupted run safe to retry.
+Reports contain only `planned`, `pruned`, or `no_changes` and an event count.
+Project mappings, forgetting tombstones, and ingestion cursors are retained.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
 an approximate 600-token serialized-output budget. It supports a controlled

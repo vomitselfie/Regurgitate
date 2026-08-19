@@ -21,6 +21,7 @@ module boundaries.
 - read-only key-store and database health with aggregate-only output;
 - explicit-path AoE and Claude hook readiness with controlled output;
 - preview-first project forgetting with transactional encrypted deletion;
+- preview-first age/count retention with fixed-size deletion transactions;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - a locked, atomic installer for empty AoE idle/error hook slots; and
@@ -64,15 +65,28 @@ Project forgetting was added without adding event-level inspection:
    retained cursors prevent transcript resurrection; and
 5. reports contain no event IDs, project IDs, or paths.
 
+## Completed retention slice
+
+Bounded retention was added on top of the same privacy boundary:
+
+1. age and newest-count policies are validated before storage access;
+2. preview returns one aggregate count without mutating or initializing state;
+3. apply uses immediate transactions capped at 500 rows and can be retried after
+   interruption;
+4. selection uses structural envelope metadata without decrypting event
+   payloads; and
+5. output contains no retained or deleted event details.
+
 ## Next integration slice
 
-Add bounded retention policy on top of the same privacy boundary:
+Add human-only aggregate inspection without creating an event-export surface:
 
-1. define age/count policies using controlled inputs only;
-2. preview aggregate deletion counts before any mutation;
-3. apply in bounded transactions without decrypting unrelated payload fields;
+1. define a fixed-schema summary of counts by controlled capability, operation,
+   outcome, and agent;
+2. enforce global row/group and token budgets before output;
+3. require an explicit human CLI command that is not used by the recall skill;
    and
-4. keep retained/deleted event details out of output.
+4. exclude identifiers, timestamps, paths, and event-level records.
 
 Both installers require explicit host paths instead of guessing them and are
 preview-only without `--apply`. The AoE installer preserves unrelated TOML but
@@ -81,7 +95,6 @@ transition rather than a composable command list.
 
 ## Later slices
 
-- retention policies;
 - human-only inspection and key maintenance;
 - additional native agent adapters;
 - measured evaluation of recall cost versus avoided retries; and

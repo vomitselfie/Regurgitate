@@ -192,6 +192,26 @@ A later new hook resolves a fresh project identity and can record new work.
 The report contains only a controlled status and count. Event IDs, project IDs,
 paths, sessions, and tombstone tokens never leave storage.
 
+## Retention boundary
+
+Retention is global and accepts exactly one controlled policy: a validated age
+in whole days or a validated newest-event count. Policy validation happens
+before key or database access. Preview opens only existing history read-only
+and returns one candidate count; missing state is not initialized.
+
+The storage adapter selects age candidates solely from structural
+`created_at_ms` envelope metadata, which is also included in event associated
+data for authenticated reads. Count retention uses deterministic
+`created_at_ms` and event-ID ordering to preserve the newest requested number.
+Neither policy decrypts event payloads or selects on private event fields.
+Apply deletes no more than 500 rows in each immediate transaction and repeats
+until no candidates remain. A failure between batches can leave a safe partial
+result; rerunning the same policy continues from current state.
+
+Retention removes event envelopes only. It retains encrypted project mappings,
+ingestion cursors, and project-forgetting tombstones. Output contains a
+controlled status and total count, never event details or identifiers.
+
 ## Current boundaries and limits
 
 Implemented:
@@ -212,6 +232,7 @@ Implemented:
 - non-mutating aggregate key-store and database health reporting;
 - explicit-path, non-mutating AoE and Claude hook readiness reporting;
 - preview-first transactional project forgetting with race-safe tombstones;
+- preview-first age/count retention with bounded deletion transactions;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
@@ -223,4 +244,4 @@ Implemented:
 Not yet implemented:
 
 - automatic host-specific installation-path discovery;
-- retention and human-only inspection commands.
+- human-only inspection and key-maintenance commands.

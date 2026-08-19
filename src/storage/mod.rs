@@ -6,6 +6,7 @@ mod keyring;
 mod private;
 mod project;
 mod query;
+mod retention;
 mod sqlite;
 
 pub use health::HistoryDatabaseProbe;
