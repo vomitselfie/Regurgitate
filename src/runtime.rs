@@ -9,14 +9,14 @@ use zeroize::Zeroizing;
 use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
-        HookObservation, IngestionReport, IngestionService, ProjectLocator, RecordingReport,
-        RecordingService, SessionEventSource,
+        HealthReport, HealthService, HookObservation, IngestionReport, IngestionService,
+        ProjectLocator, RecordingReport, RecordingService, SessionEventSource,
     },
     cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
     packaging::{AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, install_aoe_hook, install_skill},
     query::{RecallOptions, RecallResult, RecallService},
-    storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
+    storage::{EncryptedStore, HistoryDatabaseProbe, MasterKeyProvider, SecretServiceKeyProvider},
 };
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -49,6 +49,11 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::PrintClaudeConfig => {
             println!("{CLAUDE_CONFIG_SNIPPET}");
             Ok(())
+        }
+        Command::Status { data_home } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = health_status(data_home, SecretServiceKeyProvider::default());
+            print_json(&report)
         }
         Command::InstallAoeHook { config, apply } => {
             let report = install_aoe_hook(&config, apply)?;
@@ -183,6 +188,14 @@ fn record_hook(
     RecordingService::new(store).record(observation)
 }
 
+fn health_status(
+    data_home: PathBuf,
+    key_probe: impl crate::application::KeyReadinessProbe,
+) -> HealthReport {
+    let history = HistoryDatabaseProbe::new(data_home.join("praxis/history.db"));
+    HealthService::new(key_probe, history).inspect()
+}
+
 fn recall_project(
     project: PathBuf,
     options: RecallOptions,
@@ -237,7 +250,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::storage::MasterKey;
+    use crate::{application::KeyReadinessProbe, storage::MasterKey};
 
     use super::*;
 
@@ -246,6 +259,17 @@ mod tests {
     impl MasterKeyProvider for FixedKeyProvider {
         fn get_or_create(&self) -> Result<MasterKey> {
             Ok(MasterKey::from_bytes([23; 32]))
+        }
+    }
+
+    struct FixedKeyProbe(Result<bool>);
+
+    impl KeyReadinessProbe for FixedKeyProbe {
+        fn key_is_present(&self) -> Result<bool> {
+            match &self.0 {
+                Ok(present) => Ok(*present),
+                Err(_) => anyhow::bail!("PRIVATE_KEYRING_FAILURE"),
+            }
         }
     }
 
@@ -441,5 +465,42 @@ mod tests {
     fn generated_claude_config_uses_the_silent_native_handler() {
         assert!(CLAUDE_CONFIG_SNIPPET.contains("praxis record-hook --agent claude"));
         assert!(CLAUDE_CONFIG_SNIPPET.contains("PostToolUseFailure"));
+    }
+
+    #[test]
+    fn health_status_does_not_initialize_or_expose_local_state() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+        let report = health_status(data_home.clone(), FixedKeyProbe(Ok(false)));
+        assert_eq!(
+            report.status,
+            crate::application::OverallHealth::NotConfigured
+        );
+        assert!(!data_home.exists());
+
+        let encoded = serde_json::to_string(&report).unwrap();
+        assert!(!encoded.contains("PRIVATE_DATA_HOME"));
+    }
+
+    #[test]
+    fn health_status_sanitizes_keyring_and_database_failures() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("data");
+        fs::create_dir_all(data_home.join("praxis")).unwrap();
+        fs::write(
+            data_home.join("praxis/history.db"),
+            b"PRIVATE_DATABASE_FAILURE",
+        )
+        .unwrap();
+
+        let report = health_status(
+            data_home,
+            FixedKeyProbe(Err(anyhow::anyhow!("PRIVATE_KEYRING_FAILURE"))),
+        );
+        assert_eq!(report.status, crate::application::OverallHealth::Degraded);
+        let encoded = serde_json::to_string(&report).unwrap();
+        for forbidden in ["PRIVATE_DATABASE_FAILURE", "PRIVATE_KEYRING_FAILURE"] {
+            assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
+        }
     }
 }

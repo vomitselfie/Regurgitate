@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 use zeroize::Zeroizing;
 
+use crate::application::KeyReadinessProbe;
+
 const MASTER_KEY_BYTES: usize = 32;
 const DEFAULT_SERVICE: &str = "dev.praxis.history";
 const DEFAULT_USERNAME: &str = "master-key-v1";
@@ -94,6 +96,21 @@ impl MasterKeyProvider for SecretServiceKeyProvider {
                 );
                 MasterKey::from_secret(&stored)
             }
+            Err(error) => Err(error).context("Linux Secret Service is unavailable or locked"),
+        }
+    }
+}
+
+impl KeyReadinessProbe for SecretServiceKeyProvider {
+    fn key_is_present(&self) -> Result<bool> {
+        let entry = self.entry()?;
+        match entry.get_secret() {
+            Ok(secret) => {
+                let secret = Zeroizing::new(secret);
+                MasterKey::from_secret(&secret)?;
+                Ok(true)
+            }
+            Err(keyring::Error::NoEntry) => Ok(false),
             Err(error) => Err(error).context("Linux Secret Service is unavailable or locked"),
         }
     }

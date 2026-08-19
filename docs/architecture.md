@@ -151,6 +151,20 @@ trimmed from lowest priority until its conservative four-bytes-per-token
 estimate fits the requested budget. The output records that estimate for later
 evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 
+## Health boundary
+
+The `status` command composes two narrow read-only probes. The Secret Service
+probe checks for an existing, correctly sized master key without entering the
+create path. The database probe checks only an existing regular file, opens it
+with SQLite read-only flags, runs a bounded integrity check, and returns an
+aggregate event count. It does not create directories, initialize tables,
+migrate schema, change permissions, decrypt event payloads, or repair damage.
+
+The application service reduces probe results to `ready`, `not_configured`, or
+`unavailable` component states and an overall status. Backend errors are not
+included in the report, so keyring messages, database paths, and damaged bytes
+cannot reach CLI JSON.
+
 ## Current boundaries and limits
 
 Implemented:
@@ -168,6 +182,7 @@ Implemented:
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
 - non-mutating Claude Code hook config generation;
+- non-mutating aggregate key-store and database health reporting;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
@@ -179,4 +194,5 @@ Implemented:
 Not yet implemented:
 
 - automatic host-specific installation-path discovery;
+- installed-hook readiness inspection;
 - retention, inspection, and forgetting commands.

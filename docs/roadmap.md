@@ -18,6 +18,7 @@ module boundaries.
   configuration;
 - a shared, sanitized native-hook observation boundary and cross-adapter
   conformance fixtures;
+- read-only key-store and database health with aggregate-only output;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - a locked, atomic installer for empty AoE idle/error hook slots; and
@@ -35,15 +36,26 @@ Claude Code was added without coupling its payload to the core:
 4. Claude payload types and its working-directory locator remain confined to
    the adapter boundary.
 
+## Completed operational slice
+
+The first status surface adds operational safety without opening the event-level
+privacy boundary:
+
+1. the health projection contains controlled states and one aggregate event
+   count;
+2. key-store and database readiness expose no paths or identifiers;
+3. the probes never create a key, create or migrate a database, or attempt a
+   repair; and
+4. unavailable-key-store and damaged-database behavior is covered by tests.
+
 ## Next integration slice
 
-Add operational safety without opening the event-level privacy boundary:
+Extend read-only readiness to hook configuration without guessing host paths:
 
-1. define a safe health/status projection with aggregate counts only;
-2. report keyring, database, and hook readiness without exposing paths or
-   identifiers;
-3. keep diagnostics read-only unless the user explicitly requests repair; and
-4. cover locked-keyring and damaged-database behavior with tests.
+1. define provider-neutral installed/not-installed/conflicting hook states;
+2. inspect only explicitly supplied AoE and Claude config files;
+3. reuse the packaging parsers without adding mutation to `status`; and
+4. keep command strings and config paths out of the report.
 
 Both installers require explicit host paths instead of guessing them and are
 preview-only without `--apply`. The AoE installer preserves unrelated TOML but
@@ -52,7 +64,7 @@ transition rather than a composable command list.
 
 ## Later slices
 
-- safe status and health reporting;
+- installed-hook readiness inspection;
 - retention and project forgetting;
 - human-only inspection and key maintenance;
 - additional native agent adapters;

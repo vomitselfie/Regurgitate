@@ -22,6 +22,7 @@ implementation provides:
   cursor-free native hook recording;
 - project-scoped, task-ranked aggregate recall with hard count and token
   budgets;
+- non-mutating key-store and history-database health reporting;
 - a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
@@ -44,6 +45,7 @@ cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
+cargo run -- status
 cargo run -- print-aoe-config
 cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
@@ -60,6 +62,12 @@ only aggregate counts. Both recording paths store encrypted events under
 `$XDG_DATA_HOME/praxis/history.db` (or `~/.local/share/praxis/history.db`).
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
+
+`status` is read-only. It reports `ready`, `not_configured`, or `degraded` for
+the overall installation and controlled readiness values for the key store and
+history database. The only data measurement it exposes is the aggregate event
+count. It does not create a missing key or database, migrate or repair an
+existing database, return paths or identifiers, or surface raw backend errors.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
 an approximate 600-token serialized-output budget. It supports a controlled

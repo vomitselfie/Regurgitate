@@ -46,6 +46,13 @@ pub(crate) enum Command {
     /// Print a Claude Code hook configuration snippet for manual merging.
     PrintClaudeConfig,
 
+    /// Report aggregate local readiness without creating or repairing state.
+    Status {
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
     /// Preview or add Praxis to an explicit global AoE config.
     InstallAoeHook {
         /// Global AoE config.toml file to update.
@@ -202,6 +209,15 @@ mod tests {
         assert_eq!(agent, HookAgentArg::Claude);
         assert!(data_home.is_none());
         assert!(Cli::try_parse_from(["praxis", "record-hook"]).is_err());
+    }
+
+    #[test]
+    fn status_accepts_no_sensitive_target_arguments() {
+        let status = Cli::try_parse_from(["praxis", "status"]).unwrap();
+        let Command::Status { data_home } = status.command else {
+            panic!("expected status command");
+        };
+        assert!(data_home.is_none());
     }
 
     #[test]
