@@ -111,6 +111,11 @@ Recall now distinguishes activity from evidence:
 5. recall uses only existing read-only key/database paths and leaves missing
    local state untouched.
 
+The controlled learning vocabulary also covers research workflows through a
+shared `research` / `analyze` classification and explicit
+`reproduce_then_compare`, `per_subject_streaming`, and `resource_cap_first`
+strategies.
+
 ## Next integration slice
 
 Add human-only aggregate inspection without creating an event-export surface:

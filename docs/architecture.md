@@ -60,6 +60,12 @@ It accepts only a project locator, one fixed strategy enum, and an explicit
 capability/operation pair in the core model; arbitrary labels and `unknown`
 outcomes are rejected by the CLI/application boundary.
 
+Research methods use the shared `research` capability and `analyze` operation,
+with `reproduce_then_compare`, `per_subject_streaming`, or
+`resource_cap_first` carrying the procedural distinction. They are
+explicit-only because neither a provider tool name nor private tool arguments
+can safely establish which analysis method was used.
+
 The learning application service creates a controlled event with no session or
 agent identity, then reuses the same encrypted project resolver and recording
 port as native hooks. The agent-facing skill permits this only after a

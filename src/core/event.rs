@@ -39,6 +39,7 @@ pub enum Capability {
     Container,
     Wait,
     Verify,
+    Research,
     Other,
 }
 
@@ -56,6 +57,7 @@ pub enum Operation {
     UpdatePlan,
     Delegate,
     Wait,
+    Analyze,
     ToolCall,
 }
 
@@ -84,6 +86,9 @@ pub enum Strategy {
     FullVerification,
     NativeHook,
     TranscriptFallback,
+    ReproduceThenCompare,
+    PerSubjectStreaming,
+    ResourceCapFirst,
     Other,
 }
 
@@ -101,6 +106,9 @@ impl Strategy {
             Self::PreviewThenApply => (Capability::Verify, Operation::ToolCall),
             Self::TargetedVerification | Self::FullVerification => {
                 (Capability::Test, Operation::Command)
+            }
+            Self::ReproduceThenCompare | Self::PerSubjectStreaming | Self::ResourceCapFirst => {
+                (Capability::Research, Operation::Analyze)
             }
             Self::NativeHook | Self::TranscriptFallback | Self::NativeTool | Self::Other => {
                 (Capability::Other, Operation::ToolCall)
@@ -178,6 +186,20 @@ impl From<&HistoryEvent> for DebugEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_strategies_use_one_analysis_classification() {
+        for strategy in [
+            Strategy::ReproduceThenCompare,
+            Strategy::PerSubjectStreaming,
+            Strategy::ResourceCapFirst,
+        ] {
+            assert_eq!(
+                strategy.practice_classification(),
+                (Capability::Research, Operation::Analyze)
+            );
+        }
+    }
 
     #[test]
     fn history_event_round_trips() {

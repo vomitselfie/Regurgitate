@@ -55,6 +55,16 @@ Use this only when all of the following are true:
   individual low-level tool call; and
 - the same milestone has not already been recorded.
 
+For research and analysis work, use these strategies only with their exact
+meanings:
+
+- `reproduce-then-compare`: establish a baseline or reproduce a claim, then
+  compare alternatives under consistent criteria;
+- `per-subject-streaming`: complete and emit each subject independently rather
+  than accumulating all subjects into one batch; and
+- `resource-cap-first`: set the time, token, request, source, or similar
+  exploration limit before research begins.
+
 Skip learning when the outcome is ambiguous, when Praxis is unavailable, or
 when no controlled strategy fits. Never translate commands, paths, source
 content, errors, prompts, or user text into a strategy. `learn` accepts only a

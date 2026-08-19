@@ -95,7 +95,10 @@ Tool identity is the only provider field used for automatic strategy tagging:
 strategy because deriving one would require inspecting private arguments or
 content. Strategies such as `atomic_write`, `preview_then_apply`, and
 verification scope enter history only through the fixed-vocabulary `learn`
-command after a directly established result.
+command after a directly established result. Analysis methods—including
+`reproduce_then_compare`, `per_subject_streaming`, and `resource_cap_first`—are
+also explicit-only and use the shared `research` / `analyze` classification;
+provider payloads are never inspected to infer them.
 
 ## Claude Code
 

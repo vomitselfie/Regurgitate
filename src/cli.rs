@@ -269,6 +269,9 @@ pub(crate) enum StrategyArg {
     FullVerification,
     NativeHook,
     TranscriptFallback,
+    ReproduceThenCompare,
+    PerSubjectStreaming,
+    ResourceCapFirst,
 }
 
 impl From<StrategyArg> for Strategy {
@@ -284,6 +287,9 @@ impl From<StrategyArg> for Strategy {
             StrategyArg::FullVerification => Self::FullVerification,
             StrategyArg::NativeHook => Self::NativeHook,
             StrategyArg::TranscriptFallback => Self::TranscriptFallback,
+            StrategyArg::ReproduceThenCompare => Self::ReproduceThenCompare,
+            StrategyArg::PerSubjectStreaming => Self::PerSubjectStreaming,
+            StrategyArg::ResourceCapFirst => Self::ResourceCapFirst,
         }
     }
 }
@@ -301,6 +307,7 @@ pub(crate) enum OperationArg {
     UpdatePlan,
     Delegate,
     Wait,
+    Analyze,
     ToolCall,
 }
 
@@ -318,6 +325,7 @@ impl From<OperationArg> for Operation {
             OperationArg::UpdatePlan => Self::UpdatePlan,
             OperationArg::Delegate => Self::Delegate,
             OperationArg::Wait => Self::Wait,
+            OperationArg::Analyze => Self::Analyze,
             OperationArg::ToolCall => Self::ToolCall,
         }
     }
@@ -396,6 +404,25 @@ mod tests {
             ])
             .is_err()
         );
+        for strategy in [
+            "reproduce-then-compare",
+            "per-subject-streaming",
+            "resource-cap-first",
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "praxis",
+                    "learn",
+                    "--project",
+                    "/private/project",
+                    "--strategy",
+                    strategy,
+                    "--outcome",
+                    "success",
+                ])
+                .is_ok()
+            );
+        }
     }
 
     #[test]

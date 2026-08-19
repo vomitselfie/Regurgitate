@@ -114,6 +114,19 @@ skip it when the outcome or strategy is ambiguous. Run `praxis learn --help`
 for the controlled strategy vocabulary. Explicit learning requires `success`
 or `failure`; it cannot manufacture an `unknown` observation.
 
+Research and analysis sessions have three explicit strategies:
+
+- `reproduce-then-compare`: establish a baseline or reproduce a claim, then
+  compare alternatives under consistent criteria;
+- `per-subject-streaming`: complete and emit each subject independently rather
+  than accumulating one monolithic batch; and
+- `resource-cap-first`: set the time, token, request, source, or similar
+  exploration limit before beginning research.
+
+These strategies are classified as `research` / `analyze` and enter history
+only through `learn`; hook adapters cannot infer an analysis method safely from
+a tool name.
+
 `status` is read-only. It reports `ready`, `not_configured`, or `degraded` for
 the overall installation and controlled readiness values for the key store and
 history database. The only data measurement it exposes is the aggregate event

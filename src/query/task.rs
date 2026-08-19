@@ -95,6 +95,11 @@ impl TaskIntent {
                     intent.capabilities.insert(Capability::PackageManager);
                     intent.operations.insert(Operation::ToolCall);
                 }
+                "research" | "analysis" | "analyze" | "reproduce" | "compare" | "subject"
+                | "streaming" | "resource" | "budget" | "cap" => {
+                    intent.capabilities.insert(Capability::Research);
+                    intent.operations.insert(Operation::Analyze);
+                }
                 _ => {}
             }
         }
@@ -138,5 +143,15 @@ mod tests {
     fn matches_tokens_not_substrings() {
         let intent = TaskIntent::classify("contestant dispatches work");
         assert_eq!(intent.relevance(Capability::Test, Operation::ApplyPatch), 0);
+    }
+
+    #[test]
+    fn recognizes_research_strategy_terms_without_retaining_the_query() {
+        let intent = TaskIntent::classify(
+            "reproduce then compare with per-subject streaming and a resource cap",
+        );
+
+        assert!(intent.capabilities.contains(&Capability::Research));
+        assert!(intent.operations.contains(&Operation::Analyze));
     }
 }

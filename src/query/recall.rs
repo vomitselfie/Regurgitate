@@ -466,6 +466,47 @@ mod tests {
     }
 
     #[test]
+    fn research_practice_is_recalled_as_analysis_evidence() {
+        let events = (1..=2)
+            .map(|id| {
+                let mut event = event(id, Operation::Analyze, Outcome::Success);
+                event.capability = Capability::Research;
+                event.strategy = Some(Strategy::ReproduceThenCompare);
+                event
+            })
+            .collect();
+        let history = MemoryHistory {
+            project_id: Some(Uuid::from_u128(7)),
+            events,
+            requested_limit: Cell::new(0),
+        };
+
+        let result = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions::default(),
+                Some("research reproduce compare"),
+            )
+            .unwrap();
+
+        assert_eq!(result.observations[0].capability, Capability::Research);
+        assert_eq!(result.observations[0].operation, Operation::Analyze);
+        assert_eq!(
+            result.observations[0].strategy,
+            Some(Strategy::ReproduceThenCompare)
+        );
+        assert_eq!(
+            result.observations[0].guidance,
+            Some(PracticeGuidance::Prefer)
+        );
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("reproduce_then_compare")
+        );
+    }
+
+    #[test]
     fn guidance_requires_repetition_and_uses_known_outcomes_only() {
         assert_eq!(practice_guidance(1, 0), None);
         assert_eq!(practice_guidance(2, 0), Some(PracticeGuidance::Prefer));
