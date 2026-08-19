@@ -1,12 +1,13 @@
 # Praxis
 
-Praxis is a local-first procedural memory layer for AI coding agents. It is
-designed to preserve small, structured observations about what agents tried and
-whether it worked, without preserving prompts, responses, commands, source
-content, tool arguments, or tool output.
+Praxis is a local-first, provider-neutral procedural memory layer for AI coding
+agents. It is designed to preserve small, structured observations about what
+agents tried and whether it worked, without preserving prompts, responses,
+commands, source content, tool arguments, or tool output.
 
-The first development slice targets Agent of Empires-managed Codex sessions on
-Linux. It provides:
+The core storage, query, and application boundaries are agent-agnostic. The
+first ingestion adapter targets Agent of Empires-managed Codex sessions on
+Linux. The current implementation provides:
 
 - a strict, controlled normalized event model;
 - a Codex `PostToolUse` hook normalizer that drops non-allowlisted input;
@@ -18,14 +19,15 @@ Linux. It provides:
 - encrypted project identity mappings and incremental ingestion cursors;
 - a modular, interruption-safe `ingest` application service and CLI path;
 - project-scoped, task-ranked aggregate recall with hard count and token
-  budgets; and
+  budgets;
+- a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
-This is an early implementation. Manual ingestion is wired for AoE-managed
-Codex sessions, and the first task-specific bounded recall interface is
-available. Automatic installation is not implemented yet.
+This is an early implementation. Manual and AoE status-hook ingestion are wired
+for Codex sessions, and task-specific bounded recall is available to any agent
+that can invoke the CLI. Automatic installation is not implemented yet.
 
-## Manual ingestion
+## CLI usage
 
 Praxis currently requires Linux Secret Service to be available and unlocked.
 It never falls back to a plaintext key or plaintext history database.
@@ -60,6 +62,19 @@ snippet into the desired global or profile AoE config. It invokes
 `praxis aoe-hook` on stable idle/error transitions. The handler reads only
 `AOE_SESSION_ID`, `AOE_PROFILE`, and `AOE_TOOL`; duplicate deliveries are safe.
 Unsupported agent types are ignored successfully.
+
+## Agent-facing recall
+
+The tracked [`praxis-recall`](skills/praxis-recall/SKILL.md) skill tells a fresh
+agent to wait until the task is known, request one bounded task-specific
+aggregate, and validate any remembered pattern against current state. Its
+workflow is provider-neutral and calls only `praxis recall`. The optional
+`agents/openai.yaml` file contains Codex discovery metadata; other agent hosts
+can ignore it and register the same `SKILL.md` through their own skill-loading
+mechanism.
+
+Install or link the skill directory through the selected agent host. Praxis
+does not modify agent configuration automatically.
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
 the current implementation limits, and [Roadmap](docs/roadmap.md) for the next

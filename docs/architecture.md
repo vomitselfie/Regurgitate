@@ -58,6 +58,18 @@ personal hooks. Repeated or overlapping delivery reuses the normal cursor and
 stable-event idempotency path. SQLite waits briefly for a concurrent local
 writer rather than immediately failing with a busy error.
 
+## Agent recall integration
+
+The `skills/praxis-recall` package is a thin consumer of the public recall CLI.
+Its `SKILL.md` waits for task context, requests a bounded aggregate, and tells
+the agent to verify observations against current state. It does not depend on
+AoE, Codex transcript formats, SQLite, or key management.
+
+Provider discovery remains an edge concern. Codex-specific UI metadata lives
+under the skill's optional `agents/` directory and can be ignored by Claude,
+Hermes, or another host. Future hosts should reuse the workflow and CLI while
+keeping native event normalization in a separate ingestion adapter.
+
 ## Privacy boundary
 
 Raw records are short-lived adapter inputs. Prompts, responses, reasoning,
@@ -118,7 +130,7 @@ Implemented:
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
-  and
+- a provider-neutral agent recall skill with optional Codex metadata; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
