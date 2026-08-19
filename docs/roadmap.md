@@ -18,6 +18,8 @@ module boundaries.
 - transient task-query ranking with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
+- an installable AoE API-v12 release-binary plugin with aggregate health
+  commands, status-bar state, and a settings page;
 - native Codex `PostToolUse` recording with generated configuration and a
   preview-first explicit-path installer;
 - native Claude Code success/failure hook recording with generated
@@ -116,6 +118,20 @@ shared `research` / `analyze` classification and explicit
 `reproduce_then_compare`, `per_subject_streaming`, and `resource_cap_first`
 strategies.
 
+## Completed AoE plugin slice
+
+Praxis now participates in AoE without moving AoE concerns into the memory
+core:
+
+1. the repository manifest installs the existing static release asset through
+   AoE's native plugin manager;
+2. the binary enters worker mode only for AoE's exact plugin identity and
+   otherwise remains the normal provider-neutral CLI;
+3. isolated protocol and view modules publish only aggregate health to the
+   status bar and settings page; and
+4. recording stays on native provider hooks or the AoE transcript fallback
+   because the plugin API is not a normalized tool-completion source.
+
 ## Next integration slice
 
 Add human-only aggregate inspection without creating an event-export surface:
@@ -137,5 +153,5 @@ transition rather than a composable command list.
 - human-only inspection and key maintenance;
 - additional native agent adapters;
 - measured evaluation of recall cost versus avoided retries; and
-- optional AoE plugin packaging once it materially improves installation or
-  lifecycle integration.
+- deeper AoE lifecycle integration if the host publishes a stable,
+  provider-neutral tool-completion event stream.

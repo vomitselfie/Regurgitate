@@ -1,4 +1,4 @@
-use std::{env, fs, io, path::PathBuf};
+use std::{fs, io, path::PathBuf};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -22,6 +22,7 @@ use crate::{
         inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_codex_hook,
         install_skill,
     },
+    paths::default_data_home,
     query::{RecallOptions, RecallResult, RecallService},
     storage::{
         EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
@@ -371,14 +372,6 @@ fn recall_project(
         return Ok(RecallResult::empty());
     };
     RecallService::new(&store).recall(&ProjectLocator::new(project), options, task_query)
-}
-
-fn default_data_home() -> Result<PathBuf> {
-    if let Some(path) = env::var_os("XDG_DATA_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    let home = env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local/share"))
 }
 
 fn prepare_private_directory(path: &std::path::Path) -> Result<()> {

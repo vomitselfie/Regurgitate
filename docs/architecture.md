@@ -7,6 +7,7 @@ coordination, and storage can evolve independently.
 CLI/runtime composition
     ├── AoE discovery + Codex transcript adapter
     ├── Codex / Claude native-hook adapters
+    ├── AoE JSON-RPC plugin worker + aggregate health view
     ├── cursor-based ingestion or cursor-free recording service
     └── encrypted SQLite adapter + Secret Service key provider
 
@@ -113,6 +114,26 @@ The user must merge it into a global or profile config, preserving existing
 personal hooks. Repeated or overlapping delivery reuses the normal cursor and
 stable-event idempotency path. SQLite waits briefly for a concurrent local
 writer rather than immediately failing with a busy error.
+
+The repository root also carries an AoE API-v12 manifest. AoE installs the
+normal versioned Linux release archive and launches its `praxis` binary with no
+arguments plus the exact `AOE_PLUGIN_ID`. The binary enters worker mode only
+for that combination; every ordinary invocation continues through the CLI.
+The plugin protocol and UI projection live in their own `aoe_plugin` modules,
+separate from transcript discovery and the controlled event model.
+
+The worker speaks newline-delimited JSON-RPC over stdio, keeps stdout exclusive
+to protocol messages, and exits when the host closes stdin. It uses the normal
+read-only health service to publish a global status segment and settings page,
+and answers bounded `praxis.status` and `praxis.refresh` requests. The view
+contains only controlled readiness values and the aggregate encrypted event
+count. Backend errors, paths, identifiers, and event data cannot enter it.
+
+AoE currently supervises plugin workers only from `aoe serve`. Its plugin API
+does not provide a normalized provider tool-completion feed, so the plugin is a
+packaging and operational surface rather than a replacement ingestion path.
+Native agent hooks or the AoE idle/error transcript fallback remain responsible
+for recording into the same encrypted store.
 
 ## Agent recall integration
 
@@ -289,6 +310,7 @@ Implemented:
 - Linux Secret Service key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
+- an AoE API-v12 release-binary plugin with supervised JSON-RPC health UI;
 - native Codex hook config generation and a preview-first explicit-path
   installer;
 - non-mutating Claude Code hook config generation;

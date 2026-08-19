@@ -15,6 +15,7 @@ implementation provides:
 - conservative parsing of existing Codex JSONL sessions for reconnaissance and
   migration;
 - AoE session discovery without embedding AoE concerns in the core model;
+- an installable AoE API-v12 plugin with aggregate health UI and commands;
 - per-record CBOR + XChaCha20-Poly1305 encrypted SQLite storage;
 - HKDF-separated event keys and a Linux Secret Service master-key provider;
 - encrypted project identity mappings and incremental ingestion cursors;
@@ -32,11 +33,36 @@ implementation provides:
 
 This is an early implementation. Codex and Claude Code can record tool
 completions directly through native hooks, while AoE status hooks provide a
-Codex transcript fallback. Task-specific bounded recall is available to any
-agent that can invoke the CLI. Automatic host-path discovery is not
-implemented.
+Codex transcript fallback. The AoE plugin packages the same binary and exposes
+controlled health through AoE; it does not create a second event source.
+Task-specific bounded recall is available to any agent that can invoke the CLI.
+Automatic host-path discovery is not implemented.
 
 ## Installation
+
+### Agent of Empires plugin
+
+AoE 1.14 or newer can install Praxis directly from its GitHub release:
+
+```bash
+aoe plugin install gh:vomitselfie/aoe-praxis
+aoe plugin info vomitselfie.praxis
+```
+
+The API-v12 plugin downloads the static release binary, contributes `status`
+and `refresh` commands, and publishes aggregate readiness to AoE's status bar
+and plugin settings page. Its supervised worker runs with `aoe serve`; a
+TUI-only AoE process can manage the installation but does not run plugin
+workers. The current release asset supports Linux x86-64.
+GitHub discovery additionally requires the repository's `aoe-plugin` topic;
+direct `gh:` installation does not.
+
+Plugin installation does not replace provider recording hooks: AoE does not
+expose a normalized tool-completion feed to plugin workers. Install `praxis` on
+`PATH` as described below before configuring Codex, Claude Code, or the AoE
+transcript fallback. The plugin and hooks reuse the same encrypted history.
+
+### Standalone CLI
 
 Praxis currently publishes a static Linux x86-64 musl binary because Linux
 Secret Service is a runtime requirement. Download and verify the latest release
