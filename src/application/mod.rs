@@ -1,10 +1,12 @@
 mod cursor;
+mod forgetting;
 mod health;
 mod ingestion;
 mod project;
 mod recording;
 
 pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
+pub use forgetting::{ForgetReport, ForgetService, ForgetStatus, ProjectHistoryEraser};
 pub use health::{
     ComponentReadiness, HealthReport, HealthService, HistoryHealth, HistoryReadinessProbe,
     HookHealth, HookProvider, HookReadiness, KeyReadinessProbe, OverallHealth,

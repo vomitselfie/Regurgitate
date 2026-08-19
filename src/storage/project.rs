@@ -4,7 +4,7 @@ use std::{fs, path::Path};
 use std::os::unix::ffi::OsStrExt;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -30,6 +30,11 @@ struct StoredPrivateRecord {
     envelope_version: i64,
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
+}
+
+pub(super) struct ProjectIdentity {
+    pub lookup_token: [u8; 32],
+    pub project_id: Uuid,
 }
 
 impl ProjectResolver for EncryptedStore {
@@ -72,19 +77,41 @@ impl ProjectResolver for EncryptedStore {
 
 impl ProjectLookup for EncryptedStore {
     fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>> {
-        let canonical_path = canonical_path_bytes(locator.as_path())?;
-        let lookup_token = self
-            .private_cipher
-            .lookup_token(PrivateRecordKind::Project, &canonical_path)?;
-        self.load_project_record(&lookup_token)?
-            .map(|stored| self.open_project_record(&lookup_token, stored, &canonical_path))
-            .transpose()
+        Ok(self
+            .find_project_identity_in(&self.connection, locator)?
+            .map(|identity| identity.project_id))
     }
 }
 
 impl EncryptedStore {
+    pub(super) fn find_project_identity_in(
+        &self,
+        connection: &Connection,
+        locator: &ProjectLocator,
+    ) -> Result<Option<ProjectIdentity>> {
+        let canonical_path = canonical_path_bytes(locator.as_path())?;
+        let lookup_token = self
+            .private_cipher
+            .lookup_token(PrivateRecordKind::Project, &canonical_path)?;
+        let Some(stored) = Self::load_project_record_from(connection, &lookup_token)? else {
+            return Ok(None);
+        };
+        let project_id = self.open_project_record(&lookup_token, stored, &canonical_path)?;
+        Ok(Some(ProjectIdentity {
+            lookup_token,
+            project_id,
+        }))
+    }
+
     fn load_project_record(&self, lookup_token: &[u8; 32]) -> Result<Option<StoredPrivateRecord>> {
-        self.connection
+        Self::load_project_record_from(&self.connection, lookup_token)
+    }
+
+    fn load_project_record_from(
+        connection: &Connection,
+        lookup_token: &[u8; 32],
+    ) -> Result<Option<StoredPrivateRecord>> {
+        connection
             .query_row(
                 "SELECT envelope_version, nonce, ciphertext
                  FROM private_projects WHERE lookup_token = ?1",

@@ -41,6 +41,11 @@ pub trait MasterKeyProvider {
     fn get_or_create(&self) -> Result<MasterKey>;
 }
 
+pub trait ExistingMasterKeyProvider {
+    /// Loads only an existing key. This must never create or replace one.
+    fn get_existing(&self) -> Result<Option<MasterKey>>;
+}
+
 /// Retrieves the Praxis master key from the platform credential store. On
 /// Linux, keyring's v1 provider is the freedesktop Secret Service.
 pub struct SecretServiceKeyProvider {
@@ -75,27 +80,35 @@ impl SecretServiceKeyProvider {
 
 impl MasterKeyProvider for SecretServiceKeyProvider {
     fn get_or_create(&self) -> Result<MasterKey> {
+        if let Some(existing) = self.get_existing()? {
+            return Ok(existing);
+        }
+        let entry = self.entry()?;
+        let generated = MasterKey::generate()?;
+        entry
+            .set_secret(generated.as_bytes())
+            .context("could not create the Praxis key in Linux Secret Service")?;
+
+        // Re-read the stored value so concurrent first-run writers converge
+        // on the credential store's final value.
+        let stored = Zeroizing::new(
+            entry
+                .get_secret()
+                .context("could not verify the new Praxis Secret Service key")?,
+        );
+        MasterKey::from_secret(&stored)
+    }
+}
+
+impl ExistingMasterKeyProvider for SecretServiceKeyProvider {
+    fn get_existing(&self) -> Result<Option<MasterKey>> {
         let entry = self.entry()?;
         match entry.get_secret() {
             Ok(secret) => {
                 let secret = Zeroizing::new(secret);
-                MasterKey::from_secret(&secret)
+                MasterKey::from_secret(&secret).map(Some)
             }
-            Err(keyring::Error::NoEntry) => {
-                let generated = MasterKey::generate()?;
-                entry
-                    .set_secret(generated.as_bytes())
-                    .context("could not create the Praxis key in Linux Secret Service")?;
-
-                // Re-read the stored value so concurrent first-run writers converge
-                // on the credential store's final value.
-                let stored = Zeroizing::new(
-                    entry
-                        .get_secret()
-                        .context("could not verify the new Praxis Secret Service key")?,
-                );
-                MasterKey::from_secret(&stored)
-            }
+            Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(error).context("Linux Secret Service is unavailable or locked"),
         }
     }
@@ -103,15 +116,6 @@ impl MasterKeyProvider for SecretServiceKeyProvider {
 
 impl KeyReadinessProbe for SecretServiceKeyProvider {
     fn key_is_present(&self) -> Result<bool> {
-        let entry = self.entry()?;
-        match entry.get_secret() {
-            Ok(secret) => {
-                let secret = Zeroizing::new(secret);
-                MasterKey::from_secret(&secret)?;
-                Ok(true)
-            }
-            Err(keyring::Error::NoEntry) => Ok(false),
-            Err(error) => Err(error).context("Linux Secret Service is unavailable or locked"),
-        }
+        Ok(self.get_existing()?.is_some())
     }
 }

@@ -60,7 +60,7 @@ impl ProjectEventSource for EncryptedStore {
     }
 }
 
-fn stored_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
+pub(super) fn stored_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
     Ok(StoredEvent {
         id: row.get(0)?,
         created_at_ms: row.get(1)?,

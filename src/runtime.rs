@@ -9,8 +9,9 @@ use zeroize::Zeroizing;
 use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
-        HealthReport, HealthService, HookObservation, HookProvider, HookReadiness, IngestionReport,
-        IngestionService, ProjectLocator, RecordingReport, RecordingService, SessionEventSource,
+        ForgetReport, ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation,
+        HookProvider, HookReadiness, IngestionReport, IngestionService, ProjectLocator,
+        RecordingReport, RecordingService, SessionEventSource,
     },
     cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
@@ -19,7 +20,10 @@ use crate::{
         install_aoe_hook, install_skill,
     },
     query::{RecallOptions, RecallResult, RecallService},
-    storage::{EncryptedStore, HistoryDatabaseProbe, MasterKeyProvider, SecretServiceKeyProvider},
+    storage::{
+        EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
+        SecretServiceKeyProvider,
+    },
 };
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -67,6 +71,20 @@ pub fn execute(cli: Cli) -> Result<()> {
                 hooks.push((HookProvider::Claude, inspect_claude_hook(&config)));
             }
             let report = health_status(data_home, SecretServiceKeyProvider::default(), hooks);
+            print_json(&report)
+        }
+        Command::Forget {
+            project,
+            apply,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = forget_project(
+                project,
+                apply,
+                data_home,
+                &SecretServiceKeyProvider::default(),
+            )?;
             print_json(&report)
         }
         Command::InstallAoeHook { config, apply } => {
@@ -211,6 +229,35 @@ fn health_status(
     HealthService::new(key_probe, history).inspect_with_hooks(hooks)
 }
 
+fn forget_project(
+    project: PathBuf,
+    apply: bool,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<ForgetReport> {
+    let database = data_home.join("praxis/history.db");
+    match fs::metadata(&database) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => anyhow::bail!("Praxis history database is not a regular file"),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(ForgetReport {
+                status: ForgetStatus::NotFound,
+                events: 0,
+            });
+        }
+        Err(error) => return Err(error).context("could not inspect Praxis history database"),
+    }
+    let key = key_provider
+        .get_existing()?
+        .context("Praxis history exists but its master key is unavailable")?;
+    let store = if apply {
+        EncryptedStore::open_existing(&database, &key)?
+    } else {
+        EncryptedStore::open_read_only(&database, &key)?
+    };
+    ForgetService::new(store).forget(&ProjectLocator::new(project), apply)
+}
+
 fn recall_project(
     project: PathBuf,
     options: RecallOptions,
@@ -265,7 +312,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::{application::KeyReadinessProbe, storage::MasterKey};
+    use crate::{
+        application::KeyReadinessProbe,
+        storage::{ExistingMasterKeyProvider, MasterKey},
+    };
 
     use super::*;
 
@@ -274,6 +324,12 @@ mod tests {
     impl MasterKeyProvider for FixedKeyProvider {
         fn get_or_create(&self) -> Result<MasterKey> {
             Ok(MasterKey::from_bytes([23; 32]))
+        }
+    }
+
+    impl ExistingMasterKeyProvider for FixedKeyProvider {
+        fn get_existing(&self) -> Result<Option<MasterKey>> {
+            Ok(Some(MasterKey::from_bytes([23; 32])))
         }
     }
 
@@ -543,5 +599,91 @@ mod tests {
         for forbidden in ["config.toml", "settings.json", "praxis record-hook"] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
+    }
+
+    #[test]
+    fn forgetting_previews_then_deletes_without_exposing_the_project() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("PRIVATE_FORGOTTEN_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "session_id": "PRIVATE_FORGOTTEN_SESSION",
+            "cwd": project,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "tool_use_id": "tool-forget",
+            "tool_input": {"content": "PRIVATE_CONTENT"},
+            "tool_response": {"content": "PRIVATE_RESULT"}
+        }))
+        .unwrap();
+        record_hook(
+            claude::normalize_tool_hook(payload.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+
+        let database_path = data_home.join("praxis/history.db");
+        let before_preview = fs::read(&database_path).unwrap();
+        let preview =
+            forget_project(project.clone(), false, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(preview.status, ForgetStatus::Planned);
+        assert_eq!(preview.events, 1);
+        assert_eq!(fs::read(&database_path).unwrap(), before_preview);
+        let still_present = recall_project(
+            project.clone(),
+            RecallOptions::default(),
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(still_present.observations.len(), 1);
+
+        let forgotten =
+            forget_project(project.clone(), true, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(forgotten.status, ForgetStatus::Forgotten);
+        assert_eq!(forgotten.events, 1);
+        let recalled = recall_project(
+            project,
+            RecallOptions::default(),
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert!(recalled.observations.is_empty());
+
+        let encoded = serde_json::to_string(&forgotten).unwrap();
+        assert!(!encoded.contains("PRIVATE_FORGOTTEN_PROJECT"));
+        let database = fs::read(database_path).unwrap();
+        for forbidden in [
+            b"PRIVATE_FORGOTTEN_PROJECT".as_slice(),
+            b"PRIVATE_FORGOTTEN_SESSION",
+            b"PRIVATE_CONTENT",
+            b"PRIVATE_RESULT",
+        ] {
+            assert!(
+                !database
+                    .windows(forbidden.len())
+                    .any(|window| window == forbidden)
+            );
+        }
+    }
+
+    #[test]
+    fn forgetting_missing_history_does_not_initialize_state() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+        let report = forget_project(
+            temp.path().to_path_buf(),
+            false,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(report.status, ForgetStatus::NotFound);
+        assert!(!data_home.exists());
     }
 }

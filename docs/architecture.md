@@ -172,6 +172,26 @@ uses a typed view of only the two relevant hook arrays; unrelated settings are
 not represented, and personal command strings are transient comparison inputs.
 The health report retains only a controlled provider and readiness enum.
 
+## Forgetting boundary
+
+The project forgetting service accepts only a non-serializable
+`ProjectLocator`, an explicit apply decision, and a narrow storage port. Preview
+opens an existing database read-only and returns an aggregate event count.
+Missing history stays missing: neither a key, directory, database, nor project
+mapping is created.
+
+Apply begins an immediate SQLite transaction, authenticates the encrypted
+path-to-project mapping, deletes both indexed and legacy unindexed events, and
+removes the encrypted mapping. It intentionally retains ingestion cursors so a
+later AoE status transition cannot replay already-forgotten transcript history.
+Before deletion, it adds the old key-derived event-project token to a tombstone
+table. Appends consult that table, preventing a concurrent hook that resolved
+the old project UUID from recreating an orphan event after the mapping is gone.
+A later new hook resolves a fresh project identity and can record new work.
+
+The report contains only a controlled status and count. Event IDs, project IDs,
+paths, sessions, and tombstone tokens never leave storage.
+
 ## Current boundaries and limits
 
 Implemented:
@@ -191,6 +211,7 @@ Implemented:
 - non-mutating Claude Code hook config generation;
 - non-mutating aggregate key-store and database health reporting;
 - explicit-path, non-mutating AoE and Claude hook readiness reporting;
+- preview-first transactional project forgetting with race-safe tombstones;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
@@ -202,4 +223,4 @@ Implemented:
 Not yet implemented:
 
 - automatic host-specific installation-path discovery;
-- retention, inspection, and forgetting commands.
+- retention and human-only inspection commands.

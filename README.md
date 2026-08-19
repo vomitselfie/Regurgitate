@@ -23,6 +23,7 @@ implementation provides:
 - project-scoped, task-ranked aggregate recall with hard count and token
   budgets;
 - non-mutating key-store and history-database health reporting;
+- preview-first, project-scoped encrypted history forgetting;
 - a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
@@ -47,6 +48,8 @@ cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- status
 cargo run -- status --aoe-config /path/to/aoe/config.toml --claude-config /path/to/claude/settings.json
+cargo run -- forget --project "$PWD"
+cargo run -- forget --project "$PWD" --apply
 cargo run -- print-aoe-config
 cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
@@ -73,6 +76,15 @@ Optional `--aoe-config` and `--claude-config` arguments add non-mutating hook
 checks for those exact files. Their output is limited to the provider name and
 `installed`, `not_installed`, `conflicting`, or `unavailable`; Praxis does not
 guess host paths or return config paths and command strings.
+
+`forget --project` previews only an aggregate event count. It opens existing
+history read-only and does not initialize missing state. Repeating with
+`--apply` transactionally deletes that project's encrypted events and encrypted
+path mapping. The report contains only `planned`, `forgotten`, or `not_found`
+plus a count. A keyed tombstone blocks a concurrently delivered hook that still
+holds the deleted project identity; existing ingestion cursors remain so old
+transcripts are not replayed. The project path itself may still be retained by
+the user's shell history when supplied on a command line.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
 an approximate 600-token serialized-output budget. It supports a controlled

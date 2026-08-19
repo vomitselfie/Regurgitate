@@ -20,6 +20,7 @@ module boundaries.
   conformance fixtures;
 - read-only key-store and database health with aggregate-only output;
 - explicit-path AoE and Claude hook readiness with controlled output;
+- preview-first project forgetting with transactional encrypted deletion;
 - a provider-neutral recall skill with isolated Codex discovery metadata;
 - a preview-first, no-overwrite installer for an explicit agent skills path;
 - a locked, atomic installer for empty AoE idle/error hook slots; and
@@ -51,14 +52,27 @@ privacy boundary:
 5. optional hook checks inspect only explicitly supplied configs and return no
    paths or command strings.
 
+## Completed forgetting slice
+
+Project forgetting was added without adding event-level inspection:
+
+1. a project-scoped deletion port returns only an optional aggregate count;
+2. `forget` previews by default and requires `--apply` for deletion;
+3. encrypted events and the private project mapping are removed in one
+   immediate transaction;
+4. keyed tombstones reject late writes using the deleted identity, while
+   retained cursors prevent transcript resurrection; and
+5. reports contain no event IDs, project IDs, or paths.
+
 ## Next integration slice
 
-Add project forgetting without adding event-level inspection:
+Add bounded retention policy on top of the same privacy boundary:
 
-1. define a project-scoped deletion port and aggregate preview report;
-2. require an explicit project locator and explicit apply flag;
-3. remove encrypted events and private project metadata transactionally; and
-4. return counts only, with no event IDs, project IDs, or paths.
+1. define age/count policies using controlled inputs only;
+2. preview aggregate deletion counts before any mutation;
+3. apply in bounded transactions without decrypting unrelated payload fields;
+   and
+4. keep retained/deleted event details out of output.
 
 Both installers require explicit host paths instead of guessing them and are
 preview-only without `--apply`. The AoE installer preserves unrelated TOML but
@@ -67,7 +81,7 @@ transition rather than a composable command list.
 
 ## Later slices
 
-- retention and project forgetting;
+- retention policies;
 - human-only inspection and key maintenance;
 - additional native agent adapters;
 - measured evaluation of recall cost versus avoided retries; and

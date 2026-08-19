@@ -61,6 +61,21 @@ pub(crate) enum Command {
         data_home: Option<PathBuf>,
     },
 
+    /// Preview or forget all encrypted history associated with one project.
+    Forget {
+        /// Existing local project directory whose history should be forgotten.
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Apply the deletion instead of previewing its aggregate count.
+        #[arg(long)]
+        apply: bool,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
     /// Preview or add Praxis to an explicit global AoE config.
     InstallAoeHook {
         /// Global AoE config.toml file to update.
@@ -241,6 +256,29 @@ mod tests {
         assert_eq!(aoe_config, Some(PathBuf::from("/aoe/config.toml")));
         assert_eq!(claude_config, Some(PathBuf::from("/claude/settings.json")));
         assert!(data_home.is_none());
+    }
+
+    #[test]
+    fn forgetting_is_preview_only_unless_apply_is_explicit() {
+        let preview =
+            Cli::try_parse_from(["praxis", "forget", "--project", "/private/project"]).unwrap();
+        let Command::Forget { apply, .. } = preview.command else {
+            panic!("expected forget command");
+        };
+        assert!(!apply);
+
+        let applied = Cli::try_parse_from([
+            "praxis",
+            "forget",
+            "--project",
+            "/private/project",
+            "--apply",
+        ])
+        .unwrap();
+        let Command::Forget { apply, .. } = applied.command else {
+            panic!("expected forget command");
+        };
+        assert!(apply);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::{fs::OpenOptions, path::Path, time::Duration};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use uuid::Uuid;
 
 use crate::{application::EventSink, core::HistoryEvent};
@@ -41,13 +41,34 @@ impl EncryptedStore {
         Self::from_connection(connection, master_key)
     }
 
+    pub fn open_existing(path: &Path, master_key: &MasterKey) -> Result<Self> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
+            .with_context(|| {
+                format!(
+                    "could not open existing Praxis database at {}",
+                    path.display()
+                )
+            })?;
+        Self::from_connection(connection, master_key)
+    }
+
+    pub fn open_read_only(path: &Path, master_key: &MasterKey) -> Result<Self> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| {
+                format!(
+                    "could not open existing Praxis database read-only at {}",
+                    path.display()
+                )
+            })?;
+        Self::from_existing_connection(connection, master_key)
+    }
+
     #[cfg(test)]
     pub(super) fn open_in_memory(master_key: &MasterKey) -> Result<Self> {
         Self::from_connection(Connection::open_in_memory()?, master_key)
     }
 
     fn from_connection(connection: Connection, master_key: &MasterKey) -> Result<Self> {
-        connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
              PRAGMA secure_delete = ON;
@@ -71,6 +92,9 @@ impl EncryptedStore {
                  envelope_version INTEGER NOT NULL,
                  nonce            BLOB NOT NULL,
                  ciphertext       BLOB NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS forgotten_project_tokens (
+                 project_token BLOB PRIMARY KEY NOT NULL
              );",
         )?;
         ensure_event_project_token_column(&connection)?;
@@ -79,6 +103,11 @@ impl EncryptedStore {
              ON events(project_token, created_at_ms DESC)",
             [],
         )?;
+        Self::from_existing_connection(connection, master_key)
+    }
+
+    fn from_existing_connection(connection: Connection, master_key: &MasterKey) -> Result<Self> {
+        connection.busy_timeout(Duration::from_secs(5))?;
         Ok(Self {
             connection,
             cipher: EventCipher::new(master_key)?,
@@ -101,7 +130,10 @@ impl EncryptedStore {
         let changed = self.connection.execute(
             "INSERT OR IGNORE INTO events
                 (id, project_token, created_at_ms, schema_version, envelope_version, nonce, ciphertext)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+             WHERE ?2 IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM forgotten_project_tokens WHERE project_token = ?2
+             )",
             params![
                 event.id.as_bytes().as_slice(),
                 project_token.as_ref().map(|token| token.as_slice()),

@@ -1,0 +1,199 @@
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, Transaction, TransactionBehavior};
+use uuid::Uuid;
+
+use crate::application::{ProjectHistoryEraser, ProjectLocator};
+
+use super::{
+    private::PrivateRecordKind, project::ProjectIdentity, query::stored_event_from_row,
+    sqlite::EncryptedStore,
+};
+
+impl ProjectHistoryEraser for EncryptedStore {
+    fn count_project_events(&self, project: &ProjectLocator) -> Result<Option<u64>> {
+        let Some(identity) = self.find_project_identity_in(&self.connection, project)? else {
+            return Ok(None);
+        };
+        self.count_identity_events(&self.connection, &identity)
+            .map(Some)
+    }
+
+    fn erase_project(&self, project: &ProjectLocator) -> Result<Option<u64>> {
+        // IMMEDIATE serializes this deletion with append transactions before
+        // the identity is loaded. The tombstone rejects a writer that resolved
+        // the old identity before this transaction began.
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+                .context("could not begin project forgetting transaction")?;
+        let Some(identity) = self.find_project_identity_in(&transaction, project)? else {
+            transaction.rollback()?;
+            return Ok(None);
+        };
+        let event_token = self.event_project_token(identity.project_id)?;
+        let legacy_ids = self.legacy_project_event_ids(&transaction, identity.project_id)?;
+
+        transaction.execute(
+            "INSERT OR IGNORE INTO forgotten_project_tokens (project_token) VALUES (?1)",
+            [event_token.as_slice()],
+        )?;
+        let mut deleted = transaction.execute(
+            "DELETE FROM events WHERE project_token = ?1",
+            [event_token.as_slice()],
+        )?;
+        for event_id in legacy_ids {
+            deleted += transaction.execute("DELETE FROM events WHERE id = ?1", [event_id])?;
+        }
+        let deleted_mapping = transaction.execute(
+            "DELETE FROM private_projects WHERE lookup_token = ?1",
+            [identity.lookup_token.as_slice()],
+        )?;
+        if deleted_mapping != 1 {
+            bail!("encrypted project identity changed during deletion");
+        }
+        transaction.commit()?;
+        u64::try_from(deleted)
+            .context("project deletion returned an invalid event count")
+            .map(Some)
+    }
+}
+
+impl EncryptedStore {
+    fn count_identity_events(
+        &self,
+        connection: &Connection,
+        identity: &ProjectIdentity,
+    ) -> Result<u64> {
+        let event_token = self.event_project_token(identity.project_id)?;
+        let direct: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM events WHERE project_token = ?1",
+            [event_token.as_slice()],
+            |row| row.get(0),
+        )?;
+        let legacy = self
+            .legacy_project_event_ids(connection, identity.project_id)?
+            .len();
+        let direct: u64 = direct
+            .try_into()
+            .context("history database returned an invalid project event count")?;
+        direct
+            .checked_add(u64::try_from(legacy)?)
+            .context("project event count overflow")
+    }
+
+    fn event_project_token(&self, project_id: Uuid) -> Result<[u8; 32]> {
+        self.private_cipher
+            .lookup_token(PrivateRecordKind::EventProject, project_id.as_bytes())
+    }
+
+    fn legacy_project_event_ids(
+        &self,
+        connection: &Connection,
+        project_id: Uuid,
+    ) -> Result<Vec<Vec<u8>>> {
+        let mut statement = connection.prepare(
+            "SELECT id, created_at_ms, schema_version, envelope_version, nonce, ciphertext
+             FROM events WHERE project_token IS NULL",
+        )?;
+        let rows = statement.query_map([], stored_event_from_row)?;
+        let mut ids = Vec::new();
+        for row in rows {
+            let row = row?;
+            let id = row.id.clone();
+            if self.decrypt_row(row)?.project_id == Some(project_id) {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use chrono::{TimeZone, Utc};
+    use tempfile::tempdir;
+
+    use crate::{
+        application::{CursorStore, IngestionCursor, ProjectResolver},
+        core::{AgentKind, CURRENT_SCHEMA_VERSION, Capability, HistoryEvent, Operation, Outcome},
+        query::ProjectLookup,
+        storage::MasterKey,
+    };
+
+    use super::*;
+
+    fn event(id: u128, project_id: Uuid) -> HistoryEvent {
+        HistoryEvent {
+            id: Uuid::from_u128(id),
+            timestamp: Utc.timestamp_millis_opt(1_776_254_400_123).unwrap(),
+            session_id: Some("PRIVATE_SESSION".to_owned()),
+            project_id: Some(project_id),
+            agent: Some(AgentKind::Claude),
+            capability: Capability::Test,
+            operation: Operation::Command,
+            strategy: None,
+            outcome: Outcome::Success,
+            duration_ms: None,
+            error_class: None,
+            schema_version: CURRENT_SCHEMA_VERSION,
+        }
+    }
+
+    #[test]
+    fn deletion_is_project_scoped_and_tombstones_the_old_identity() {
+        let temp = tempdir().unwrap();
+        let wanted_path = temp.path().join("PRIVATE_WANTED_PROJECT");
+        let other_path = temp.path().join("PRIVATE_OTHER_PROJECT");
+        fs::create_dir(&wanted_path).unwrap();
+        fs::create_dir(&other_path).unwrap();
+        let store = EncryptedStore::open_in_memory(&MasterKey::from_bytes([71; 32])).unwrap();
+        let wanted = ProjectLocator::new(wanted_path);
+        let other = ProjectLocator::new(other_path);
+        let wanted_id = store.resolve_project(&wanted).unwrap();
+        let other_id = store.resolve_project(&other).unwrap();
+        store
+            .save_cursor("PRIVATE_CURSOR_SESSION", &IngestionCursor::empty())
+            .unwrap();
+
+        store.append(&event(1, wanted_id)).unwrap();
+        store.append(&event(2, wanted_id)).unwrap();
+        store.append(&event(3, other_id)).unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE events SET project_token = NULL WHERE id = ?1",
+                [Uuid::from_u128(2).as_bytes().as_slice()],
+            )
+            .unwrap();
+
+        assert_eq!(store.count_project_events(&wanted).unwrap(), Some(2));
+        assert_eq!(store.erase_project(&wanted).unwrap(), Some(2));
+        assert_eq!(store.count().unwrap(), 1);
+        assert_eq!(store.find_project(&wanted).unwrap(), None);
+        assert_eq!(store.count_project_events(&wanted).unwrap(), None);
+        assert_eq!(store.find_project(&other).unwrap(), Some(other_id));
+        assert_eq!(
+            store.load_cursor("PRIVATE_CURSOR_SESSION").unwrap(),
+            Some(IngestionCursor::empty())
+        );
+
+        let tombstone: Vec<u8> = store
+            .connection
+            .query_row(
+                "SELECT project_token FROM forgotten_project_tokens",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(tombstone, wanted_id.as_bytes());
+
+        // A hook that resolved the old ID before deletion cannot recreate an
+        // orphaned event after the transaction commits.
+        assert!(!store.append(&event(4, wanted_id)).unwrap());
+        assert_eq!(store.count().unwrap(), 1);
+        let replacement_id = store.resolve_project(&wanted).unwrap();
+        assert_ne!(replacement_id, wanted_id);
+        assert!(store.append(&event(5, replacement_id)).unwrap());
+    }
+}
