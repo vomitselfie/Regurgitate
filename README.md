@@ -238,6 +238,26 @@ filesystem; repeat it with `--apply` to install. A repeated install reports
 `--apply` to perform the update. Praxis always refuses a non-directory or
 symlinked skill destination and does not guess or modify an agent's config.
 
+## Context cost
+
+Recording stays out of the conversation: successful native hooks emit no
+output, and Praxis stores controlled observations rather than replaying raw
+history into the agent context. Recall is explicit, aggregate-only, and bounded.
+
+The v0.2 recall path was tightened against its initial implementation:
+
+| Praxis-controlled context | Initial | Current | Reduction |
+| --- | ---: | ---: | ---: |
+| Recall skill instructions | ~1,205 tokens | ~635 tokens | 47% |
+| Default recall output budget | 600 tokens | 300 tokens | 50% |
+| Skill plus default recall ceiling | ~1,805 tokens | ~935 tokens | 48% |
+
+Instruction estimates use the same conservative four-bytes-per-token rule as
+the CLI. They are stable payload-size comparisons, not a claim about exact
+provider billing: model tokenizers and host-added tool scaffolding vary. During
+v0.2 validation, a representative default recall serialized to an estimated
+222 tokens, while a deliberately tight 100-token request serialized to 87.
+
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
 the current implementation limits, and [Roadmap](docs/roadmap.md) for the next
 integration slices. Upstream source-format assumptions are recorded in

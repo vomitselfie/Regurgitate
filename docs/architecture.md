@@ -197,6 +197,17 @@ trimmed from lowest priority until its conservative four-bytes-per-token
 estimate fits the requested budget. The output records that estimate for later
 evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 
+The agent-facing instruction bundle is part of the same context boundary. A
+regression test keeps the embedded `SKILL.md` at or below 3,000 bytes; the v0.2
+bundle is 2,540 bytes, down from 4,819. Using the CLI's conservative
+four-bytes-per-token estimate, that is approximately 635 tokens instead of
+1,205. Together with the default recall budget reduction from 600 to 300, the
+Praxis-controlled ceiling for an activated default recall fell from roughly
+1,805 to 935 tokens, a 48% reduction. Successful recording hooks remain silent
+and therefore add no Praxis output to agent context. These figures describe
+Praxis-owned serialized payloads; provider tokenization and host-added tool-call
+scaffolding are outside this boundary.
+
 ## Health boundary
 
 The `status` command composes two narrow read-only probes. The Secret Service
