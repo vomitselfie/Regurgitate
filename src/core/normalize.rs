@@ -6,12 +6,17 @@ pub fn classify_tool(tool_name: &str) -> (Capability, Operation) {
     match tool_name {
         "Bash" | "exec" | "exec_command" => (Capability::Shell, Operation::Command),
         "write_stdin" => (Capability::Shell, Operation::ContinueCommand),
-        "apply_patch" | "Edit" | "Write" => (Capability::Patch, Operation::ApplyPatch),
-        "read_file" | "read_mcp_resource" => (Capability::Filesystem, Operation::ReadFile),
+        "apply_patch" | "Edit" | "Write" | "NotebookEdit" => {
+            (Capability::Patch, Operation::ApplyPatch)
+        }
+        "Read" | "read_file" | "read_mcp_resource" => (Capability::Filesystem, Operation::ReadFile),
         "write_file" => (Capability::Filesystem, Operation::WriteFile),
-        "web__run" | "WebSearch" | "search" => (Capability::Search, Operation::Search),
+        "Glob" | "Grep" | "web__run" | "WebSearch" | "search" => {
+            (Capability::Search, Operation::Search)
+        }
+        "WebFetch" => (Capability::Network, Operation::WebRequest),
         "view_image" => (Capability::Vision, Operation::InspectImage),
-        "update_plan" => (Capability::Other, Operation::UpdatePlan),
+        "TodoWrite" | "update_plan" => (Capability::Other, Operation::UpdatePlan),
         "spawn_agent" | "Agent" => (Capability::Other, Operation::Delegate),
         "wait" | "wait_agent" => (Capability::Wait, Operation::Wait),
         name if name.starts_with("mcp__") => (Capability::Other, Operation::ToolCall),
@@ -183,6 +188,22 @@ mod tests {
         assert_eq!(
             classify_tool_response(&json!({"text": "looks good"})),
             (Outcome::Unknown, None)
+        );
+    }
+
+    #[test]
+    fn classifies_claude_native_tools_without_provider_types() {
+        assert_eq!(
+            classify_tool("Read"),
+            (Capability::Filesystem, Operation::ReadFile)
+        );
+        assert_eq!(
+            classify_tool("Grep"),
+            (Capability::Search, Operation::Search)
+        );
+        assert_eq!(
+            classify_tool("WebFetch"),
+            (Capability::Network, Operation::WebRequest)
         );
     }
 

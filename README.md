@@ -5,27 +5,30 @@ agents. It is designed to preserve small, structured observations about what
 agents tried and whether it worked, without preserving prompts, responses,
 commands, source content, tool arguments, or tool output.
 
-The core storage, query, and application boundaries are agent-agnostic. The
-first ingestion adapter targets Agent of Empires-managed Codex sessions on
-Linux. The current implementation provides:
+The core storage, query, and application boundaries are agent-agnostic. Native
+hook adapters currently cover Codex and Claude Code, while transcript ingestion
+targets Agent of Empires-managed Codex sessions on Linux. The current
+implementation provides:
 
 - a strict, controlled normalized event model;
-- a Codex `PostToolUse` hook normalizer that drops non-allowlisted input;
+- Codex and Claude Code hook normalizers that drop non-allowlisted input;
 - conservative parsing of existing Codex JSONL sessions for reconnaissance and
   migration;
 - AoE session discovery without embedding AoE concerns in the core model;
 - per-record CBOR + XChaCha20-Poly1305 encrypted SQLite storage;
 - HKDF-separated event keys and a Linux Secret Service master-key provider;
 - encrypted project identity mappings and incremental ingestion cursors;
-- a modular, interruption-safe `ingest` application service and CLI path;
+- separate modular services for cursor-based transcript ingestion and
+  cursor-free native hook recording;
 - project-scoped, task-ranked aggregate recall with hard count and token
   budgets;
 - a small provider-neutral agent skill that uses only the recall CLI; and
 - privacy regression tests with adversarial fixture content.
 
 This is an early implementation. Manual and AoE status-hook ingestion are wired
-for Codex sessions, and task-specific bounded recall is available to any agent
-that can invoke the CLI. Automatic installation is not implemented yet.
+for Codex sessions, Claude Code can record tool completions directly, and
+task-specific bounded recall is available to any agent that can invoke the CLI.
+Automatic host-path discovery is not implemented.
 
 ## CLI usage
 
@@ -35,20 +38,25 @@ It never falls back to a plaintext key or plaintext history database.
 ```bash
 cargo test
 cargo run -- debug-hook < tests/fixtures/codex/post-tool-use-success.json
+cargo run -- debug-hook --agent claude < tests/fixtures/claude/post-tool-use-success.json
+cargo run -- record-hook --agent claude < tests/fixtures/claude/post-tool-use-success.json
 cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- print-aoe-config
+cargo run -- print-claude-config
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml
 cargo run -- install-aoe-hook --config /path/to/aoe/config.toml --apply
 cargo run -- install-skill --target /path/to/agent/skills
 cargo run -- install-skill --target /path/to/agent/skills --apply
 ```
 
-Both debug commands print only the sanitized event projection. They never print
+The debug commands print only the sanitized event projection. They never print
 the hook payload, transcript payload, command arguments, or tool results.
-`ingest` prints only aggregate counts and stores encrypted events under
+`record-hook` intentionally writes nothing to stdout on success so provider
+hook protocols cannot interpret a report as control output. `ingest` prints
+only aggregate counts. Both recording paths store encrypted events under
 `$XDG_DATA_HOME/praxis/history.db` (or `~/.local/share/praxis/history.db`).
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
@@ -69,10 +77,17 @@ hook slots, uses AoE's adjacent global-config lock, and refuses conflicting
 hooks or a change that would activate dormant personal hooks. AoE does not
 honor status hooks from repository configuration.
 
-The installed entries invoke `praxis aoe-hook` on stable idle/error
+The installed AoE entries invoke `praxis aoe-hook` on stable idle/error
 transitions. The handler reads only `AOE_SESSION_ID`, `AOE_PROFILE`, and
 `AOE_TOOL`; duplicate deliveries are safe. Unsupported agent types are ignored
 successfully.
+
+For Claude Code, run `praxis print-claude-config` and manually merge the JSON
+fragment into user or project settings without replacing existing hooks. It
+registers the same silent `praxis record-hook --agent claude` command for both
+`PostToolUse` and `PostToolUseFailure`. The adapter determines success from the
+hook event, never from raw tool response or error text, and duplicate hook
+deliveries are safe.
 
 ## Agent-facing recall
 
@@ -97,13 +112,14 @@ integration slices. Upstream source-format assumptions are recorded in
 
 ## Privacy invariant
 
-Only controlled event and cursor types may enter the application service. A
-project path crosses in a non-serializable `ProjectLocator` whose only consumer
-is the encrypted identity resolver; the path never enters an event, report, or
-plaintext database column. Events and private metadata are serialized to CBOR
-and encrypted in memory before SQLite receives any payload bytes. The master
-key is stored separately through Linux Secret Service; the implementation has
-no automatic plaintext-key or plaintext-event fallback.
+Only controlled events, cursors, and the deliberately non-serializable
+`HookObservation` may enter application services. A project path crosses in a
+non-serializable `ProjectLocator` whose only consumer is the encrypted identity
+resolver; the path never enters an event, report, or plaintext database column.
+Events and private metadata are serialized to CBOR and encrypted in memory
+before SQLite receives any payload bytes. The master key is stored separately
+through Linux Secret Service; the implementation has no automatic
+plaintext-key or plaintext-event fallback.
 
 ## Verification
 

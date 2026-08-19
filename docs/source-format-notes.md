@@ -64,13 +64,33 @@ output does not always expose an exit code, so the transcript fallback reports
 Codex lifecycle hooks are the preferred source. `PostToolUse` supplies a stable
 session id, tool name, tool-use id, and tool response. It runs for successful and
 non-zero Bash commands and covers `apply_patch`, MCP calls, and most local
-function tools. The hook input also contains raw `tool_input`, `cwd`, and
-transcript location; Praxis intentionally has no deserialization fields for
-those values.
+function tools. The direct-recording adapter also allowlists `cwd`, but carries
+it only in a non-serializable `ProjectLocator`. Raw `tool_input` and transcript
+location have no deserialization fields.
 
 Hosted tools such as web search do not currently use the local tool hook path.
 Transcript fallback may observe them, but should retain only a generic
 controlled operation.
+
+## Claude Code
+
+Claude Code command hooks receive JSON on stdin. The documented common input
+includes `session_id`, `transcript_path`, `cwd`, `permission_mode`, and
+`hook_event_name`. `PostToolUse` additionally provides `tool_name`,
+`tool_input`, `tool_response`, and `tool_use_id`; `PostToolUseFailure` provides
+the same tool identity plus an `error`, optional interruption state, and
+optional duration.
+
+Praxis registers both terminal events. It allowlists only the session ID,
+working directory, event name, tool name, tool-use ID, and optional duration.
+The distinct hook event names are sufficient to derive success or failure, so
+the adapter has no fields for tool input, tool response, error, transcript path,
+or permission mode. The working directory becomes only a non-serializable
+project locator.
+
+These assumptions were checked against the current official
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks) on the
+reconnaissance date above. No Claude transcript parser is implemented.
 
 ## Current ingestion compatibility
 
@@ -91,10 +111,13 @@ SQLite ignores an event already committed before the cursor advances.
 - reasoning, summaries, or instructions;
 - tool arguments and tool input;
 - raw tool responses or output;
-- working directories, transcript paths, and source paths;
+- working directories in events or persisted plaintext, and all transcript or
+  source paths;
 - git metadata;
 - URLs, command strings, environment values, and credentials;
 - model context or token accounting payloads.
 
-The Rust adapter structs omit these fields instead of deserializing and then
-trying to redact them.
+Rust adapter structs omit these fields instead of deserializing and then trying
+to redact them. The only exception is a hook working directory, which is
+deserialized directly into the non-serializable `ProjectLocator` path and
+consumed solely by encrypted project identity resolution.

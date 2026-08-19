@@ -1,0 +1,15 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/home/alice/.claude/projects/private/session.jsonl",
+  "cwd": "/home/alice/SECRET_PROJECT",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_use_id": "tool-2",
+  "duration_ms": 47,
+  "tool_input": {
+    "command": "curl https://private.example/?token=FIXTURE_SECRET"
+  },
+  "error": "PASSWORD=hunter2",
+  "is_interrupt": false
+}

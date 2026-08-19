@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read},
+    path::PathBuf,
 };
 
 use anyhow::{Context, Result, bail};
@@ -9,17 +10,23 @@ use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::core::{
-    AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_tool, classify_tool_response,
+use crate::{
+    application::{HookObservation, ProjectLocator},
+    core::{
+        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_tool,
+        classify_tool_response,
+    },
 };
 
 #[derive(Debug, Deserialize)]
 struct CodexHookInput {
     session_id: String,
+    cwd: Option<PathBuf>,
     hook_event_name: String,
     tool_name: Option<String>,
     tool_use_id: Option<String>,
     tool_response: Option<Value>,
+    duration_ms: Option<u64>,
 }
 
 /// Normalize a current Codex hook payload. Unknown fields—including `cwd`,
@@ -28,6 +35,21 @@ struct CodexHookInput {
 pub fn normalize_post_tool_hook<R: Read>(reader: R) -> Result<HistoryEvent> {
     let input: CodexHookInput =
         serde_json::from_reader(reader).context("invalid Codex hook JSON")?;
+    Ok(normalize_hook_input(input)?.0)
+}
+
+/// Normalize a current Codex hook into the complete, still-sanitized value
+/// needed for direct recording. The project path remains a non-serializable
+/// locator and never becomes part of the event.
+pub fn normalize_post_tool_observation<R: Read>(reader: R) -> Result<HookObservation> {
+    let input: CodexHookInput =
+        serde_json::from_reader(reader).context("invalid Codex hook JSON")?;
+    let (event, cwd) = normalize_hook_input(input)?;
+    let cwd = cwd.context("Codex hook event has no working directory")?;
+    Ok(HookObservation::new(event, ProjectLocator::new(cwd)))
+}
+
+fn normalize_hook_input(input: CodexHookInput) -> Result<(HistoryEvent, Option<PathBuf>)> {
     if input.hook_event_name != "PostToolUse" {
         bail!("expected a Codex PostToolUse event");
     }
@@ -41,7 +63,7 @@ pub fn normalize_post_tool_hook<R: Read>(reader: R) -> Result<HistoryEvent> {
         .map(classify_tool_response)
         .unwrap_or((Outcome::Unknown, None));
 
-    Ok(HistoryEvent {
+    let event = HistoryEvent {
         id: stable_event_id(&input.session_id, &source_event_id),
         timestamp: Utc::now(),
         session_id: Some(input.session_id),
@@ -51,10 +73,11 @@ pub fn normalize_post_tool_hook<R: Read>(reader: R) -> Result<HistoryEvent> {
         operation,
         strategy: None,
         outcome,
-        duration_ms: None,
+        duration_ms: input.duration_ms,
         error_class,
         schema_version: CURRENT_SCHEMA_VERSION,
-    })
+    };
+    Ok((event, input.cwd))
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +243,33 @@ mod tests {
             "/home/alice",
             "curl",
         ] {
+            assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
+        }
+    }
+
+    #[test]
+    fn preserves_project_only_as_a_non_serializable_locator() {
+        let fixture = br#"{
+            "session_id": "session-1",
+            "cwd": "/home/alice/secret-project",
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "call-1",
+            "duration_ms": 42,
+            "tool_input": {"command": "SECRET_COMMAND"},
+            "tool_response": {"exit_code": 0, "output": "SECRET_OUTPUT"}
+        }"#;
+
+        let observation = normalize_post_tool_observation(&fixture[..]).unwrap();
+        assert_eq!(
+            observation.project().as_path(),
+            std::path::Path::new("/home/alice/secret-project")
+        );
+        assert_eq!(observation.event().duration_ms, Some(42));
+        assert!(observation.event().project_id.is_none());
+
+        let encoded = serde_json::to_string(observation.event()).unwrap();
+        for forbidden in ["SECRET_COMMAND", "SECRET_OUTPUT", "/home/alice"] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
     }

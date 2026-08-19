@@ -5,8 +5,9 @@ coordination, and storage can evolve independently.
 
 ```text
 CLI/runtime composition
-    ├── AoE discovery + Codex normalization adapter
-    ├── ingestion application service
+    ├── AoE discovery + Codex transcript adapter
+    ├── Codex / Claude native-hook adapters
+    ├── cursor-based ingestion or cursor-free recording service
     └── encrypted SQLite adapter + Secret Service key provider
 
 application service ── depends on ──> controlled HistoryEvent model
@@ -17,6 +18,28 @@ The binary entry point contains no business logic. `runtime` selects concrete
 adapters, `application` coordinates them, and `core` contains the controlled
 event vocabulary. AoE and Codex details are confined to `adapters`; encryption,
 SQLite, and credential-store details are confined to `storage`.
+
+## Native hook flow
+
+Codex and Claude hook payloads enter separate adapter modules. Each adapter
+deserializes only an allowlist of structural fields and returns the same
+`HookObservation`: one controlled `HistoryEvent` plus a non-serializable
+`ProjectLocator`. Provider request data, errors, transcript paths, and other
+unknown fields are omitted. Codex transiently classifies explicit response
+metadata into a controlled outcome; Claude does not deserialize its response or
+failure text at all. No raw provider value crosses the adapter boundary.
+
+The recording application service resolves the locator through encrypted
+project identity storage, adds the resulting UUID to the event, and appends it
+idempotently. It has no transcript or cursor dependency, so a native delivery
+cannot advance or corrupt the AoE/Codex transcript checkpoint. The stable event
+ID makes a repeated native delivery safe.
+
+Claude exposes distinct `PostToolUse` and `PostToolUseFailure` events. Its
+adapter therefore derives outcome from the event name and does not inspect raw
+response or failure content. The `record-hook` runtime path is silent on
+success. `print-claude-config` emits a fragment for manual merging instead of
+mutating hook arrays that may contain personal commands.
 
 ## Ingestion flow
 
@@ -103,7 +126,8 @@ The master key is held by Linux Secret Service and is never stored beside the
 database.
 
 Debug commands expose only `DebugEvent`, which omits identifiers and timestamps.
-The ingestion command exposes only aggregate counts.
+The ingestion command exposes only aggregate counts; the native recording
+command emits no success output.
 
 ## Recall boundary
 
@@ -132,7 +156,9 @@ evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 Implemented:
 
 - controlled event schema and conservative outcome classification;
-- Codex `PostToolUse` and transcript normalization;
+- Codex and Claude native-hook normalization with shared conformance fixtures;
+- cursor-free, encrypted, idempotent native-hook recording;
+- Codex transcript normalization;
 - AoE-managed Codex session discovery;
 - encrypted, idempotent event persistence;
 - encrypted path-to-project UUID mapping with keyed lookup tokens;
@@ -141,6 +167,7 @@ Implemented:
 - Linux Secret Service key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
+- non-mutating Claude Code hook config generation;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
 - ephemeral task-query ranking and explicit serialized-output token budgets;

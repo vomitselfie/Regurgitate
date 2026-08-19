@@ -9,6 +9,7 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 pub enum AgentKind {
     Codex,
     Other,
+    Claude,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

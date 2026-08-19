@@ -1,8 +1,9 @@
 use std::{fs::File, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::application::{EventBatch, IngestionCursor, ProjectLocator, SessionEventSource};
+use crate::core::AgentKind;
 
 use super::{aoe, codex_incremental};
 
@@ -31,6 +32,9 @@ impl SessionEventSource for ManagedCodexSource {
         cursor: Option<&IngestionCursor>,
     ) -> Result<EventBatch> {
         let descriptor = aoe::find_session(&self.aoe_config_dir, &self.profile, session_id)?;
+        if descriptor.agent_kind != AgentKind::Codex {
+            bail!("AoE session {session_id:?} is not a Codex session");
+        }
         let transcript_path =
             aoe::find_codex_transcript(&self.codex_home, &descriptor.agent_session_id)?;
         let transcript = File::open(&transcript_path)
@@ -94,5 +98,25 @@ mod tests {
         ] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
+    }
+
+    #[test]
+    fn rejects_non_codex_descriptors_at_the_composition_boundary() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path().join("aoe");
+        let profile_dir = config_dir.join("profiles/default");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(
+            profile_dir.join("sessions.json"),
+            br#"[{"id":"aoe-1","project_path":"/private/project","tool":"claude","agent_session_id":"claude-1"}]"#,
+        )
+        .unwrap();
+
+        let source = ManagedCodexSource::new(config_dir, "default", temp.path().join("codex"));
+        let error = match source.events_for_session("aoe-1", None) {
+            Ok(_) => panic!("Claude session was accepted by the Codex source"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("is not a Codex session"));
     }
 }

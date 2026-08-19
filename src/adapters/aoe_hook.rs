@@ -36,10 +36,10 @@ fn context_from_values(
     Ok(AoeHookContext {
         session_id,
         profile,
-        agent: if tool == "codex" {
-            AgentKind::Codex
-        } else {
-            AgentKind::Other
+        agent: match tool.as_str() {
+            "codex" => AgentKind::Codex,
+            "claude" => AgentKind::Claude,
+            _ => AgentKind::Other,
         },
     })
 }
@@ -85,9 +85,20 @@ mod tests {
         let context = context_from_values(
             Some("session-1".into()),
             Some("default".into()),
-            Some("claude".into()),
+            Some("hermes".into()),
         )
         .unwrap();
         assert_eq!(context.agent, AgentKind::Other);
+    }
+
+    #[test]
+    fn identifies_claude_without_treating_it_as_codex() {
+        let context = context_from_values(
+            Some("session-1".into()),
+            Some("default".into()),
+            Some("claude".into()),
+        )
+        .unwrap();
+        assert_eq!(context.agent, AgentKind::Claude);
     }
 }

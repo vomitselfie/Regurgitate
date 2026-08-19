@@ -1,0 +1,17 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/home/alice/.claude/projects/private/session.jsonl",
+  "cwd": "/home/alice/SECRET_PROJECT",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_use_id": "tool-1",
+  "duration_ms": 31,
+  "tool_input": {
+    "file_path": "/home/alice/SECRET_PROJECT/private.rs",
+    "content": "API_KEY=FIXTURE_SECRET"
+  },
+  "tool_response": {
+    "content": "PASSWORD=hunter2"
+  }
+}

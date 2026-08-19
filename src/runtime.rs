@@ -7,21 +7,29 @@ use anyhow::{Context, Result};
 use zeroize::Zeroizing;
 
 use crate::{
-    adapters::{ManagedCodexSource, aoe, aoe_hook, codex},
-    application::ProjectLocator,
-    application::{IngestionReport, IngestionService, SessionEventSource},
-    cli::{Cli, Command},
+    adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
+    application::{
+        HookObservation, IngestionReport, IngestionService, ProjectLocator, RecordingReport,
+        RecordingService, SessionEventSource,
+    },
+    cli::{Cli, Command, HookAgentArg},
     core::{AgentKind, DebugEvent},
-    packaging::{AOE_CONFIG_SNIPPET, install_aoe_hook, install_skill},
+    packaging::{AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, install_aoe_hook, install_skill},
     query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
 };
 
 pub fn execute(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::DebugHook => {
-            let event = codex::normalize_post_tool_hook(io::stdin().lock())?;
-            print_json(&DebugEvent::from(&event))
+        Command::DebugHook { agent } => {
+            let observation = normalize_hook(agent, io::stdin().lock())?;
+            print_json(&DebugEvent::from(observation.event()))
+        }
+        Command::RecordHook { agent, data_home } => {
+            let observation = normalize_hook(agent, io::stdin().lock())?;
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            record_hook(observation, data_home, &SecretServiceKeyProvider::default())?;
+            Ok(())
         }
         Command::AoeHook => {
             let context = aoe_hook::current_context()?;
@@ -36,6 +44,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
         Command::PrintAoeConfig => {
             println!("{AOE_CONFIG_SNIPPET}");
+            Ok(())
+        }
+        Command::PrintClaudeConfig => {
+            println!("{CLAUDE_CONFIG_SNIPPET}");
             Ok(())
         }
         Command::InstallAoeHook { config, apply } => {
@@ -102,6 +114,13 @@ pub fn execute(cli: Cli) -> Result<()> {
     }
 }
 
+fn normalize_hook(agent: HookAgentArg, reader: impl io::Read) -> Result<HookObservation> {
+    match agent {
+        HookAgentArg::Codex => codex::normalize_post_tool_observation(reader),
+        HookAgentArg::Claude => claude::normalize_tool_hook(reader),
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum AoeHookReport {
@@ -150,6 +169,18 @@ fn ingest_session(
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
     IngestionService::new(source, store).ingest_session(session_id)
+}
+
+fn record_hook(
+    observation: HookObservation,
+    data_home: PathBuf,
+    key_provider: &impl MasterKeyProvider,
+) -> Result<RecordingReport> {
+    let praxis_dir = data_home.join("praxis");
+    prepare_private_directory(&praxis_dir)?;
+    let key = key_provider.get_or_create()?;
+    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    RecordingService::new(store).record(observation)
 }
 
 fn recall_project(
@@ -354,5 +385,61 @@ mod tests {
         ] {
             assert!(!AOE_CONFIG_SNIPPET.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn native_claude_recording_is_encrypted_silent_and_idempotent() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("SECRET_CLAUDE_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "session_id": "SECRET_CLAUDE_SESSION",
+            "transcript_path": "/private/SECRET_TRANSCRIPT",
+            "cwd": project,
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-1",
+            "duration_ms": 11,
+            "tool_input": {"command": "TOKEN=SECRET_TOKEN false"},
+            "error": "PASSWORD=hunter2"
+        }))
+        .unwrap();
+        let data_home = temp.path().join("data");
+
+        let first = record_hook(
+            claude::normalize_tool_hook(payload.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let second = record_hook(
+            claude::normalize_tool_hook(payload.as_slice()).unwrap(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
+        assert_eq!(second.already_present, 1);
+
+        let database = fs::read(data_home.join("praxis/history.db")).unwrap();
+        for forbidden in [
+            b"SECRET_CLAUDE_PROJECT".as_slice(),
+            b"SECRET_CLAUDE_SESSION",
+            b"SECRET_TRANSCRIPT",
+            b"SECRET_TOKEN",
+            b"hunter2",
+        ] {
+            assert!(
+                !database
+                    .windows(forbidden.len())
+                    .any(|window| window == forbidden)
+            );
+        }
+    }
+
+    #[test]
+    fn generated_claude_config_uses_the_silent_native_handler() {
+        assert!(CLAUDE_CONFIG_SNIPPET.contains("praxis record-hook --agent claude"));
+        assert!(CLAUDE_CONFIG_SNIPPET.contains("PostToolUseFailure"));
     }
 }

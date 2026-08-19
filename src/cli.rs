@@ -19,14 +19,32 @@ impl Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Normalize one Codex hook event from stdin without retaining raw fields.
-    DebugHook,
+    /// Normalize one native hook event from stdin without retaining raw fields.
+    DebugHook {
+        /// Hook provider whose JSON is being supplied.
+        #[arg(long, value_enum, default_value = "codex")]
+        agent: HookAgentArg,
+    },
+
+    /// Silently encrypt and record one sanitized native hook event from stdin.
+    RecordHook {
+        /// Hook provider whose JSON is being supplied.
+        #[arg(long, value_enum)]
+        agent: HookAgentArg,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
 
     /// Ingest the Codex session identified by an AoE status-hook environment.
     AoeHook,
 
     /// Print an AoE status-hook configuration snippet for manual installation.
     PrintAoeConfig,
+
+    /// Print a Claude Code hook configuration snippet for manual merging.
+    PrintClaudeConfig,
 
     /// Preview or add Praxis to an explicit global AoE config.
     InstallAoeHook {
@@ -124,6 +142,12 @@ pub(crate) enum Command {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum HookAgentArg {
+    Codex,
+    Claude,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum OperationArg {
     Command,
@@ -162,6 +186,23 @@ impl From<OperationArg> for Operation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_hook_defaults_to_codex_and_record_hook_requires_a_provider() {
+        let debug = Cli::try_parse_from(["praxis", "debug-hook"]).unwrap();
+        let Command::DebugHook { agent } = debug.command else {
+            panic!("expected debug-hook command");
+        };
+        assert_eq!(agent, HookAgentArg::Codex);
+
+        let record = Cli::try_parse_from(["praxis", "record-hook", "--agent", "claude"]).unwrap();
+        let Command::RecordHook { agent, data_home } = record.command else {
+            panic!("expected record-hook command");
+        };
+        assert_eq!(agent, HookAgentArg::Claude);
+        assert!(data_home.is_none());
+        assert!(Cli::try_parse_from(["praxis", "record-hook"]).is_err());
+    }
 
     #[test]
     fn skill_install_is_preview_only_unless_apply_is_explicit() {

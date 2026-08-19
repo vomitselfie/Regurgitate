@@ -73,11 +73,9 @@ pub fn find_session(
 
     let agent_kind = match raw.tool.as_str() {
         "codex" => AgentKind::Codex,
+        "claude" => AgentKind::Claude,
         _ => AgentKind::Other,
     };
-    if agent_kind != AgentKind::Codex {
-        bail!("AoE session {session_id:?} is not a Codex session");
-    }
 
     let agent_session_id = raw
         .agent_session_id
@@ -168,5 +166,21 @@ mod tests {
     fn rejects_profile_traversal() {
         let error = find_session(Path::new("/unused"), "../private", "aoe-1").unwrap_err();
         assert!(error.to_string().contains("invalid profile"));
+    }
+
+    #[test]
+    fn discovers_provider_kind_without_rejecting_non_codex_sessions() {
+        let temp = tempdir().unwrap();
+        let profile_dir = temp.path().join("profiles/default");
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(
+            profile_dir.join("sessions.json"),
+            br#"[{"id":"aoe-1","project_path":"/private/project","tool":"claude","agent_session_id":"claude-1"}]"#,
+        )
+        .unwrap();
+
+        let session = find_session(temp.path(), "default", "aoe-1").unwrap();
+        assert_eq!(session.agent_kind, AgentKind::Claude);
+        assert_eq!(session.agent_session_id, "claude-1");
     }
 }
