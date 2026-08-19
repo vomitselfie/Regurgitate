@@ -11,6 +11,10 @@ module boundaries.
 - encrypted project mappings and append-safe ingestion cursors;
 - manual, interruption-safe session ingestion;
 - project-scoped aggregate recall;
+- fixed-vocabulary learning for meaningful, directly verified practice
+  outcomes;
+- strategy confidence and `prefer`/`avoid` guidance that discounts unknown
+  activity volume;
 - transient task-query ranking with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
@@ -92,6 +96,20 @@ Bounded retention was added on top of the same privacy boundary:
 4. selection uses structural envelope metadata without decrypting event
    payloads; and
 5. output contains no retained or deleted event details.
+
+## Completed actionable-recall slice
+
+Recall now distinguishes activity from evidence:
+
+1. adapters derive patch/write strategies only from controlled tool identity;
+2. `learn` accepts no free text and records only a fixed strategy plus an
+   explicit known outcome after a meaningful verification;
+3. guidance is withheld until two known outcomes exist, then reports bounded
+   confidence and deterministic `prefer`, `avoid`, or `mixed` advice;
+4. unknown counts do not contribute evidence score or outrank a verified
+   strategy merely through volume; and
+5. recall uses only existing read-only key/database paths and leaves missing
+   local state untouched.
 
 ## Next integration slice
 

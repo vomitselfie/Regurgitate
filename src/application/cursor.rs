@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::{AgentKind, Capability, Operation};
+use crate::core::{AgentKind, Capability, Operation, Strategy};
 
 pub const CURRENT_CURSOR_VERSION: u32 = 1;
 
@@ -15,6 +15,8 @@ pub struct PendingEvent {
     pub agent: AgentKind,
     pub capability: Capability,
     pub operation: Operation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<Strategy>,
 }
 
 /// Adapter-neutral checkpoint for an append-oriented session source.
@@ -66,5 +68,19 @@ mod tests {
                 0x78, 0x52, 0xb8, 0x55,
             ]
         );
+    }
+
+    #[test]
+    fn pending_events_without_strategy_remain_compatible() {
+        let pending: PendingEvent = serde_json::from_value(serde_json::json!({
+            "event_id": Uuid::nil(),
+            "timestamp": "2026-08-19T12:00:00Z",
+            "agent": "codex",
+            "capability": "shell",
+            "operation": "command"
+        }))
+        .unwrap();
+
+        assert_eq!(pending.strategy, None);
     }
 }

@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     application::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent},
     core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_tool,
+        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_strategy, classify_tool,
         classify_tool_response,
     },
 };
@@ -91,6 +91,7 @@ pub fn normalize_transcript_since<R: Read + Seek>(
                         agent: AgentKind::Codex,
                         capability,
                         operation,
+                        strategy: classify_strategy(&tool_name),
                     },
                 );
             }
@@ -116,7 +117,7 @@ pub fn normalize_transcript_since<R: Read + Seek>(
                     agent: Some(call.agent),
                     capability: call.capability,
                     operation: call.operation,
-                    strategy: None,
+                    strategy: call.strategy,
                     outcome,
                     duration_ms: None,
                     error_class,

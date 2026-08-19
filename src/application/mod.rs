@@ -2,6 +2,7 @@ mod cursor;
 mod forgetting;
 mod health;
 mod ingestion;
+mod learning;
 mod project;
 mod recording;
 mod retention;
@@ -16,6 +17,7 @@ pub use ingestion::{
     CursorStore, EventBatch, EventSink, IngestionReport, IngestionService, ProjectResolver,
     SessionEventSource,
 };
+pub use learning::{LearningReport, LearningService, LearningStatus};
 pub use project::ProjectLocator;
 pub use recording::{HookObservation, RecordingReport, RecordingService};
 pub use retention::{

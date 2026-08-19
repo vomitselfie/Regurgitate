@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::core::Operation;
+use crate::core::{Operation, Outcome, Strategy};
 
 #[derive(Parser)]
 #[command(name = "praxis", version, about)]
@@ -31,6 +31,25 @@ pub(crate) enum Command {
         /// Hook provider whose JSON is being supplied.
         #[arg(long, value_enum)]
         agent: HookAgentArg,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// Record one verified outcome for a controlled procedural strategy.
+    Learn {
+        /// Local project directory used only for encrypted identity lookup.
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Privacy-safe strategy whose outcome was directly verified.
+        #[arg(long, value_enum)]
+        strategy: StrategyArg,
+
+        /// Known result; unknown outcomes cannot be explicitly learned.
+        #[arg(long, value_enum)]
+        outcome: LearnedOutcomeArg,
 
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]
@@ -223,6 +242,52 @@ pub(crate) enum HookAgentArg {
     Claude,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum LearnedOutcomeArg {
+    Success,
+    Failure,
+}
+
+impl From<LearnedOutcomeArg> for Outcome {
+    fn from(value: LearnedOutcomeArg) -> Self {
+        match value {
+            LearnedOutcomeArg::Success => Self::Success,
+            LearnedOutcomeArg::Failure => Self::Failure,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum StrategyArg {
+    StructuredPatch,
+    DirectTextMutation,
+    IncrementalNativeRegeneration,
+    BulkChange,
+    AtomicWrite,
+    PreviewThenApply,
+    TargetedVerification,
+    FullVerification,
+    NativeHook,
+    TranscriptFallback,
+}
+
+impl From<StrategyArg> for Strategy {
+    fn from(value: StrategyArg) -> Self {
+        match value {
+            StrategyArg::StructuredPatch => Self::StructuredPatch,
+            StrategyArg::DirectTextMutation => Self::DirectTextMutation,
+            StrategyArg::IncrementalNativeRegeneration => Self::IncrementalNativeRegeneration,
+            StrategyArg::BulkChange => Self::BulkChange,
+            StrategyArg::AtomicWrite => Self::AtomicWrite,
+            StrategyArg::PreviewThenApply => Self::PreviewThenApply,
+            StrategyArg::TargetedVerification => Self::TargetedVerification,
+            StrategyArg::FullVerification => Self::FullVerification,
+            StrategyArg::NativeHook => Self::NativeHook,
+            StrategyArg::TranscriptFallback => Self::TranscriptFallback,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum OperationArg {
     Command,
@@ -277,6 +342,60 @@ mod tests {
         assert_eq!(agent, HookAgentArg::Claude);
         assert!(data_home.is_none());
         assert!(Cli::try_parse_from(["praxis", "record-hook"]).is_err());
+    }
+
+    #[test]
+    fn learning_requires_one_controlled_strategy_and_known_outcome() {
+        let cli = Cli::try_parse_from([
+            "praxis",
+            "learn",
+            "--project",
+            "/private/project",
+            "--strategy",
+            "atomic-write",
+            "--outcome",
+            "success",
+        ])
+        .unwrap();
+        let Command::Learn {
+            project,
+            strategy,
+            outcome,
+            data_home,
+        } = cli.command
+        else {
+            panic!("expected learn command");
+        };
+        assert_eq!(project, PathBuf::from("/private/project"));
+        assert_eq!(strategy, StrategyArg::AtomicWrite);
+        assert_eq!(outcome, LearnedOutcomeArg::Success);
+        assert!(data_home.is_none());
+        assert!(
+            Cli::try_parse_from([
+                "praxis",
+                "learn",
+                "--project",
+                "/private/project",
+                "--strategy",
+                "arbitrary-private-label",
+                "--outcome",
+                "success",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "praxis",
+                "learn",
+                "--project",
+                "/private/project",
+                "--strategy",
+                "other",
+                "--outcome",
+                "success",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

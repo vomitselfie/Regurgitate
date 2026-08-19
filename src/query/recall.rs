@@ -46,10 +46,44 @@ impl Default for RecallOptions {
     }
 }
 
+impl RecallOptions {
+    pub fn validate(&self) -> Result<()> {
+        if self.limit == 0 || self.limit > MAX_RECALL_LIMIT {
+            bail!("recall limit must be between 1 and {MAX_RECALL_LIMIT}");
+        }
+        if self.token_budget < MIN_TOKEN_BUDGET || self.token_budget > MAX_TOKEN_BUDGET {
+            bail!("recall token budget must be between {MIN_TOKEN_BUDGET} and {MAX_TOKEN_BUDGET}");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RecallResult {
     pub observations: Vec<RecallObservation>,
     pub approximate_tokens: usize,
+}
+
+impl RecallResult {
+    pub fn empty() -> Self {
+        budgeted_result(Vec::new(), DEFAULT_TOKEN_BUDGET)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceConfidence {
+    Weak,
+    Moderate,
+    Strong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PracticeGuidance {
+    Prefer,
+    Avoid,
+    Mixed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,6 +96,12 @@ pub struct RecallObservation {
     pub successes: usize,
     pub failures: usize,
     pub unknown: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_rate_percent: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<EvidenceConfidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<PracticeGuidance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub common_error: Option<ErrorClass>,
 }
@@ -84,12 +124,7 @@ where
         options: RecallOptions,
         task_query: Option<&str>,
     ) -> Result<RecallResult> {
-        if options.limit == 0 || options.limit > MAX_RECALL_LIMIT {
-            bail!("recall limit must be between 1 and {MAX_RECALL_LIMIT}");
-        }
-        if options.token_budget < MIN_TOKEN_BUDGET || options.token_budget > MAX_TOKEN_BUDGET {
-            bail!("recall token budget must be between {MIN_TOKEN_BUDGET} and {MAX_TOKEN_BUDGET}");
-        }
+        options.validate()?;
         let Some(project_id) = self.history.find_project(locator)? else {
             return Ok(budgeted_result(Vec::new(), options.token_budget));
         };
@@ -167,12 +202,16 @@ fn aggregate(
                 .into_iter()
                 .max_by_key(|(error, count)| (*count, std::cmp::Reverse(*error)))
                 .map(|(error, _)| error);
-            let score = group.successes.saturating_mul(4)
-                + group.failures.saturating_mul(3)
-                + group.unknown;
+            let score = group.successes.saturating_mul(4) + group.failures.saturating_mul(3);
             let relevance = intent.relevance(key.capability, key.operation);
+            let known_outcomes = group.successes + group.failures;
+            let confidence = evidence_confidence(known_outcomes);
+            let guidance = practice_guidance(group.successes, group.failures);
             (
                 relevance,
+                guidance_priority(guidance),
+                usize::from(key.strategy.is_some()),
+                confidence_priority(confidence),
                 score,
                 group.latest,
                 key,
@@ -184,6 +223,11 @@ fn aggregate(
                     successes: group.successes,
                     failures: group.failures,
                     unknown: group.unknown,
+                    success_rate_percent: (known_outcomes >= 2).then(|| {
+                        (group.successes.saturating_mul(100) + known_outcomes / 2) / known_outcomes
+                    }),
+                    confidence,
+                    guidance,
                     common_error,
                 },
             )
@@ -195,15 +239,57 @@ fn aggregate(
             .cmp(&left.0)
             .then_with(|| right.1.cmp(&left.1))
             .then_with(|| right.2.cmp(&left.2))
-            .then_with(|| left.3.capability.cmp(&right.3.capability))
-            .then_with(|| left.3.operation.cmp(&right.3.operation))
-            .then_with(|| left.3.strategy.cmp(&right.3.strategy))
+            .then_with(|| right.3.cmp(&left.3))
+            .then_with(|| right.4.cmp(&left.4))
+            .then_with(|| right.5.cmp(&left.5))
+            .then_with(|| left.6.capability.cmp(&right.6.capability))
+            .then_with(|| left.6.operation.cmp(&right.6.operation))
+            .then_with(|| left.6.strategy.cmp(&right.6.strategy))
     });
     ranked
         .into_iter()
         .take(options.limit)
-        .map(|(_, _, _, _, observation)| observation)
+        .map(|(_, _, _, _, _, _, _, observation)| observation)
         .collect()
+}
+
+fn evidence_confidence(known_outcomes: usize) -> Option<EvidenceConfidence> {
+    match known_outcomes {
+        0..=1 => None,
+        2 => Some(EvidenceConfidence::Weak),
+        3..=7 => Some(EvidenceConfidence::Moderate),
+        _ => Some(EvidenceConfidence::Strong),
+    }
+}
+
+fn practice_guidance(successes: usize, failures: usize) -> Option<PracticeGuidance> {
+    let known_outcomes = successes + failures;
+    if known_outcomes < 2 {
+        None
+    } else if successes.saturating_mul(4) >= known_outcomes.saturating_mul(3) {
+        Some(PracticeGuidance::Prefer)
+    } else if failures.saturating_mul(4) >= known_outcomes.saturating_mul(3) {
+        Some(PracticeGuidance::Avoid)
+    } else {
+        Some(PracticeGuidance::Mixed)
+    }
+}
+
+fn guidance_priority(guidance: Option<PracticeGuidance>) -> usize {
+    match guidance {
+        Some(PracticeGuidance::Prefer | PracticeGuidance::Avoid) => 2,
+        Some(PracticeGuidance::Mixed) => 1,
+        None => 0,
+    }
+}
+
+fn confidence_priority(confidence: Option<EvidenceConfidence>) -> usize {
+    match confidence {
+        None => 0,
+        Some(EvidenceConfidence::Weak) => 1,
+        Some(EvidenceConfidence::Moderate) => 2,
+        Some(EvidenceConfidence::Strong) => 3,
+    }
 }
 
 fn budgeted_result(mut observations: Vec<RecallObservation>, token_budget: usize) -> RecallResult {
@@ -316,6 +402,15 @@ mod tests {
         assert_eq!(result.observations[0].attempts, 2);
         assert_eq!(result.observations[0].successes, 1);
         assert_eq!(result.observations[0].failures, 1);
+        assert_eq!(result.observations[0].success_rate_percent, Some(50));
+        assert_eq!(
+            result.observations[0].confidence,
+            Some(EvidenceConfidence::Weak)
+        );
+        assert_eq!(
+            result.observations[0].guidance,
+            Some(PracticeGuidance::Mixed)
+        );
         let encoded = serde_json::to_string(&result).unwrap();
         for forbidden in [
             "PRIVATE_SESSION",
@@ -324,6 +419,61 @@ mod tests {
         ] {
             assert!(!encoded.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn verified_strategy_outranks_high_volume_unknown_activity() {
+        let mut events = Vec::new();
+        for id in 1..=20 {
+            let mut unknown = event(id, Operation::Command, Outcome::Unknown);
+            unknown.strategy = None;
+            events.push(unknown);
+        }
+        for id in 21..=22 {
+            let mut verified = event(id, Operation::Command, Outcome::Success);
+            verified.strategy = Some(Strategy::TargetedVerification);
+            events.push(verified);
+        }
+        let history = MemoryHistory {
+            project_id: Some(Uuid::from_u128(7)),
+            events,
+            requested_limit: Cell::new(0),
+        };
+
+        let result = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions::default(),
+                Some("test verification"),
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.observations[0].strategy,
+            Some(Strategy::TargetedVerification)
+        );
+        assert_eq!(result.observations[0].success_rate_percent, Some(100));
+        assert_eq!(
+            result.observations[0].confidence,
+            Some(EvidenceConfidence::Weak)
+        );
+        assert_eq!(
+            result.observations[0].guidance,
+            Some(PracticeGuidance::Prefer)
+        );
+        assert_eq!(result.observations[1].guidance, None);
+        assert_eq!(result.observations[1].confidence, None);
+    }
+
+    #[test]
+    fn guidance_requires_repetition_and_uses_known_outcomes_only() {
+        assert_eq!(practice_guidance(1, 0), None);
+        assert_eq!(practice_guidance(2, 0), Some(PracticeGuidance::Prefer));
+        assert_eq!(practice_guidance(0, 2), Some(PracticeGuidance::Avoid));
+        assert_eq!(practice_guidance(2, 2), Some(PracticeGuidance::Mixed));
+        assert_eq!(evidence_confidence(0), None);
+        assert_eq!(evidence_confidence(3), Some(EvidenceConfidence::Moderate));
+        assert_eq!(evidence_confidence(8), Some(EvidenceConfidence::Strong));
     }
 
     #[test]

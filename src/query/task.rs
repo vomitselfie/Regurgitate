@@ -26,6 +26,11 @@ impl TaskIntent {
                     intent.capabilities.insert(Capability::Build);
                     intent.operations.insert(Operation::Command);
                 }
+                "release" | "package" | "packaging" => {
+                    intent.capabilities.insert(Capability::Build);
+                    intent.capabilities.insert(Capability::PackageManager);
+                    intent.operations.insert(Operation::Command);
+                }
                 "lint" | "clippy" => {
                     intent.capabilities.insert(Capability::Lint);
                     intent.operations.insert(Operation::Command);
@@ -43,6 +48,10 @@ impl TaskIntent {
                 "read" | "inspect" | "review" => {
                     intent.capabilities.insert(Capability::Filesystem);
                     intent.operations.insert(Operation::ReadFile);
+                }
+                "write" | "writing" | "atomic" | "config" | "configuration" => {
+                    intent.capabilities.insert(Capability::Filesystem);
+                    intent.operations.insert(Operation::WriteFile);
                 }
                 "search" | "find" | "grep" | "lookup" | "rg" => {
                     intent.capabilities.insert(Capability::Search);
@@ -72,6 +81,20 @@ impl TaskIntent {
                 "plan" | "planning" => {
                     intent.operations.insert(Operation::UpdatePlan);
                 }
+                "verify" | "verified" | "verification" => {
+                    intent.capabilities.insert(Capability::Verify);
+                    intent.capabilities.insert(Capability::Test);
+                    intent.operations.insert(Operation::Command);
+                }
+                "hook" | "hooks" | "integration" | "native" | "transcript" => {
+                    intent.capabilities.insert(Capability::Other);
+                    intent.operations.insert(Operation::ToolCall);
+                }
+                "preview" | "apply" | "install" | "installation" => {
+                    intent.capabilities.insert(Capability::Verify);
+                    intent.capabilities.insert(Capability::PackageManager);
+                    intent.operations.insert(Operation::ToolCall);
+                }
                 _ => {}
             }
         }
@@ -95,6 +118,20 @@ mod tests {
         assert!(intent.capabilities.contains(&Capability::Patch));
         assert!(intent.operations.contains(&Operation::Command));
         assert!(intent.operations.contains(&Operation::ApplyPatch));
+    }
+
+    #[test]
+    fn recognizes_controlled_practice_categories() {
+        let intent = TaskIntent::classify(
+            "atomic config write, targeted verification, native hook integration release",
+        );
+        assert!(intent.capabilities.contains(&Capability::Filesystem));
+        assert!(intent.capabilities.contains(&Capability::Test));
+        assert!(intent.capabilities.contains(&Capability::Other));
+        assert!(intent.capabilities.contains(&Capability::Build));
+        assert!(intent.operations.contains(&Operation::WriteFile));
+        assert!(intent.operations.contains(&Operation::ToolCall));
+        assert!(intent.operations.contains(&Operation::Command));
     }
 
     #[test]

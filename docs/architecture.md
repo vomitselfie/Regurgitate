@@ -28,6 +28,8 @@ deserializes only an allowlist of structural fields and returns the same
 unknown fields are omitted. Codex transiently classifies explicit response
 metadata into a controlled outcome; Claude does not deserialize its response or
 failure text at all. No raw provider value crosses the adapter boundary.
+Both adapters derive `structured_patch` or `direct_text_mutation` only from an
+unambiguous controlled tool name; no arguments or content are consulted.
 
 The recording application service resolves the locator through encrypted
 project identity storage, adds the resulting UUID to the event, and appends it
@@ -48,6 +50,22 @@ adapter therefore derives outcome from the event name and does not inspect raw
 response or failure content. The `record-hook` runtime path is silent on
 success. `print-claude-config` emits a fragment for manual merging instead of
 mutating hook arrays that may contain personal commands.
+
+## Explicit learning flow
+
+Some provider contracts cannot reliably distinguish semantic success from
+failure. `praxis learn` fills that gap without opening a free-text memory path.
+It accepts only a project locator, one fixed strategy enum, and an explicit
+`success` or `failure`. Each learnable strategy maps to one canonical
+capability/operation pair in the core model; arbitrary labels and `unknown`
+outcomes are rejected by the CLI/application boundary.
+
+The learning application service creates a controlled event with no session or
+agent identity, then reuses the same encrypted project resolver and recording
+port as native hooks. The agent-facing skill permits this only after a
+meaningful result is directly established by validation or user confirmation,
+and at most once per milestone. Tool-by-tool activity and ambiguous outcomes
+are deliberately not learned.
 
 ## Ingestion flow
 
@@ -70,8 +88,9 @@ Manual ingestion currently follows this path:
 10. Return aggregate observed/inserted/already-present/reset counts only.
 
 An incomplete final JSONL record remains uncommitted. A pending call is stored
-in the cursor only as its deterministic UUID, timestamp, agent, capability, and
-operation. A changed or truncated committed prefix causes a safe reset and
+in the cursor only as its deterministic UUID, timestamp, agent, capability,
+operation, and optional controlled strategy. A changed or truncated committed
+prefix causes a safe reset and
 reparse. If event persistence fails, the cursor does not advance; retrying is
 safe because already committed event UUIDs are ignored.
 
@@ -141,17 +160,23 @@ command emits no success output.
 
 ## Recall boundary
 
-The initial recall service resolves a local path to an existing encrypted
-project mapping without creating one. Events carry a separate key-derived
-project token in SQLite so the storage adapter can select a project without
-putting its UUID or path in plaintext. The decrypted project UUID is verified
-before an event enters aggregation.
+The recall runtime opens only an existing database and existing key, both
+through read-only paths. Missing history returns an empty bounded result without
+creating a directory, key, database, schema, or project mapping. Events carry a
+separate key-derived project token in SQLite so the storage adapter can select
+a project without putting its UUID or path in plaintext. The decrypted project
+UUID is verified before an event enters aggregation.
 
 Recall groups events by controlled capability, operation, and strategy. Its
 output contains attempt/success/failure/unknown counts and, when present, the
-most common controlled error class. It has no event-level output mode and
-rejects limits above 20 before querying storage. Identifiers and timestamps are
-used internally for scoping and recency ranking but are absent from the result.
+most common controlled error class. Two or more known outcomes add a rounded
+success percentage, sample-count confidence, and deterministic `prefer`,
+`avoid`, or `mixed` guidance. One-off and all-unknown groups omit those fields.
+Ranking considers task relevance and verified guidance before raw sample count,
+so high-volume unknown activity cannot bury a smaller actionable strategy. It
+has no event-level output mode and rejects limits above 20 before querying
+storage. Identifiers and timestamps are used internally for scoping and recency
+ranking but are absent from the result.
 
 Optional task text is ephemeral input to a small deterministic classifier. The
 classifier keeps only controlled capability and operation hints, then drops the
@@ -231,6 +256,8 @@ Implemented:
 - controlled event schema and conservative outcome classification;
 - Codex and Claude native-hook normalization with shared conformance fixtures;
 - cursor-free, encrypted, idempotent native-hook recording;
+- fixed-vocabulary explicit learning for directly verified practice outcomes;
+- content-free strategy derivation for unambiguous patch/write tool identities;
 - Codex transcript normalization;
 - AoE-managed Codex session discovery;
 - encrypted, idempotent event persistence;
@@ -249,6 +276,7 @@ Implemented:
 - preview-first age/count retention with bounded deletion transactions;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
+- confidence/guidance scoring that excludes unknown events from evidence;
 - ephemeral task-query ranking and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
 - a preview-first, no-overwrite skill package installer;

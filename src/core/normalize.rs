@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::{Capability, ErrorClass, Operation, Outcome};
+use super::{Capability, ErrorClass, Operation, Outcome, Strategy};
 
 pub fn classify_tool(tool_name: &str) -> (Capability, Operation) {
     match tool_name {
@@ -21,6 +21,16 @@ pub fn classify_tool(tool_name: &str) -> (Capability, Operation) {
         "wait" | "wait_agent" => (Capability::Wait, Operation::Wait),
         name if name.starts_with("mcp__") => (Capability::Other, Operation::ToolCall),
         _ => (Capability::Other, Operation::ToolCall),
+    }
+}
+
+/// Derive a controlled strategy only when the provider's tool identity is
+/// sufficient. Never inspect arguments, commands, paths, or output text.
+pub fn classify_strategy(tool_name: &str) -> Option<Strategy> {
+    match tool_name {
+        "apply_patch" => Some(Strategy::StructuredPatch),
+        "Edit" | "Write" | "NotebookEdit" | "write_file" => Some(Strategy::DirectTextMutation),
+        _ => None,
     }
 }
 
@@ -205,6 +215,20 @@ mod tests {
             classify_tool("WebFetch"),
             (Capability::Network, Operation::WebRequest)
         );
+    }
+
+    #[test]
+    fn derives_strategy_only_from_unambiguous_tool_identity() {
+        assert_eq!(
+            classify_strategy("apply_patch"),
+            Some(Strategy::StructuredPatch)
+        );
+        assert_eq!(
+            classify_strategy("Write"),
+            Some(Strategy::DirectTextMutation)
+        );
+        assert_eq!(classify_strategy("Bash"), None);
+        assert_eq!(classify_strategy("mcp__private__tool"), None);
     }
 
     #[test]

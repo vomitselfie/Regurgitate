@@ -20,8 +20,10 @@ implementation provides:
 - encrypted project identity mappings and incremental ingestion cursors;
 - separate modular services for cursor-based transcript ingestion and
   cursor-free native hook recording;
+- privacy-safe strategy derivation plus explicit recording of verified
+  controlled practices when a provider cannot report outcomes;
 - project-scoped, task-ranked aggregate recall with hard count and token
-  budgets;
+  budgets, confidence, and bounded `prefer`/`avoid` guidance;
 - non-mutating key-store and history-database health reporting;
 - preview-first, project-scoped encrypted history forgetting;
 - preview-first global age/count retention in bounded transactions;
@@ -61,6 +63,9 @@ the separate source tree is not required at runtime.
 
 Praxis currently requires Linux Secret Service to be available and unlocked.
 It never falls back to a plaintext key or plaintext history database.
+Sandboxed agent hosts may require explicit approval for the Praxis process to
+reach Secret Service and the encrypted data directory. If access is denied,
+recall fails closed; do not weaken sandbox or key-storage policy automatically.
 
 ```bash
 cargo test
@@ -70,6 +75,7 @@ cargo run -- record-hook --agent codex < tests/fixtures/codex/post-tool-use-succ
 cargo run -- record-hook --agent claude < tests/fixtures/claude/post-tool-use-success.json
 cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
+cargo run -- learn --project "$PWD" --strategy targeted-verification --outcome success
 cargo run -- recall --project "$PWD"
 cargo run -- recall --project "$PWD" --query "fix failing tests" --token-budget 600
 cargo run -- status
@@ -99,6 +105,14 @@ only aggregate counts. Both recording paths store encrypted events under
 `$XDG_DATA_HOME/praxis/history.db` (or `~/.local/share/praxis/history.db`).
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
+
+`learn` records one directly verified procedural outcome when a provider hook
+cannot establish it. Both strategy and outcome come from fixed CLI enums; no
+note, command, path, error text, or arbitrary label enters the event. Use it
+once after a meaningful validated milestone, not after every tool call, and
+skip it when the outcome or strategy is ambiguous. Run `praxis learn --help`
+for the controlled strategy vocabulary. Explicit learning requires `success`
+or `failure`; it cannot manufacture an `unknown` observation.
 
 `status` is read-only. It reports `ready`, `not_configured`, or `degraded` for
 the overall installation and controlled readiness values for the key store and
@@ -131,10 +145,15 @@ Project mappings, forgetting tombstones, and ingestion cursors are retained.
 
 `recall` returns at most 20 fixed-schema aggregate observations and defaults to
 an approximate 600-token serialized-output budget. It supports a controlled
-`--operation` filter, `--failures`, and ephemeral task-query ranking. It never
-returns event, session, or project identifiers, timestamps, paths, query text,
-or historical content. Query text is not persisted by Praxis, though text
-provided on a command line may still be retained by the user's shell history.
+`--operation` filter, `--failures`, and ephemeral task-query ranking. Repeated
+known outcomes add a success rate, evidence confidence, and `prefer`, `avoid`,
+or `mixed` guidance; those fields are omitted until at least two known outcomes
+exist. Unknown activity volume does not outrank verified strategy evidence.
+Recall opens only existing history and keys read-only and does not create or
+chmod local state. It never returns event, session, or project identifiers,
+timestamps, paths, query text, or historical content. Query text is not
+persisted by Praxis, though text provided on a command line may still be
+retained by the user's shell history.
 
 For automatic Codex recording, install `praxis` somewhere available in the
 Codex process's `PATH`, then preview and apply the native hook to the explicit
@@ -187,11 +206,12 @@ deliveries are safe.
 
 The tracked [`praxis-recall`](skills/praxis-recall/SKILL.md) skill tells a fresh
 agent to wait until the task is known, request one bounded task-specific
-aggregate, and validate any remembered pattern against current state. Its
-workflow is provider-neutral and calls only `praxis recall`. The optional
-`agents/openai.yaml` file contains Codex discovery metadata; other agent hosts
-can ignore it and register the same `SKILL.md` through their own skill-loading
-mechanism.
+aggregate, validate any remembered pattern against current state, and record at
+most one controlled outcome after a meaningful verified approach. Its workflow
+is provider-neutral and uses only `praxis recall` and `praxis learn`. The
+optional `agents/openai.yaml` file contains Codex discovery metadata; other
+agent hosts can ignore it and register the same `SKILL.md` through their own
+skill-loading mechanism.
 
 Pass the selected agent host's skills directory to `install-skill`. The command
 previews its destination and two packaged files by default without touching the

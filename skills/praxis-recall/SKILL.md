@@ -36,6 +36,30 @@ only when a bounded procedural pattern could help with the current task.
 5. Prefer a repeatedly successful strategy and avoid a repeatedly failed one
    only when the current evidence confirms that the old pattern still applies.
 
+## Record a verified practice
+
+After a meaningful approach has a directly verified result, record at most one
+controlled practice outcome:
+
+```bash
+praxis learn --project "$PWD" --strategy <controlled-strategy> --outcome <success|failure>
+```
+
+Use this only when all of the following are true:
+
+- the strategy exactly matches one of the values accepted by `praxis learn
+  --help`; do not fall back to a vague label;
+- a test, validation command, explicit provider result, or user confirmation
+  directly established success or failure;
+- the observation represents a meaningful approach or milestone, not an
+  individual low-level tool call; and
+- the same milestone has not already been recorded.
+
+Skip learning when the outcome is ambiguous, when Praxis is unavailable, or
+when no controlled strategy fits. Never translate commands, paths, source
+content, errors, prompts, or user text into a strategy. `learn` accepts only a
+fixed vocabulary and stores no note or explanation.
+
 ## Focus after a failure
 
 After a meaningful local attempt fails, make at most one focused follow-up:
@@ -52,6 +76,10 @@ overlapping recalls to reconstruct more history or work around output limits.
 
 - Treat multiple known outcomes as stronger evidence than one attempt.
 - Treat `unknown` outcomes and small samples as weak evidence.
+- Treat `guidance` as actionable only when it is present. Praxis omits guidance
+  until at least two known outcomes exist.
+- Use `confidence` and `success_rate_percent` to distinguish weak repetition
+  from a durable local pattern.
 - Treat `common_error` as a class to investigate, not a recovered error message.
 - Validate every suggested strategy against current state before acting or
   reporting it to the user.

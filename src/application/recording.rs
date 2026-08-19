@@ -5,8 +5,9 @@ use crate::core::HistoryEvent;
 
 use super::{EventSink, ProjectLocator, ProjectResolver};
 
-/// The complete value an agent hook may pass into application code. The event
-/// is controlled and serializable; the project locator is intentionally not.
+/// The complete value a native hook or fixed-vocabulary learning service may
+/// pass into recording. The event is controlled and serializable; the project
+/// locator is intentionally not.
 pub struct HookObservation {
     event: HistoryEvent,
     project: ProjectLocator,

@@ -78,7 +78,35 @@ pub enum Strategy {
     IncrementalNativeRegeneration,
     BulkChange,
     NativeTool,
+    AtomicWrite,
+    PreviewThenApply,
+    TargetedVerification,
+    FullVerification,
+    NativeHook,
+    TranscriptFallback,
     Other,
+}
+
+impl Strategy {
+    /// Canonical controlled classification for an explicitly learned practice.
+    /// This keeps the CLI from accepting arbitrary or semantically unrelated
+    /// capability/operation combinations.
+    pub fn practice_classification(self) -> (Capability, Operation) {
+        match self {
+            Self::StructuredPatch
+            | Self::DirectTextMutation
+            | Self::IncrementalNativeRegeneration
+            | Self::BulkChange => (Capability::Patch, Operation::ApplyPatch),
+            Self::AtomicWrite => (Capability::Filesystem, Operation::WriteFile),
+            Self::PreviewThenApply => (Capability::Verify, Operation::ToolCall),
+            Self::TargetedVerification | Self::FullVerification => {
+                (Capability::Test, Operation::Command)
+            }
+            Self::NativeHook | Self::TranscriptFallback | Self::NativeTool | Self::Other => {
+                (Capability::Other, Operation::ToolCall)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

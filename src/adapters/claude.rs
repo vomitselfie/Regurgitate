@@ -7,7 +7,10 @@ use uuid::Uuid;
 
 use crate::{
     application::{HookObservation, ProjectLocator},
-    core::{AgentKind, CURRENT_SCHEMA_VERSION, ErrorClass, HistoryEvent, Outcome, classify_tool},
+    core::{
+        AgentKind, CURRENT_SCHEMA_VERSION, ErrorClass, HistoryEvent, Outcome, classify_strategy,
+        classify_tool,
+    },
 };
 
 /// The complete allowlist read from Claude Code tool hooks. In particular,
@@ -43,7 +46,7 @@ pub fn normalize_tool_hook<R: Read>(reader: R) -> Result<HookObservation> {
         agent: Some(AgentKind::Claude),
         capability,
         operation,
-        strategy: None,
+        strategy: classify_strategy(&input.tool_name),
         outcome,
         duration_ms: input.duration_ms,
         error_class,
@@ -61,7 +64,7 @@ fn stable_event_id(session_id: &str, tool_use_id: &str) -> Uuid {
 mod tests {
     use std::path::Path;
 
-    use crate::core::{Capability, Operation};
+    use crate::core::{Capability, Operation, Strategy};
 
     use super::*;
 
@@ -86,6 +89,7 @@ mod tests {
         assert_eq!(first.event().agent, Some(AgentKind::Claude));
         assert_eq!(first.event().capability, Capability::Patch);
         assert_eq!(first.event().operation, Operation::ApplyPatch);
+        assert_eq!(first.event().strategy, Some(Strategy::DirectTextMutation));
         assert_eq!(first.event().outcome, Outcome::Success);
         assert_eq!(first.event().duration_ms, Some(17));
         assert_eq!(

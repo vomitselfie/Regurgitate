@@ -10,12 +10,13 @@ use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
         ForgetReport, ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation,
-        HookProvider, HookReadiness, IngestionReport, IngestionService, ProjectLocator,
-        RecordingReport, RecordingService, RetentionPolicy, RetentionReport, RetentionService,
-        RetentionStatus, SessionEventSource, ValidatedRetentionPolicy,
+        HookProvider, HookReadiness, IngestionReport, IngestionService, LearningReport,
+        LearningService, ProjectLocator, RecordingReport, RecordingService, RetentionPolicy,
+        RetentionReport, RetentionService, RetentionStatus, SessionEventSource,
+        ValidatedRetentionPolicy,
     },
     cli::{Cli, Command, HookAgentArg},
-    core::{AgentKind, DebugEvent},
+    core::{AgentKind, DebugEvent, Outcome, Strategy},
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
         inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_codex_hook,
@@ -39,6 +40,22 @@ pub fn execute(cli: Cli) -> Result<()> {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
             record_hook(observation, data_home, &SecretServiceKeyProvider::default())?;
             Ok(())
+        }
+        Command::Learn {
+            project,
+            strategy,
+            outcome,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = learn_practice(
+                project,
+                strategy.into(),
+                outcome.into(),
+                data_home,
+                &SecretServiceKeyProvider::default(),
+            )?;
+            print_json(&report)
         }
         Command::AoeHook => {
             let context = aoe_hook::current_context()?;
@@ -251,6 +268,20 @@ fn record_hook(
     RecordingService::new(store).record(observation)
 }
 
+fn learn_practice(
+    project: PathBuf,
+    strategy: Strategy,
+    outcome: Outcome,
+    data_home: PathBuf,
+    key_provider: &impl MasterKeyProvider,
+) -> Result<LearningReport> {
+    let praxis_dir = data_home.join("praxis");
+    prepare_private_directory(&praxis_dir)?;
+    let key = key_provider.get_or_create()?;
+    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    LearningService::new(store).learn(ProjectLocator::new(project), strategy, outcome)
+}
+
 fn health_status(
     data_home: PathBuf,
     key_probe: impl crate::application::KeyReadinessProbe,
@@ -329,12 +360,12 @@ fn recall_project(
     options: RecallOptions,
     task_query: Option<&str>,
     data_home: PathBuf,
-    key_provider: &impl MasterKeyProvider,
+    key_provider: &impl ExistingMasterKeyProvider,
 ) -> Result<RecallResult> {
-    let praxis_dir = data_home.join("praxis");
-    prepare_private_directory(&praxis_dir)?;
-    let key = key_provider.get_or_create()?;
-    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    options.validate()?;
+    let Some(store) = open_existing_history(&data_home, false, key_provider)? else {
+        return Ok(RecallResult::empty());
+    };
     RecallService::new(&store).recall(&ProjectLocator::new(project), options, task_query)
 }
 
@@ -646,6 +677,72 @@ mod tests {
                     .any(|window| window == forbidden)
             );
         }
+    }
+
+    #[test]
+    fn learned_practice_is_encrypted_ranked_and_read_only_on_recall() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("SECRET_LEARNING_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+
+        for _ in 0..2 {
+            let report = learn_practice(
+                project.clone(),
+                Strategy::AtomicWrite,
+                Outcome::Success,
+                data_home.clone(),
+                &FixedKeyProvider,
+            )
+            .unwrap();
+            assert_eq!(report.status, crate::application::LearningStatus::Recorded);
+        }
+
+        let database_path = data_home.join("praxis/history.db");
+        let before_recall = fs::read(&database_path).unwrap();
+        let result = recall_project(
+            project,
+            RecallOptions::default(),
+            Some("atomic config write"),
+            data_home,
+            &FixedKeyProvider,
+        )
+        .unwrap();
+
+        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.observations[0].strategy, Some(Strategy::AtomicWrite));
+        assert_eq!(result.observations[0].success_rate_percent, Some(100));
+        assert_eq!(
+            result.observations[0].guidance,
+            Some(crate::query::PracticeGuidance::Prefer)
+        );
+        assert_eq!(fs::read(&database_path).unwrap(), before_recall);
+        let encoded = serde_json::to_string(&result).unwrap();
+        assert!(!encoded.contains("SECRET_LEARNING_PROJECT"));
+        let database = fs::read(database_path).unwrap();
+        assert!(
+            !database
+                .windows(b"SECRET_LEARNING_PROJECT".len())
+                .any(|window| window == b"SECRET_LEARNING_PROJECT")
+        );
+    }
+
+    #[test]
+    fn recall_missing_history_does_not_initialize_state() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+
+        let result = recall_project(
+            temp.path().to_path_buf(),
+            RecallOptions::default(),
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+
+        assert!(result.observations.is_empty());
+        assert!(!data_home.exists());
     }
 
     #[test]

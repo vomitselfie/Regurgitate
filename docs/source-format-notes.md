@@ -89,6 +89,14 @@ assumptions were checked against the current official
 [Codex hooks reference](https://learn.chatgpt.com/docs/hooks) on the
 reconnaissance date above.
 
+Tool identity is the only provider field used for automatic strategy tagging:
+`apply_patch` maps to `structured_patch`, while explicit edit/write tools map to
+`direct_text_mutation`. Shell commands and unknown/MCP tool names receive no
+strategy because deriving one would require inspecting private arguments or
+content. Strategies such as `atomic_write`, `preview_then_apply`, and
+verification scope enter history only through the fixed-vocabulary `learn`
+command after a directly established result.
+
 ## Claude Code
 
 Claude Code command hooks receive JSON on stdin. The documented common input

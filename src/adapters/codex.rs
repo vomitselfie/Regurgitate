@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     application::{HookObservation, ProjectLocator},
     core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_tool,
+        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_strategy, classify_tool,
         classify_tool_response,
     },
 };
@@ -71,7 +71,7 @@ fn normalize_hook_input(input: CodexHookInput) -> Result<(HistoryEvent, Option<P
         agent: Some(AgentKind::Codex),
         capability,
         operation,
-        strategy: None,
+        strategy: classify_strategy(&tool_name),
         outcome,
         duration_ms: input.duration_ms,
         error_class,
@@ -194,7 +194,7 @@ fn history_event(
         agent: Some(AgentKind::Codex),
         capability,
         operation,
-        strategy: None,
+        strategy: classify_strategy(tool_name),
         outcome,
         duration_ms: None,
         error_class,
@@ -212,7 +212,7 @@ pub(super) fn stable_event_id(session_id: &str, source_event_id: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{Capability, ErrorClass, Operation};
+    use crate::core::{Capability, ErrorClass, Operation, Strategy};
 
     use super::*;
 
@@ -232,6 +232,7 @@ mod tests {
         let event = normalize_post_tool_hook(&fixture[..]).unwrap();
         assert_eq!(event.capability, Capability::Shell);
         assert_eq!(event.operation, Operation::Command);
+        assert_eq!(event.strategy, None);
         assert_eq!(event.outcome, Outcome::Failure);
         assert_eq!(event.error_class, Some(ErrorClass::NonzeroExit));
 
@@ -245,6 +246,27 @@ mod tests {
         ] {
             assert!(!encoded.contains(forbidden), "leaked {forbidden:?}");
         }
+    }
+
+    #[test]
+    fn derives_structured_patch_strategy_without_reading_patch_content() {
+        let fixture = br#"{
+            "session_id": "session-1",
+            "cwd": "/private/project",
+            "hook_event_name": "PostToolUse",
+            "tool_name": "apply_patch",
+            "tool_use_id": "call-1",
+            "tool_input": {"command": "SECRET_PATCH_CONTENT"},
+            "tool_response": {"success": true}
+        }"#;
+
+        let event = normalize_post_tool_observation(&fixture[..]).unwrap();
+        assert_eq!(event.event().strategy, Some(Strategy::StructuredPatch));
+        assert!(
+            !serde_json::to_string(event.event())
+                .unwrap()
+                .contains("SECRET_PATCH_CONTENT")
+        );
     }
 
     #[test]
