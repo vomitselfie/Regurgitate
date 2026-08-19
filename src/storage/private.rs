@@ -21,6 +21,7 @@ const NONCE_BYTES: usize = 24;
 pub(super) enum PrivateRecordKind {
     Project = 1,
     Cursor = 2,
+    EventProject = 3,
 }
 
 pub(super) struct SealedPrivateRecord {

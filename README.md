@@ -16,12 +16,13 @@ Linux. It provides:
 - per-record CBOR + XChaCha20-Poly1305 encrypted SQLite storage;
 - HKDF-separated event keys and a Linux Secret Service master-key provider;
 - encrypted project identity mappings and incremental ingestion cursors;
-- a modular, interruption-safe `ingest` application service and CLI path; and
+- a modular, interruption-safe `ingest` application service and CLI path;
+- project-scoped, aggregate-only recall with a hard output limit; and
 - privacy regression tests with adversarial fixture content.
 
 This is an early implementation. Manual ingestion is wired for AoE-managed
-Codex sessions. Bounded recall and automatic installation are not implemented
-yet.
+Codex sessions, and the first bounded recall interface is available. Automatic
+installation and task-specific semantic recall are not implemented yet.
 
 ## Manual ingestion
 
@@ -33,6 +34,7 @@ cargo test
 cargo run -- debug-hook < tests/fixtures/codex/post-tool-use-success.json
 cargo run -- debug-parse --session <aoe-session-id>
 cargo run -- ingest --session <aoe-session-id>
+cargo run -- recall --project "$PWD"
 ```
 
 Both debug commands print only the sanitized event projection. They never print
@@ -41,6 +43,10 @@ the hook payload, transcript payload, command arguments, or tool results.
 `$XDG_DATA_HOME/praxis/history.db` (or `~/.local/share/praxis/history.db`).
 The data directory is owner-only on Unix and the database file is created with
 mode `0600`.
+
+`recall` returns at most 20 fixed-schema aggregate observations. It supports a
+controlled `--operation` filter and `--failures`, and never returns event,
+session, or project identifiers, timestamps, paths, or historical content.
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and
 the current implementation limits. Upstream source-format assumptions are

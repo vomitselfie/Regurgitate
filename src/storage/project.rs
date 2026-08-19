@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::application::{ProjectLocator, ProjectResolver};
+use crate::query::ProjectLookup;
 
 use super::{
     private::{PRIVATE_ENVELOPE_VERSION, PrivateRecordKind},
@@ -66,6 +67,18 @@ impl ProjectResolver for EncryptedStore {
             .load_project_record(&lookup_token)?
             .context("project identity disappeared during creation")?;
         self.open_project_record(&lookup_token, stored, &canonical_path)
+    }
+}
+
+impl ProjectLookup for EncryptedStore {
+    fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>> {
+        let canonical_path = canonical_path_bytes(locator.as_path())?;
+        let lookup_token = self
+            .private_cipher
+            .lookup_token(PrivateRecordKind::Project, &canonical_path)?;
+        self.load_project_record(&lookup_token)?
+            .map(|stored| self.open_project_record(&lookup_token, stored, &canonical_path))
+            .transpose()
     }
 }
 
@@ -142,6 +155,14 @@ mod tests {
         let id = {
             let store = EncryptedStore::open(&database, &MasterKey::from_bytes([31; 32])).unwrap();
             let locator = ProjectLocator::new(project.clone());
+            assert_eq!(store.find_project(&locator).unwrap(), None);
+            let before: i64 = store
+                .connection
+                .query_row("SELECT COUNT(*) FROM private_projects", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(before, 0, "lookup unexpectedly created a project mapping");
             let first = store.resolve_project(&locator).unwrap();
             let second = store.resolve_project(&locator).unwrap();
             assert_eq!(first, second);

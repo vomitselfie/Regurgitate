@@ -12,7 +12,7 @@ use crate::{application::EventSink, core::HistoryEvent};
 use super::{
     MasterKey,
     crypto::{EnvelopeMetadata, EventCipher},
-    private::PrivateMetadataCipher,
+    private::{PrivateMetadataCipher, PrivateRecordKind},
 };
 
 #[cfg(test)]
@@ -24,13 +24,13 @@ pub struct EncryptedStore {
     pub(super) private_cipher: PrivateMetadataCipher,
 }
 
-struct StoredEvent {
-    id: Vec<u8>,
-    created_at_ms: i64,
-    schema_version: i64,
-    envelope_version: i64,
-    nonce: Vec<u8>,
-    ciphertext: Vec<u8>,
+pub(super) struct StoredEvent {
+    pub id: Vec<u8>,
+    pub created_at_ms: i64,
+    pub schema_version: i64,
+    pub envelope_version: i64,
+    pub nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
 }
 
 impl EncryptedStore {
@@ -42,7 +42,7 @@ impl EncryptedStore {
     }
 
     #[cfg(test)]
-    fn open_in_memory(master_key: &MasterKey) -> Result<Self> {
+    pub(super) fn open_in_memory(master_key: &MasterKey) -> Result<Self> {
         Self::from_connection(Connection::open_in_memory()?, master_key)
     }
 
@@ -52,6 +52,7 @@ impl EncryptedStore {
              PRAGMA secure_delete = ON;
              CREATE TABLE IF NOT EXISTS events (
                  id               BLOB PRIMARY KEY NOT NULL,
+                 project_token    BLOB,
                  created_at_ms    INTEGER NOT NULL,
                  schema_version   INTEGER NOT NULL,
                  envelope_version INTEGER NOT NULL,
@@ -71,6 +72,12 @@ impl EncryptedStore {
                  ciphertext       BLOB NOT NULL
              );",
         )?;
+        ensure_event_project_token_column(&connection)?;
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS events_project_token_created_idx
+             ON events(project_token, created_at_ms DESC)",
+            [],
+        )?;
         Ok(Self {
             connection,
             cipher: EventCipher::new(master_key)?,
@@ -83,12 +90,20 @@ impl EncryptedStore {
     pub fn append(&self, event: &HistoryEvent) -> Result<bool> {
         let sealed = self.cipher.seal(event)?;
         let metadata = EnvelopeMetadata::for_event(event);
+        let project_token = event
+            .project_id
+            .map(|project_id| {
+                self.private_cipher
+                    .lookup_token(PrivateRecordKind::EventProject, project_id.as_bytes())
+            })
+            .transpose()?;
         let changed = self.connection.execute(
             "INSERT OR IGNORE INTO events
-                (id, created_at_ms, schema_version, envelope_version, nonce, ciphertext)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                (id, project_token, created_at_ms, schema_version, envelope_version, nonce, ciphertext)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 event.id.as_bytes().as_slice(),
+                project_token.as_ref().map(|token| token.as_slice()),
                 metadata.created_at_ms,
                 i64::from(metadata.schema_version),
                 i64::from(metadata.envelope_version),
@@ -138,7 +153,7 @@ impl EncryptedStore {
             .map_err(|_| anyhow!("database returned an invalid event count"))
     }
 
-    fn decrypt_row(&self, row: StoredEvent) -> Result<HistoryEvent> {
+    pub(super) fn decrypt_row(&self, row: StoredEvent) -> Result<HistoryEvent> {
         let event_id = Uuid::from_slice(&row.id).context("invalid event id in database")?;
         let schema_version = row
             .schema_version
@@ -156,6 +171,18 @@ impl EncryptedStore {
         };
         self.cipher.open(&metadata, &row.nonce, &row.ciphertext)
     }
+}
+
+fn ensure_event_project_token_column(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(events)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "project_token" {
+            return Ok(());
+        }
+    }
+    connection.execute("ALTER TABLE events ADD COLUMN project_token BLOB", [])?;
+    Ok(())
 }
 
 impl EventSink for EncryptedStore {
@@ -333,5 +360,37 @@ mod tests {
     #[test]
     fn envelope_version_is_explicit() {
         assert_eq!(ENVELOPE_VERSION, 1);
+    }
+
+    #[test]
+    fn opens_the_pre_project_index_schema_non_destructively() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("history.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE events (
+                    id BLOB PRIMARY KEY NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    envelope_version INTEGER NOT NULL,
+                    nonce BLOB NOT NULL,
+                    ciphertext BLOB NOT NULL
+                );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = EncryptedStore::open(&path, &master(10)).unwrap();
+        let mut statement = store
+            .connection
+            .prepare("PRAGMA table_info(events)")
+            .unwrap();
+        let columns: Vec<String> = statement
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "project_token"));
     }
 }

@@ -52,8 +52,9 @@ are neither members of `HistoryEvent` nor accepted by the application or event
 storage interfaces. A path is carried only by a non-serializable
 `ProjectLocator` to the private identity resolver.
 
-SQLite receives an event UUID, authenticated envelope metadata, a random nonce,
-and ciphertext. The event UUID and timestamps are structural metadata; the
+SQLite receives an event UUID, a key-derived project lookup token,
+authenticated envelope metadata, a random nonce, and ciphertext. The event UUID
+and timestamps are structural metadata; the
 session ID, project ID, agent type, operation, outcome, and other event fields
 are inside the encrypted payload. Project and cursor tables expose only
 HMAC-SHA-256 lookup tokens, version numbers, nonces, and ciphertext. Their
@@ -63,6 +64,20 @@ database.
 
 Debug commands expose only `DebugEvent`, which omits identifiers and timestamps.
 The ingestion command exposes only aggregate counts.
+
+## Recall boundary
+
+The initial recall service resolves a local path to an existing encrypted
+project mapping without creating one. Events carry a separate key-derived
+project token in SQLite so the storage adapter can select a project without
+putting its UUID or path in plaintext. The decrypted project UUID is verified
+before an event enters aggregation.
+
+Recall groups events by controlled capability, operation, and strategy. Its
+output contains attempt/success/failure/unknown counts and, when present, the
+most common controlled error class. It has no event-level output mode and
+rejects limits above 20 before querying storage. Identifiers and timestamps are
+used internally for scoping and recency ranking but are absent from the result.
 
 ## Current boundaries and limits
 
@@ -76,11 +91,13 @@ Implemented:
 - encrypted incremental cursors with append, incomplete-line, truncation, and
   replacement handling;
 - Linux Secret Service key retrieval/creation;
-- manual session ingestion; and
+- manual session ingestion;
+- project-scoped aggregate recall with operation/failure filters and a hard
+  observation limit; and
 - adversarial privacy, authentication, filesystem-mode, and idempotency tests.
 
 Not yet implemented:
 
-- project-scoped queries and bounded recall;
+- task-query relevance and explicit token-budget accounting;
 - automatic AoE lifecycle integration; and
 - retention, inspection, and forgetting commands.

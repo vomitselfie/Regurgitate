@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 
 use crate::{
     adapters::{ManagedCodexSource, aoe, codex},
+    application::ProjectLocator,
     application::{IngestionReport, IngestionService, SessionEventSource},
     cli::{Cli, Command},
     core::DebugEvent,
+    query::{RecallOptions, RecallResult, RecallService},
     storage::{EncryptedStore, MasterKeyProvider, SecretServiceKeyProvider},
 };
 
@@ -47,6 +49,26 @@ pub fn execute(cli: Cli) -> Result<()> {
             )?;
             print_json(&report)
         }
+        Command::Recall {
+            project,
+            operation,
+            failures,
+            limit,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let result = recall_project(
+                project,
+                RecallOptions {
+                    operation: operation.map(Into::into),
+                    failures_only: failures,
+                    limit,
+                },
+                data_home,
+                &SecretServiceKeyProvider::default(),
+            )?;
+            print_json(&result)
+        }
     }
 }
 
@@ -73,6 +95,19 @@ fn ingest_session(
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
     IngestionService::new(source, store).ingest_session(session_id)
+}
+
+fn recall_project(
+    project: PathBuf,
+    options: RecallOptions,
+    data_home: PathBuf,
+    key_provider: &impl MasterKeyProvider,
+) -> Result<RecallResult> {
+    let praxis_dir = data_home.join("praxis");
+    prepare_private_directory(&praxis_dir)?;
+    let key = key_provider.get_or_create()?;
+    let store = EncryptedStore::open(&praxis_dir.join("history.db"), &key)?;
+    RecallService::new(&store).recall(&ProjectLocator::new(project), options)
 }
 
 fn default_data_home() -> Result<PathBuf> {
@@ -190,6 +225,19 @@ mod tests {
             ingest_session(source(), "aoe-1", data_home.clone(), &FixedKeyProvider).unwrap();
         assert_eq!(third.observed, 1);
         assert_eq!(third.inserted, 1);
+
+        let recalled = recall_project(
+            project_dir,
+            RecallOptions::default(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(recalled.observations.len(), 2);
+        let recalled_json = serde_json::to_string(&recalled).unwrap();
+        for forbidden in ["aoe-1", "PLAINTEXT_SENTINEL_PROJECT", "SECRET"] {
+            assert!(!recalled_json.contains(forbidden));
+        }
 
         let database = fs::read(data_home.join("praxis/history.db")).unwrap();
         for forbidden in [

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+use crate::core::Operation;
 
 #[derive(Debug, Parser)]
 #[command(name = "praxis", version, about)]
@@ -61,4 +63,62 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         data_home: Option<PathBuf>,
     },
+
+    /// Return a bounded aggregate of procedural history for one project.
+    Recall {
+        /// Local project directory used only for encrypted identity lookup.
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Restrict observations to one controlled operation.
+        #[arg(long)]
+        operation: Option<OperationArg>,
+
+        /// Include only failed historical attempts.
+        #[arg(long)]
+        failures: bool,
+
+        /// Maximum aggregate observations to return (hard maximum: 20).
+        #[arg(long, default_value_t = crate::query::DEFAULT_RECALL_LIMIT)]
+        limit: usize,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum OperationArg {
+    Command,
+    ContinueCommand,
+    ApplyPatch,
+    ReadFile,
+    WriteFile,
+    Search,
+    WebRequest,
+    InspectImage,
+    UpdatePlan,
+    Delegate,
+    Wait,
+    ToolCall,
+}
+
+impl From<OperationArg> for Operation {
+    fn from(value: OperationArg) -> Self {
+        match value {
+            OperationArg::Command => Self::Command,
+            OperationArg::ContinueCommand => Self::ContinueCommand,
+            OperationArg::ApplyPatch => Self::ApplyPatch,
+            OperationArg::ReadFile => Self::ReadFile,
+            OperationArg::WriteFile => Self::WriteFile,
+            OperationArg::Search => Self::Search,
+            OperationArg::WebRequest => Self::WebRequest,
+            OperationArg::InspectImage => Self::InspectImage,
+            OperationArg::UpdatePlan => Self::UpdatePlan,
+            OperationArg::Delegate => Self::Delegate,
+            OperationArg::Wait => Self::Wait,
+            OperationArg::ToolCall => Self::ToolCall,
+        }
+    }
 }
