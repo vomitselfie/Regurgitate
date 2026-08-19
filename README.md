@@ -1,11 +1,10 @@
-# Praxis
+# Regurgitate
 
-**Praxis helps your AI coding agents remember what worked—without saving your
-conversations, code, commands, or tool output.**
+**Regurgitate remembers what worked—not what you wrote.**
 
 Coding agents often repeat the same investigation every time you open a new
-session. Praxis gives them a small, private notebook of procedural evidence:
-which kind of approach was tried, whether it worked, and how often.
+session. Regurgitate gives them a small, private notebook of procedural
+evidence: which kind of approach was tried, whether it worked, and how often.
 
 It remembers things like “targeted verification has worked reliably in this
 project.” It does not remember what you said, what the agent said, or the
@@ -13,16 +12,16 @@ contents of your files.
 
 ## What changes for you?
 
-| Without Praxis | With Praxis |
+| Without Regurgitate | With Regurgitate |
 | --- | --- |
 | A new session starts from zero | A new session can check what worked before |
 | You paste old logs or explain past attempts | The agent requests a small aggregate summary |
 | One agent's lessons stay with that agent | Codex, Claude Code, AoE, and other CLI-capable agents can share the same local evidence |
-| “Memory” may mean storing entire conversations | Praxis stores only controlled categories and outcomes |
+| “Memory” may mean storing entire conversations | Regurgitate stores only controlled categories and outcomes |
 
 The practical goal is less repeated exploration, fewer wasted tokens, and more
-consistent choices across sessions. Praxis is procedural memory, not a chat
-archive or a replacement for project documentation.
+consistent choices across sessions. Regurgitate is procedural memory, not a
+chat archive or a replacement for project documentation.
 
 ```text
 agent hook → safe category + outcome → encrypted local history → bounded recall
@@ -30,12 +29,12 @@ agent hook → safe category + outcome → encrypted local history → bounded r
 
 ## What does it store?
 
-Praxis stores a deliberately small vocabulary: categories such as `patch`,
-`test`, or `research`; controlled strategies; and `success`, `failure`, or
-`unknown` outcomes. Recall returns counts and guidance, never individual
-events.
+Regurgitate stores a deliberately small vocabulary: categories such as
+`patch`, `test`, or `research`; controlled strategies; and `success`,
+`failure`, or `unknown` outcomes. Recall returns counts and guidance, never
+individual events.
 
-Praxis never stores:
+Regurgitate never stores:
 
 - prompts, responses, or reasoning;
 - source code or file contents;
@@ -44,7 +43,8 @@ Praxis never stores:
 
 Private event data and project mappings are encrypted before they reach SQLite.
 The encryption key stays in Linux Secret Service or macOS Keychain. Nothing is
-sent to a Praxis cloud service because there is no Praxis cloud service.
+sent to a Regurgitate cloud service because there is no Regurgitate cloud
+service.
 
 For the exact boundary—including the small amount of structural database
 metadata—see [Architecture](docs/architecture.md).
@@ -58,39 +58,41 @@ metadata—see [Architecture](docs/architecture.md).
 - Agent of Empires plugin with guided Codex and Claude Code setup
 - Bounded recall from any agent that can run the CLI
 
-Windows is not supported. Praxis is still an early project, so keep normal
-project documentation and backups.
+Windows is not supported. Regurgitate is still an early project, so keep
+normal project documentation and backups.
 
-## Get Praxis running
+## Get Regurgitate running
 
 ### Easiest: install through Agent of Empires
 
-If you use AoE 1.14 or newer, it can download Praxis and connect your agent:
+If you use AoE 1.14 or newer, it can download Regurgitate and connect your
+agent:
 
 ```bash
-aoe plugin install gh:vomitselfie/Praxis
+aoe plugin install gh:vomitselfie/Regurgitate
 aoe serve
 ```
 
-Open the Praxis settings page in AoE and click **Set up Codex** or **Set up
+Open the plugin settings page in AoE and click **Set up Codex** or **Set up
 Claude Code**. The same actions are available in AoE's command palette as
 `Praxis: set up Codex` and `Praxis: set up Claude Code`.
 
 That setup action installs both pieces an agent needs: a recording hook and a
 small recall skill. It uses the executable AoE already downloaded, so you do
 not need to install `praxis` on your `PATH` or merge configuration by hand.
-Existing settings and personal hooks are preserved; if Praxis cannot add
-itself safely, it stops and reports that the setup needs attention. Restart the
-selected agent afterward.
+Existing settings and personal hooks are preserved; if Regurgitate cannot add
+itself safely, it stops and reports that the setup needs attention. Restart
+the selected agent afterward.
 
 AoE will ask to approve `runtime.worker`, `fs.read`, and `fs.write`. The worker
-permission powers the Praxis status/setup page. File access is used only to
+permission powers the plugin's status/setup page. File access is used only to
 inspect and add the hook and skill beneath the selected agent's user config.
 
-Installing the plugin alone downloads the complete Praxis program but does not
-silently edit Codex or Claude Code. The explicit setup action makes that final
-connection. Once connected, recording and recall continue to work without the
-AoE page being open. If you already have an older Praxis plugin, update it with:
+Installing the plugin alone downloads the complete Regurgitate program but
+does not silently edit Codex or Claude Code. The explicit setup action makes
+that final connection. Once connected, recording and recall continue to work
+without the AoE page being open. If you already have the plugin, update it
+with:
 
 ```bash
 aoe plugin update vomitselfie.praxis
@@ -101,14 +103,15 @@ native Codex hook; the two sources can observe the same session.
 
 ### Standalone installation
 
-You can also install Praxis without AoE. There are two pieces:
+You can also install Regurgitate without AoE. The current executable and AoE
+plugin ID retain their original `praxis` name. There are two pieces:
 
 1. The `praxis` program records and reads encrypted history.
 2. A small agent skill tells your agent when to use it.
 
 #### 1. Install the program
 
-Open the [latest release](https://github.com/vomitselfie/Praxis/releases/latest)
+Open the [latest release](https://github.com/vomitselfie/Regurgitate/releases/latest)
 and download the archive for your computer:
 
 | Computer | Asset name ends with |
@@ -129,7 +132,7 @@ If that says `command not found`, reopen your terminal or ask your agent to add
 
 If “put it on your PATH” is unfamiliar, ask your coding agent:
 
-> Install the latest Praxis release from vomitselfie/Praxis for this
+> Install the latest Regurgitate release from vomitselfie/Regurgitate for this
 > computer. Verify it against SHA256SUMS, place it in ~/.local/bin, and confirm
 > that `praxis --version` works.
 
@@ -137,15 +140,15 @@ If “put it on your PATH” is unfamiliar, ask your coding agent:
 <summary>Terminal install using GitHub CLI</summary>
 
 ```bash
-release="$(gh release view --repo vomitselfie/Praxis --json tagName --jq .tagName)"
+release="$(gh release view --repo vomitselfie/Regurgitate --json tagName --jq .tagName)"
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform="linux-x86_64" ;;
   Darwin-arm64) platform="macos-aarch64" ;;
   Darwin-x86_64) platform="macos-x86_64" ;;
-  *) echo "Praxis has no release for this platform." >&2; return 1 ;;
+  *) echo "Regurgitate has no release for this platform." >&2; return 1 ;;
 esac
 archive="praxis-${release}-${platform}.tar.gz"
-gh release download "$release" --repo vomitselfie/Praxis \
+gh release download "$release" --repo vomitselfie/Regurgitate \
   --pattern "$archive" --pattern SHA256SUMS
 checksum="$(grep -F "  $archive" SHA256SUMS)"
 if command -v sha256sum >/dev/null 2>&1; then
@@ -218,8 +221,9 @@ praxis recall --project "$PWD" --query "what approach should I try?"
 
 `not_configured` before the first recorded event is normal. Once a hook records
 an event, status should report ready history. Recall may still be empty until
-Praxis has useful evidence for that project. Praxis does not retain the query
-text, although your shell may keep commands you type in its own history.
+Regurgitate has useful evidence for that project. Regurgitate does not retain
+the query text, although your shell may keep commands you type in its own
+history.
 
 ## Day-to-day use
 
@@ -245,10 +249,10 @@ Destructive commands preview what they will remove unless you add `--apply`.
 
 Recording adds no chat output: successful hooks are silent. Recall defaults to
 an approximate 300-token output limit and returns aggregates instead of
-replaying history. The core skill plus a default recall has a Praxis-controlled
-ceiling of about 1,031 tokens, 43% smaller than the original implementation.
-AoE setup adds one short instruction containing its local executable path, so
-that exact total varies slightly by computer.
+replaying history. The core skill plus a default recall has a
+Regurgitate-controlled ceiling of about 1,031 tokens, 43% smaller than the
+original implementation. AoE setup adds one short instruction containing its
+local executable path, so that exact total varies slightly by computer.
 
 That is a context-size ceiling, not a promise about provider billing. The
 payoff comes when a small recall prevents an agent from repeating a much larger
@@ -256,9 +260,10 @@ investigation or asking you to paste old context.
 
 ## Safety behavior
 
-- Praxis fails closed if Secret Service or Keychain is unavailable or locked.
+- Regurgitate fails closed if Secret Service or Keychain is unavailable or
+  locked.
 - It never falls back to a plaintext key or plaintext history.
-- Agent sandbox access should be granted only to exact Praxis subcommands.
+- Agent sandbox access should be granted only to exact `praxis` subcommands.
 - `status`, recall, and deletion previews do not create missing state.
 - Hook input is reduced to an allowlisted event before storage.
 
@@ -270,4 +275,4 @@ investigation or asking you to paste old context.
 - [Contributor and release guide](docs/releasing.md)
 - [`praxis-recall` skill](skills/praxis-recall/SKILL.md)
 
-Praxis is MIT licensed.
+Regurgitate is MIT licensed.
