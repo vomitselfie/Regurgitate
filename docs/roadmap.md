@@ -12,11 +12,10 @@ module boundaries.
 - encrypted project mappings and append-safe ingestion cursors;
 - manual, interruption-safe session ingestion;
 - project-scoped aggregate recall;
-- fixed-vocabulary learning for meaningful, directly verified practice
-  outcomes;
+- fixed-vocabulary task and strategy learning for semantic practice outcomes;
 - strategy confidence and `prefer`/`avoid` guidance that discounts unknown
   activity volume;
-- transient task-query ranking with no query persistence;
+- transient task-query filtering with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
 - an installable AoE API-v12 release-binary plugin with aggregate health,
@@ -38,7 +37,7 @@ module boundaries.
 - version-gated CI releases with verified Linux x86-64, Apple Silicon, and
   Intel macOS archives plus combined checksums;
   and
-- adversarial privacy, authentication, migration, project-isolation, and
+- adversarial privacy, authentication, project-isolation, and
   source-replacement tests.
 
 ## Completed integration slice
@@ -68,8 +67,8 @@ Native Codex recording now complements the AoE transcript fallback:
 The first status surface adds operational safety without opening the event-level
 privacy boundary:
 
-1. the health projection contains controlled states and one aggregate event
-   count;
+1. the health projection contains controlled states plus total, hook-event,
+   and learned-practice counts;
 2. key-store and database readiness expose no paths or identifiers;
 3. the probes never create a key, create or migrate a database, or attempt a
    repair; and
@@ -105,14 +104,17 @@ Bounded retention was added on top of the same privacy boundary:
 
 Recall now distinguishes activity from evidence:
 
-1. adapters derive patch/write strategies only from controlled tool identity;
-2. `learn` accepts no free text and records only a fixed strategy plus an
-   explicit known outcome after a meaningful verification;
+1. provider hooks are labeled as execution telemetry and kept out of procedural
+   guidance;
+2. `learn` accepts no free text and records a fixed task, strategy, and semantic
+   outcome after a meaningful milestone or rejected approach;
 3. guidance is withheld until two known outcomes exist, then reports bounded
    confidence and deterministic `prefer`, `avoid`, or `mixed` advice;
-4. unknown counts do not contribute evidence score or outrank a verified
-   strategy merely through volume; and
-5. recall uses only existing read-only key/database paths and leaves missing
+4. queries filter learned practice through controlled task categories, with an
+   unrecognized query returning no generic practice rows;
+5. hook execution counts use a separate bounded `hook_summary` and cannot evict
+   learned practices from their retrieval window; and
+6. recall uses only existing read-only key/database paths and leaves missing
    local state untouched.
 
 The controlled learning vocabulary also covers research workflows through a

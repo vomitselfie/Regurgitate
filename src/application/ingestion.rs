@@ -117,7 +117,8 @@ mod tests {
     use uuid::Uuid;
 
     use crate::core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, Capability, HistoryEvent, Operation, Outcome,
+        AgentKind, CURRENT_SCHEMA_VERSION, Capability, EvidenceKind, HistoryEvent, Operation,
+        Outcome,
     };
 
     use super::*;
@@ -209,6 +210,8 @@ mod tests {
             session_id: Some("PRIVATE_SESSION".to_owned()),
             project_id: None,
             agent: Some(AgentKind::Codex),
+            evidence_kind: EvidenceKind::HookExecution,
+            task: None,
             capability: Capability::Test,
             operation: Operation::Command,
             strategy: None,

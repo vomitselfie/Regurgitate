@@ -3,11 +3,14 @@ use std::{fs::OpenOptions, path::Path, time::Duration};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use uuid::Uuid;
 
-use crate::{application::EventSink, core::HistoryEvent};
+use crate::{
+    application::EventSink,
+    core::{EvidenceKind, HistoryEvent},
+};
 
 use super::{
     MasterKey,
@@ -27,6 +30,7 @@ pub struct EncryptedStore {
 pub(super) struct StoredEvent {
     pub id: Vec<u8>,
     pub created_at_ms: i64,
+    pub evidence_kind: i64,
     pub schema_version: i64,
     pub envelope_version: i64,
     pub nonce: Vec<u8>,
@@ -75,8 +79,9 @@ impl EncryptedStore {
              PRAGMA secure_delete = ON;
              CREATE TABLE IF NOT EXISTS events (
                  id               BLOB PRIMARY KEY NOT NULL,
-                 project_token    BLOB,
+                 project_token    BLOB NOT NULL,
                  created_at_ms    INTEGER NOT NULL,
+                 evidence_kind    INTEGER NOT NULL,
                  schema_version   INTEGER NOT NULL,
                  envelope_version INTEGER NOT NULL,
                  nonce            BLOB NOT NULL,
@@ -98,10 +103,9 @@ impl EncryptedStore {
                  project_token BLOB PRIMARY KEY NOT NULL
              );",
         )?;
-        ensure_event_project_token_column(&connection)?;
         connection.execute(
-            "CREATE INDEX IF NOT EXISTS events_project_token_created_idx
-             ON events(project_token, created_at_ms DESC)",
+            "CREATE INDEX IF NOT EXISTS events_project_kind_created_idx
+             ON events(project_token, evidence_kind, created_at_ms DESC)",
             [],
         )?;
         Self::from_existing_connection(connection, master_key)
@@ -119,26 +123,29 @@ impl EncryptedStore {
     /// Encrypts completely in memory before invoking SQLite. Returns `false`
     /// when the deterministic event id is already present.
     pub fn append(&self, event: &HistoryEvent) -> Result<bool> {
+        if !event.has_valid_evidence_shape() {
+            bail!("history event has an invalid evidence shape");
+        }
         let sealed = self.cipher.seal(event)?;
         let metadata = EnvelopeMetadata::for_event(event);
-        let project_token = event
+        let project_id = event
             .project_id
-            .map(|project_id| {
-                self.private_cipher
-                    .lookup_token(PrivateRecordKind::EventProject, project_id.as_bytes())
-            })
-            .transpose()?;
+            .context("history event has no resolved project identity")?;
+        let project_token = self
+            .private_cipher
+            .lookup_token(PrivateRecordKind::EventProject, project_id.as_bytes())?;
         let changed = self.connection.execute(
             "INSERT OR IGNORE INTO events
-                (id, project_token, created_at_ms, schema_version, envelope_version, nonce, ciphertext)
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
-             WHERE ?2 IS NULL OR NOT EXISTS (
+                (id, project_token, created_at_ms, evidence_kind, schema_version, envelope_version, nonce, ciphertext)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+             WHERE NOT EXISTS (
                  SELECT 1 FROM forgotten_project_tokens WHERE project_token = ?2
              )",
             params![
                 event.id.as_bytes().as_slice(),
-                project_token.as_ref().map(|token| token.as_slice()),
+                project_token.as_slice(),
                 metadata.created_at_ms,
+                i64::from(metadata.evidence_kind.storage_code()),
                 i64::from(metadata.schema_version),
                 i64::from(metadata.envelope_version),
                 sealed.nonce.as_slice(),
@@ -152,17 +159,18 @@ impl EncryptedStore {
         let stored = self
             .connection
             .query_row(
-                "SELECT id, created_at_ms, schema_version, envelope_version, nonce, ciphertext
+                "SELECT id, created_at_ms, evidence_kind, schema_version, envelope_version, nonce, ciphertext
                  FROM events WHERE id = ?1",
                 [event_id.as_bytes().as_slice()],
                 |row| {
                     Ok(StoredEvent {
                         id: row.get(0)?,
                         created_at_ms: row.get(1)?,
-                        schema_version: row.get(2)?,
-                        envelope_version: row.get(3)?,
-                        nonce: row.get(4)?,
-                        ciphertext: row.get(5)?,
+                        evidence_kind: row.get(2)?,
+                        schema_version: row.get(3)?,
+                        envelope_version: row.get(4)?,
+                        nonce: row.get(5)?,
+                        ciphertext: row.get(6)?,
                     })
                 },
             )
@@ -189,6 +197,12 @@ impl EncryptedStore {
 
     pub(super) fn decrypt_row(&self, row: StoredEvent) -> Result<HistoryEvent> {
         let event_id = Uuid::from_slice(&row.id).context("invalid event id in database")?;
+        let evidence_code: u8 = row
+            .evidence_kind
+            .try_into()
+            .context("invalid evidence kind in database")?;
+        let evidence_kind = EvidenceKind::from_storage_code(evidence_code)
+            .context("invalid evidence kind in database")?;
         let schema_version = row
             .schema_version
             .try_into()
@@ -200,23 +214,12 @@ impl EncryptedStore {
         let metadata = EnvelopeMetadata {
             event_id,
             created_at_ms: row.created_at_ms,
+            evidence_kind,
             schema_version,
             envelope_version,
         };
         self.cipher.open(&metadata, &row.nonce, &row.ciphertext)
     }
-}
-
-fn ensure_event_project_token_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(events)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "project_token" {
-            return Ok(());
-        }
-    }
-    connection.execute("ALTER TABLE events ADD COLUMN project_token BLOB", [])?;
-    Ok(())
 }
 
 impl EventSink for EncryptedStore {
@@ -254,7 +257,8 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, Capability, ErrorClass, HistoryEvent, Operation, Outcome,
+        AgentKind, CURRENT_SCHEMA_VERSION, Capability, ErrorClass, EvidenceKind, HistoryEvent,
+        Operation, Outcome,
     };
 
     use super::*;
@@ -270,6 +274,8 @@ mod tests {
             session_id: Some("PLAINTEXT_SENTINEL_SESSION".to_owned()),
             project_id: Some(Uuid::from_u128(0x5678)),
             agent: Some(AgentKind::Codex),
+            evidence_kind: EvidenceKind::HookExecution,
+            task: None,
             capability: Capability::Shell,
             operation: Operation::Command,
             strategy: None,
@@ -341,6 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn evidence_kind_is_authenticated_metadata() {
+        let store = EncryptedStore::open_in_memory(&master(11)).unwrap();
+        let event = event();
+        store.append(&event).unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE events SET evidence_kind = ?1",
+                [i64::from(EvidenceKind::LearnedPractice.storage_code())],
+            )
+            .unwrap();
+
+        let error = store.get(event.id).unwrap_err();
+        assert!(error.to_string().contains("authentication failed"));
+    }
+
+    #[test]
     fn each_encryption_uses_a_unique_nonce() {
         let store = EncryptedStore::open_in_memory(&master(5)).unwrap();
         let first = event();
@@ -397,37 +420,5 @@ mod tests {
     #[test]
     fn envelope_version_is_explicit() {
         assert_eq!(ENVELOPE_VERSION, 1);
-    }
-
-    #[test]
-    fn opens_the_pre_project_index_schema_non_destructively() {
-        let temp = tempdir().unwrap();
-        let path = temp.path().join("history.db");
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE events (
-                    id BLOB PRIMARY KEY NOT NULL,
-                    created_at_ms INTEGER NOT NULL,
-                    schema_version INTEGER NOT NULL,
-                    envelope_version INTEGER NOT NULL,
-                    nonce BLOB NOT NULL,
-                    ciphertext BLOB NOT NULL
-                );",
-            )
-            .unwrap();
-        drop(connection);
-
-        let store = EncryptedStore::open(&path, &master(10)).unwrap();
-        let mut statement = store
-            .connection
-            .prepare("PRAGMA table_info(events)")
-            .unwrap();
-        let columns: Vec<String> = statement
-            .query_map([], |row| row.get(1))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap();
-        assert!(columns.iter().any(|column| column == "project_token"));
     }
 }

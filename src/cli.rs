@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::core::{Operation, Outcome, Strategy};
+use crate::core::{Operation, Outcome, Strategy, TaskKind};
 
 #[derive(Parser)]
 #[command(name = "regurgitate", version, about)]
@@ -42,6 +42,10 @@ pub(crate) enum Command {
         /// Local project directory used only for encrypted identity lookup.
         #[arg(long)]
         project: PathBuf,
+
+        /// Controlled task category in which the strategy was evaluated.
+        #[arg(long, value_enum)]
+        task: TaskKindArg,
 
         /// Privacy-safe strategy whose outcome was directly verified.
         #[arg(long, value_enum)]
@@ -219,7 +223,7 @@ pub(crate) enum Command {
         data_home: Option<PathBuf>,
     },
 
-    /// Return a bounded aggregate of procedural history for one project.
+    /// Return task-matched learned practice plus a separate hook summary.
     Recall {
         /// Local project directory used only for encrypted identity lookup.
         #[arg(long)]
@@ -229,7 +233,7 @@ pub(crate) enum Command {
         #[arg(long)]
         operation: Option<OperationArg>,
 
-        /// Include only failed historical attempts.
+        /// Include only semantically failed learned practices.
         #[arg(long)]
         failures: bool,
 
@@ -237,7 +241,7 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = crate::query::DEFAULT_RECALL_LIMIT)]
         limit: usize,
 
-        /// Ephemeral task text used only to rank controlled observations.
+        /// Ephemeral task text reduced to controlled categories for filtering.
         #[arg(long)]
         query: Option<String>,
 
@@ -261,6 +265,43 @@ pub(crate) enum HookAgentArg {
 pub(crate) enum LearnedOutcomeArg {
     Success,
     Failure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum TaskKindArg {
+    Configuration,
+    DataImport,
+    Debugging,
+    DependencyUpdate,
+    Documentation,
+    FeatureImplementation,
+    Integration,
+    Performance,
+    Refactoring,
+    Release,
+    Research,
+    Security,
+    Testing,
+}
+
+impl From<TaskKindArg> for TaskKind {
+    fn from(value: TaskKindArg) -> Self {
+        match value {
+            TaskKindArg::Configuration => Self::Configuration,
+            TaskKindArg::DataImport => Self::DataImport,
+            TaskKindArg::Debugging => Self::Debugging,
+            TaskKindArg::DependencyUpdate => Self::DependencyUpdate,
+            TaskKindArg::Documentation => Self::Documentation,
+            TaskKindArg::FeatureImplementation => Self::FeatureImplementation,
+            TaskKindArg::Integration => Self::Integration,
+            TaskKindArg::Performance => Self::Performance,
+            TaskKindArg::Refactoring => Self::Refactoring,
+            TaskKindArg::Release => Self::Release,
+            TaskKindArg::Research => Self::Research,
+            TaskKindArg::Security => Self::Security,
+            TaskKindArg::Testing => Self::Testing,
+        }
+    }
 }
 
 impl From<LearnedOutcomeArg> for Outcome {
@@ -375,6 +416,8 @@ mod tests {
             "learn",
             "--project",
             "/private/project",
+            "--task",
+            "configuration",
             "--strategy",
             "atomic-write",
             "--outcome",
@@ -383,6 +426,7 @@ mod tests {
         .unwrap();
         let Command::Learn {
             project,
+            task,
             strategy,
             outcome,
             data_home,
@@ -391,6 +435,7 @@ mod tests {
             panic!("expected learn command");
         };
         assert_eq!(project, PathBuf::from("/private/project"));
+        assert_eq!(task, TaskKindArg::Configuration);
         assert_eq!(strategy, StrategyArg::AtomicWrite);
         assert_eq!(outcome, LearnedOutcomeArg::Success);
         assert!(data_home.is_none());
@@ -400,6 +445,21 @@ mod tests {
                 "learn",
                 "--project",
                 "/private/project",
+                "--strategy",
+                "atomic-write",
+                "--outcome",
+                "success",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "regurgitate",
+                "learn",
+                "--project",
+                "/private/project",
+                "--task",
+                "configuration",
                 "--strategy",
                 "arbitrary-private-label",
                 "--outcome",
@@ -413,6 +473,8 @@ mod tests {
                 "learn",
                 "--project",
                 "/private/project",
+                "--task",
+                "configuration",
                 "--strategy",
                 "other",
                 "--outcome",
@@ -431,6 +493,8 @@ mod tests {
                     "learn",
                     "--project",
                     "/private/project",
+                    "--task",
+                    "research",
                     "--strategy",
                     strategy,
                     "--outcome",

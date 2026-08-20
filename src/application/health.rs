@@ -10,7 +10,14 @@ pub trait KeyReadinessProbe {
 pub trait HistoryReadinessProbe {
     /// Returns `None` when no history database exists. Implementations must
     /// inspect an existing database without creating or migrating it.
-    fn event_count(&self) -> Result<Option<u64>>;
+    fn history_counts(&self) -> Result<Option<HistoryCounts>>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryCounts {
+    pub event_count: u64,
+    pub hook_event_count: u64,
+    pub learned_practice_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -57,6 +64,10 @@ pub struct HistoryHealth {
     pub status: ComponentReadiness,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_event_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learned_practice_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -98,18 +109,24 @@ where
             Ok(false) => ComponentReadiness::NotConfigured,
             Err(_) => ComponentReadiness::Unavailable,
         };
-        let history = match self.history.event_count() {
-            Ok(Some(event_count)) => HistoryHealth {
+        let history = match self.history.history_counts() {
+            Ok(Some(counts)) => HistoryHealth {
                 status: ComponentReadiness::Ready,
-                event_count: Some(event_count),
+                event_count: Some(counts.event_count),
+                hook_event_count: Some(counts.hook_event_count),
+                learned_practice_count: Some(counts.learned_practice_count),
             },
             Ok(None) => HistoryHealth {
                 status: ComponentReadiness::NotConfigured,
                 event_count: None,
+                hook_event_count: None,
+                learned_practice_count: None,
             },
             Err(_) => HistoryHealth {
                 status: ComponentReadiness::Unavailable,
                 event_count: None,
+                hook_event_count: None,
+                learned_practice_count: None,
             },
         };
         let mut status = match (key_store, history.status) {
@@ -172,10 +189,10 @@ mod tests {
         }
     }
 
-    struct HistoryProbe(Result<Option<u64>>);
+    struct HistoryProbe(Result<Option<HistoryCounts>>);
 
     impl HistoryReadinessProbe for HistoryProbe {
-        fn event_count(&self) -> Result<Option<u64>> {
+        fn history_counts(&self) -> Result<Option<HistoryCounts>> {
             match &self.0 {
                 Ok(value) => Ok(*value),
                 Err(_) => bail!("PRIVATE_DATABASE_ERROR /home/alice/history.db"),
@@ -184,11 +201,21 @@ mod tests {
     }
 
     #[test]
-    fn reports_ready_with_only_an_aggregate_count() {
-        let report = HealthService::new(KeyProbe(Ok(true)), HistoryProbe(Ok(Some(7)))).inspect();
+    fn reports_ready_with_separate_aggregate_counts() {
+        let report = HealthService::new(
+            KeyProbe(Ok(true)),
+            HistoryProbe(Ok(Some(HistoryCounts {
+                event_count: 7,
+                hook_event_count: 5,
+                learned_practice_count: 2,
+            }))),
+        )
+        .inspect();
         assert_eq!(report.status, OverallHealth::Ready);
         assert_eq!(report.key_store, ComponentReadiness::Ready);
         assert_eq!(report.history.event_count, Some(7));
+        assert_eq!(report.history.hook_event_count, Some(5));
+        assert_eq!(report.history.learned_practice_count, Some(2));
     }
 
     #[test]
@@ -222,14 +249,21 @@ mod tests {
 
     #[test]
     fn optional_hook_checks_are_controlled_and_affect_overall_health() {
-        let report = HealthService::new(KeyProbe(Ok(true)), HistoryProbe(Ok(Some(7))))
-            .inspect_with_hooks([
-                (HookProvider::Aoe, Ok(HookReadiness::Installed)),
-                (
-                    HookProvider::Claude,
-                    Err(anyhow::anyhow!("PRIVATE_CONFIG_PATH")),
-                ),
-            ]);
+        let report = HealthService::new(
+            KeyProbe(Ok(true)),
+            HistoryProbe(Ok(Some(HistoryCounts {
+                event_count: 7,
+                hook_event_count: 5,
+                learned_practice_count: 2,
+            }))),
+        )
+        .inspect_with_hooks([
+            (HookProvider::Aoe, Ok(HookReadiness::Installed)),
+            (
+                HookProvider::Claude,
+                Err(anyhow::anyhow!("PRIVATE_CONFIG_PATH")),
+            ),
+        ]);
         assert_eq!(report.status, OverallHealth::Degraded);
         assert_eq!(
             report.hooks,
@@ -253,11 +287,18 @@ mod tests {
 
     #[test]
     fn simultaneous_codex_sources_are_reported_as_conflicting() {
-        let report = HealthService::new(KeyProbe(Ok(true)), HistoryProbe(Ok(Some(7))))
-            .inspect_with_hooks([
-                (HookProvider::Aoe, Ok(HookReadiness::Installed)),
-                (HookProvider::Codex, Ok(HookReadiness::Installed)),
-            ]);
+        let report = HealthService::new(
+            KeyProbe(Ok(true)),
+            HistoryProbe(Ok(Some(HistoryCounts {
+                event_count: 7,
+                hook_event_count: 5,
+                learned_practice_count: 2,
+            }))),
+        )
+        .inspect_with_hooks([
+            (HookProvider::Aoe, Ok(HookReadiness::Installed)),
+            (HookProvider::Codex, Ok(HookReadiness::Installed)),
+        ]);
 
         assert_eq!(report.status, OverallHealth::Degraded);
         assert_eq!(

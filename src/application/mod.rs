@@ -10,8 +10,9 @@ mod retention;
 pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
 pub use forgetting::{ForgetReport, ForgetService, ForgetStatus, ProjectHistoryEraser};
 pub use health::{
-    ComponentReadiness, HealthReport, HealthService, HistoryHealth, HistoryReadinessProbe,
-    HookHealth, HookProvider, HookReadiness, KeyReadinessProbe, OverallHealth,
+    ComponentReadiness, HealthReport, HealthService, HistoryCounts, HistoryHealth,
+    HistoryReadinessProbe, HookHealth, HookProvider, HookReadiness, KeyReadinessProbe,
+    OverallHealth,
 };
 pub use ingestion::{
     CursorStore, EventBatch, EventSink, IngestionReport, IngestionService, ProjectResolver,

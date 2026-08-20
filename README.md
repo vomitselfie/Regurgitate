@@ -24,15 +24,19 @@ consistent choices across sessions. Regurgitate is procedural memory, not a
 chat archive or a replacement for project documentation.
 
 ```text
-agent hook → safe category + outcome → encrypted local history → bounded recall
+agent hook → encrypted execution summary
+verified agent judgment → task + strategy + outcome → relevant recall
 ```
 
 ## What does it store?
 
-Regurgitate stores a deliberately small vocabulary: categories such as
-`patch`, `test`, or `research`; controlled strategies; and `success`,
-`failure`, or `unknown` outcomes. Recall returns counts and guidance, never
-individual events.
+Regurgitate keeps two deliberately separate ledgers. Hooks record controlled
+tool-execution categories and provider-reported status. Explicit learning
+records a controlled task category, strategy, and semantic `success` or
+`failure`. A command exiting successfully does not make a bad approach
+successful. Recall returns learned-practice counts and guidance; hook activity
+appears only in a separately labeled summary. Neither returns individual
+events.
 
 Regurgitate never stores:
 
@@ -215,27 +219,30 @@ Use your agent normally for a moment, then run:
 
 ```bash
 regurgitate status
-regurgitate recall --project "$PWD" --query "what approach should I try?"
+regurgitate recall --project "$PWD" --query "data import"
 ```
 
 `not_configured` before the first recorded event is normal. Once a hook records
-an event, status should report ready history. Recall may still be empty until
-Regurgitate has useful evidence for that project. Regurgitate does not retain
-the query text, although your shell may keep commands you type in its own
-history.
+an event, status should report ready history and separate `hook_event_count`
+from `learned_practice_count`. Recall may still be empty until the agent has
+recorded useful practice for that task. Regurgitate does not retain the query
+text, although your shell may keep commands you type in its own history.
 
 ## Day-to-day use
 
-Once the hook and skill are installed, there is usually nothing to manage. The
-agent records tiny sanitized observations in the background and requests a
-bounded recall when prior evidence could help.
+Once the hook and skill are installed, there is usually nothing to manage.
+Hooks record tiny sanitized execution observations in the background. The
+agent requests relevant practice when useful and records one controlled
+semantic result after a meaningful milestone or failed approach.
 
 Useful commands:
 
 | Command | What it does |
 | --- | --- |
 | `regurgitate status` | Checks the key store and encrypted history |
-| `regurgitate recall --project "$PWD"` | Shows bounded aggregate evidence for this project |
+| `regurgitate recall --project "$PWD" --query "data import"` | Shows learned practice relevant to this task |
+| `regurgitate recall --project "$PWD" --failures --query "data import"` | Shows semantically failed practices for this task |
+| `regurgitate learn --project "$PWD" --task data-import --strategy per-subject-streaming --outcome success` | Records one verified procedural result |
 | `regurgitate forget --project "$PWD"` | Previews deleting this project's history |
 | `regurgitate forget --project "$PWD" --apply` | Deletes this project's history |
 | `regurgitate prune --keep-recent 10000` | Previews a global retention cleanup |
@@ -246,10 +253,10 @@ Destructive commands preview what they will remove unless you add `--apply`.
 
 ## Token impact
 
-Recording adds no chat output: successful hooks are silent. Recall defaults to
-an approximate 300-token output limit and returns aggregates instead of
-replaying history. The core skill plus a default recall has a
-Regurgitate-controlled ceiling of about 1,046 tokens, 42% smaller than the
+Hook recording adds no chat output: successful hooks are silent. Recall
+defaults to an approximate 300-token output limit and returns aggregates
+instead of replaying history. The core skill plus a default recall has a
+Regurgitate-controlled ceiling of about 1,010 tokens, 44% smaller than the
 original implementation. AoE setup adds one short instruction containing its
 local executable path, so that exact total varies slightly by computer.
 

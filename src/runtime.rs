@@ -13,7 +13,7 @@ use crate::{
         ValidatedRetentionPolicy,
     },
     cli::{Cli, Command, HookAgentArg},
-    core::{AgentKind, DebugEvent, Outcome, Strategy},
+    core::{AgentKind, DebugEvent, Outcome, Strategy, TaskKind},
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
         inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_claude_hook,
@@ -42,6 +42,7 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
         Command::Learn {
             project,
+            task,
             strategy,
             outcome,
             data_home,
@@ -49,6 +50,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
             let report = learn_practice(
                 project,
+                task.into(),
                 strategy.into(),
                 outcome.into(),
                 data_home,
@@ -261,6 +263,7 @@ fn record_hook(
 
 fn learn_practice(
     project: PathBuf,
+    task: TaskKind,
     strategy: Strategy,
     outcome: Outcome,
     data_home: PathBuf,
@@ -269,7 +272,7 @@ fn learn_practice(
     let database = prepare_history_database(&data_home)?;
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&database, &key)?;
-    LearningService::new(store).learn(ProjectLocator::new(project), strategy, outcome)
+    LearningService::new(store).learn(ProjectLocator::new(project), task, strategy, outcome)
 }
 
 fn health_status(
@@ -495,7 +498,8 @@ mod tests {
             &FixedKeyProvider,
         )
         .unwrap();
-        assert_eq!(recalled.observations.len(), 2);
+        assert!(recalled.observations.is_empty());
+        assert_eq!(recalled.hook_summary.sampled_executions, 2);
         let recalled_json = serde_json::to_string(&recalled).unwrap();
         for forbidden in ["aoe-1", "PLAINTEXT_SENTINEL_PROJECT", "SECRET"] {
             assert!(!recalled_json.contains(forbidden));
@@ -653,6 +657,7 @@ mod tests {
         for _ in 0..2 {
             let report = learn_practice(
                 project.clone(),
+                TaskKind::Configuration,
                 Strategy::AtomicWrite,
                 Outcome::Success,
                 data_home.clone(),
@@ -674,7 +679,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.observations.len(), 1);
-        assert_eq!(result.observations[0].strategy, Some(Strategy::AtomicWrite));
+        assert_eq!(result.observations[0].task, TaskKind::Configuration);
+        assert_eq!(result.observations[0].strategy, Strategy::AtomicWrite);
         assert_eq!(result.observations[0].success_rate_percent, Some(100));
         assert_eq!(
             result.observations[0].guidance,
@@ -823,7 +829,8 @@ mod tests {
             &FixedKeyProvider,
         )
         .unwrap();
-        assert_eq!(still_present.observations.len(), 1);
+        assert!(still_present.observations.is_empty());
+        assert_eq!(still_present.hook_summary.sampled_executions, 1);
 
         let forgotten =
             forget_project(project.clone(), true, data_home.clone(), &FixedKeyProvider).unwrap();
@@ -838,6 +845,7 @@ mod tests {
         )
         .unwrap();
         assert!(recalled.observations.is_empty());
+        assert_eq!(recalled.hook_summary.sampled_executions, 0);
 
         let encoded = serde_json::to_string(&forgotten).unwrap();
         assert!(!encoded.contains("PRIVATE_FORGOTTEN_PROJECT"));

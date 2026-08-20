@@ -79,7 +79,10 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{
-        core::{AgentKind, CURRENT_SCHEMA_VERSION, Capability, HistoryEvent, Operation, Outcome},
+        core::{
+            AgentKind, CURRENT_SCHEMA_VERSION, Capability, EvidenceKind, HistoryEvent, Operation,
+            Outcome,
+        },
         storage::MasterKey,
     };
 
@@ -92,6 +95,8 @@ mod tests {
             session_id: Some("PRIVATE_RETENTION_SESSION".to_owned()),
             project_id: Some(Uuid::from_u128(0x50524f4a454354)),
             agent: Some(AgentKind::Codex),
+            evidence_kind: EvidenceKind::HookExecution,
+            task: None,
             capability: Capability::Test,
             operation: Operation::Command,
             strategy: None,

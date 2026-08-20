@@ -56,12 +56,12 @@ refuses malformed, disabled, or matcher-restricted Regurgitate configurations.
 
 ## Explicit learning flow
 
-Some provider contracts cannot reliably distinguish semantic success from
-failure. `regurgitate learn` fills that gap without opening a free-text memory path.
-It accepts only a project locator, one fixed strategy enum, and an explicit
-`success` or `failure`. Each learnable strategy maps to one canonical
-capability/operation pair in the core model; arbitrary labels and `unknown`
-outcomes are rejected by the CLI/application boundary.
+Provider hooks report execution status, not whether an approach produced a
+correct result. `regurgitate learn` supplies that semantic boundary without
+opening a free-text memory path. It accepts only a project locator, one fixed
+task enum, one fixed strategy enum, and an explicit `success` or `failure`.
+Each strategy maps to one canonical capability/operation pair; arbitrary
+labels and `unknown` outcomes are rejected by the CLI/application boundary.
 
 Research methods use the shared `research` capability and `analyze` operation,
 with `reproduce_then_compare`, `per_subject_streaming`, or
@@ -69,12 +69,12 @@ with `reproduce_then_compare`, `per_subject_streaming`, or
 explicit-only because neither a provider tool name nor private tool arguments
 can safely establish which analysis method was used.
 
-The learning application service creates a controlled event with no session or
-agent identity, then reuses the same encrypted project resolver and recording
-port as native hooks. The agent-facing skill permits this only after a
-meaningful result is directly established by validation or user confirmation,
-and at most once per milestone. Tool-by-tool activity and ambiguous outcomes
-are deliberately not learned.
+The learning service marks the event as `learned_practice`, includes its
+controlled task, and omits session and agent identity. It then reuses the same
+encrypted project resolver and recording port as native hooks. The agent-facing
+skill records at most once per meaningful milestone or rejected approach and
+defines outcome as strategy correctness rather than process exit status.
+Tool-by-tool activity and ambiguous outcomes are deliberately not learned.
 
 ## Ingestion flow
 
@@ -152,10 +152,12 @@ transcript fallback—records into the same encrypted store.
 
 ## Agent recall integration
 
-The `skills/regurgitate-recall` package is a thin consumer of the public recall CLI.
-Its `SKILL.md` waits for task context, requests a bounded aggregate, and tells
-the agent to verify observations against current state. It does not depend on
-AoE, Codex transcript formats, SQLite, or key management.
+The `skills/regurgitate-recall` package is a thin consumer of the public CLI.
+Its `SKILL.md` waits for task context, requests a bounded aggregate, and records
+one controlled semantic result after a meaningful milestone or rejected
+approach. It tells the agent to verify recalled observations and explicitly
+distinguishes strategy outcome from tool exit status. It does not depend on AoE,
+provider transcript formats, SQLite, or key management.
 
 An agent command sandbox may deny access to the operating-system credential
 store even when the user's desktop session has unlocked it. In that case the
@@ -200,9 +202,12 @@ storage interfaces. A path is carried only by a non-serializable
 `ProjectLocator` to the private identity resolver.
 
 SQLite receives an event UUID, a key-derived project lookup token,
-authenticated envelope metadata, a random nonce, and ciphertext. The event UUID
-and timestamps are structural metadata; the session ID, project ID, agent type,
-operation, outcome, and other event fields are inside the encrypted payload.
+authenticated envelope metadata, a random nonce, and ciphertext. The event UUID,
+timestamp, and controlled `hook_execution`/`learned_practice` discriminator are
+structural metadata. That discriminator permits bounded per-kind retrieval and
+aggregate health counts without exposing the learned task or strategy. Session
+ID, project ID, agent type, task, strategy, operation, and outcome remain inside
+the encrypted payload.
 Project and cursor tables expose only
 HMAC-SHA-256 lookup tokens, version numbers, nonces, and ciphertext. Their
 paths, session IDs, cursor offsets, digests, and pending state are encrypted.
@@ -222,35 +227,37 @@ separate key-derived project token in SQLite so the storage adapter can select
 a project without putting its UUID or path in plaintext. The decrypted project
 UUID is verified before an event enters aggregation.
 
-Recall groups events by controlled capability, operation, and strategy. Its
-output contains attempt/success/failure/unknown counts and, when present, the
-most common controlled error class. Two or more known outcomes add a rounded
-success percentage, sample-count confidence, and deterministic `prefer`,
-`avoid`, or `mixed` guidance. One-off and all-unknown groups omit those fields.
-The `strategy` field is always present; unlabeled hook aggregates serialize it
-as `null` so consumers can parse one uniform observation shape.
-Ranking considers task relevance and verified guidance before raw sample count,
-so high-volume unknown activity cannot bury a smaller actionable strategy. It
-has no event-level output mode and rejects limits above 20 before querying
-storage. Identifiers and timestamps are used internally for scoping and recency
-ranking but are absent from the result.
+Recall retrieves learned practices and hook executions through separate bounded
+queries, so high-volume telemetry cannot evict useful practice from the
+candidate window. `observations` groups only learned practices by controlled
+task, capability, operation, and strategy. It reports semantic outcome counts
+and, when supported by repetition, confidence plus deterministic `prefer`,
+`avoid`, or `mixed` guidance. `--failures` filters only these semantic outcomes.
 
-Optional task text is ephemeral input to a small deterministic classifier. The
-classifier keeps only controlled capability and operation hints, then drops the
-normalized text. Those hints affect ranking but are not stored or returned.
+Provider-reported execution counts appear under the separate `hook_summary`
+key and never participate in guidance. They describe a bounded recent sample
+and make no claim that an approach was correct. Recall has no event-level mode
+and rejects observation limits above 20. Identifiers and timestamps remain
+absent from the result.
+
+Optional task text is ephemeral input to a deterministic classifier. It reduces
+the query to controlled task, capability, and operation hints, then drops the
+normalized text. A supplied query filters observations to matching controlled
+tasks; a query with no recognized task yields no practice observations rather
+than generic telemetry. The query is neither stored nor returned.
 After ranking and the observation-count limit, the result is serialized and
 trimmed from lowest priority until its conservative four-bytes-per-token
 estimate fits the requested budget. The output records that estimate for later
 evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 
 The agent-facing instruction bundle is part of the same context boundary. A
-regression test keeps the embedded `SKILL.md` at or below 3,000 bytes; the v0.2
-bundle was 2,540 bytes; the current bundle, including sandbox recovery guidance,
-is 2,983 bytes, down from the initial 4,819. Using the CLI's conservative
-four-bytes-per-token estimate, that is approximately 746 tokens instead of
-1,205. Together with the default recall budget reduction from 600 to 300, the
-Regurgitate-controlled ceiling for an activated default recall is roughly 1,046
-tokens instead of 1,805, a 42% reduction. Successful recording hooks remain
+regression test keeps the embedded `SKILL.md` at or below 3,000 bytes. The
+current bundle, including semantic-learning and sandbox guidance, is 2,837
+bytes, down from the initial 4,819. Using the CLI's conservative
+four-bytes-per-token estimate, that is approximately 710 tokens instead of
+1,205. Together with the default 300-token recall budget, the
+Regurgitate-controlled ceiling for an activated default recall is roughly 1,010
+tokens instead of 1,805, a 44% reduction. Successful recording hooks remain
 silent and therefore add no Regurgitate output to agent context. AoE-rendered skills
 also include one instruction containing the local worker path, whose length is
 host-dependent. These figures describe the tracked skill and Regurgitate-owned
@@ -263,9 +270,9 @@ The `status` command composes two narrow read-only probes. The operating-system
 credential-store probe checks for an existing, correctly sized master key
 without entering the create path. The database probe checks only an existing
 regular file, opens it with SQLite read-only flags, runs a bounded integrity
-check, and returns an aggregate event count. It does not create directories,
-initialize tables, migrate schema, change permissions, decrypt event payloads,
-or repair damage.
+check, and returns total, hook-execution, and learned-practice counts. It does
+not create directories, initialize tables, migrate schema, change permissions,
+decrypt event payloads, or repair damage.
 
 The application service reduces probe results to `ready`, `not_configured`, or
 `unavailable` component states and an overall status. Backend errors are not
@@ -290,7 +297,7 @@ Missing history stays missing: neither a key, directory, database, nor project
 mapping is created.
 
 Apply begins an immediate SQLite transaction, authenticates the encrypted
-path-to-project mapping, deletes both indexed and legacy unindexed events, and
+path-to-project mapping, deletes the project's indexed events, and
 removes the encrypted mapping. It intentionally retains ingestion cursors so a
 later AoE status transition cannot replay already-forgotten transcript history.
 Before deletion, it adds the old key-derived event-project token to a tombstone
@@ -328,7 +335,7 @@ Implemented:
 - controlled event schema and conservative outcome classification;
 - Codex and Claude native-hook normalization with shared conformance fixtures;
 - cursor-free, encrypted, idempotent native-hook recording;
-- fixed-vocabulary explicit learning for directly verified practice outcomes;
+- fixed-vocabulary task and strategy learning for semantic practice outcomes;
 - content-free strategy derivation for unambiguous patch/write tool identities;
 - Codex transcript normalization;
 - AoE-managed Codex session discovery;
@@ -351,8 +358,8 @@ Implemented:
 - preview-first age/count retention with bounded deletion transactions;
 - project-scoped aggregate recall with operation/failure filters and a hard
   observation limit;
-- confidence/guidance scoring that excludes unknown events from evidence;
-- ephemeral task-query ranking and explicit serialized-output token budgets;
+- separate hook telemetry and semantic practice recall;
+- task-filtered query matching and explicit serialized-output token budgets;
 - a provider-neutral agent recall skill with optional Codex metadata;
 - a preview-first skill package installer with explicit atomic replacement;
 - locked, atomic, conflict-refusing AoE, Codex, and Claude hook config

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use zeroize::Zeroizing;
 
-use crate::core::{Capability, Operation};
+use crate::core::{Capability, Operation, TaskKind};
 
 /// Controlled, content-free task hints derived from an ephemeral query.
 /// The source query is never retained in this value.
@@ -10,6 +10,7 @@ use crate::core::{Capability, Operation};
 pub(super) struct TaskIntent {
     capabilities: BTreeSet<Capability>,
     operations: BTreeSet<Operation>,
+    tasks: BTreeSet<TaskKind>,
 }
 
 impl TaskIntent {
@@ -102,8 +103,56 @@ impl TaskIntent {
                 }
                 _ => {}
             }
+            match token {
+                "config" | "configuration" | "settings" | "setup" => {
+                    intent.tasks.insert(TaskKind::Configuration);
+                }
+                "data" | "import" | "importer" | "ingest" | "ingestion" | "etl" | "dataset"
+                | "csv" | "migration" => {
+                    intent.tasks.insert(TaskKind::DataImport);
+                }
+                "bug" | "debug" | "debugging" | "error" | "failure" | "broken" | "fix" => {
+                    intent.tasks.insert(TaskKind::Debugging);
+                }
+                "dependency" | "dependencies" | "upgrade" | "update" => {
+                    intent.tasks.insert(TaskKind::DependencyUpdate);
+                }
+                "doc" | "docs" | "documentation" | "readme" => {
+                    intent.tasks.insert(TaskKind::Documentation);
+                }
+                "feature" | "implement" | "implementation" | "build" | "create" | "add" => {
+                    intent.tasks.insert(TaskKind::FeatureImplementation);
+                }
+                "integration" | "api" | "provider" | "service" | "database" => {
+                    intent.tasks.insert(TaskKind::Integration);
+                }
+                "performance" | "optimize" | "optimization" | "latency" | "memory" => {
+                    intent.tasks.insert(TaskKind::Performance);
+                }
+                "refactor" | "refactoring" | "cleanup" => {
+                    intent.tasks.insert(TaskKind::Refactoring);
+                }
+                "release" | "package" | "packaging" | "publish" | "deploy" => {
+                    intent.tasks.insert(TaskKind::Release);
+                }
+                "research" | "analysis" | "analyze" | "compare" | "investigate" => {
+                    intent.tasks.insert(TaskKind::Research);
+                }
+                "security" | "privacy" | "credential" | "encryption" | "audit" => {
+                    intent.tasks.insert(TaskKind::Security);
+                }
+                "test" | "tests" | "testing" | "verify" | "verification" | "pytest"
+                | "unittest" => {
+                    intent.tasks.insert(TaskKind::Testing);
+                }
+                _ => {}
+            }
         }
         intent
+    }
+
+    pub fn matches_task(&self, task: TaskKind) -> bool {
+        self.tasks.contains(&task)
     }
 
     pub fn relevance(&self, capability: Capability, operation: Operation) -> usize {
@@ -153,5 +202,15 @@ mod tests {
 
         assert!(intent.capabilities.contains(&Capability::Research));
         assert!(intent.operations.contains(&Operation::Analyze));
+        assert!(intent.matches_task(TaskKind::Research));
+    }
+
+    #[test]
+    fn discriminates_data_import_from_unrecognized_text() {
+        let import = TaskIntent::classify("build a data importer");
+        let unrelated = TaskIntent::classify("zzz nonsense unrelated");
+
+        assert!(import.matches_task(TaskKind::DataImport));
+        assert!(!unrelated.matches_task(TaskKind::DataImport));
     }
 }

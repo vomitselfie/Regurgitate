@@ -292,6 +292,8 @@ mod tests {
                 history: HistoryHealth {
                     status: ComponentReadiness::Ready,
                     event_count: Some(9),
+                    hook_event_count: Some(7),
+                    learned_practice_count: Some(2),
                 },
                 hooks: vec![],
             },

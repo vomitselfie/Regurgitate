@@ -8,7 +8,7 @@ use sha2::Sha256;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::core::HistoryEvent;
+use crate::core::{EvidenceKind, HistoryEvent};
 
 use super::MasterKey;
 
@@ -29,6 +29,7 @@ pub struct SealedEvent {
 pub struct EnvelopeMetadata {
     pub event_id: Uuid,
     pub created_at_ms: i64,
+    pub evidence_kind: EvidenceKind,
     pub schema_version: u32,
     pub envelope_version: u32,
 }
@@ -38,17 +39,19 @@ impl EnvelopeMetadata {
         Self {
             event_id: event.id,
             created_at_ms: event.timestamp.timestamp_millis(),
+            evidence_kind: event.evidence_kind,
             schema_version: event.schema_version,
             envelope_version: ENVELOPE_VERSION,
         }
     }
 
     fn associated_data(&self) -> Vec<u8> {
-        let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 4 + 16 + 8 + 4);
+        let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 4 + 16 + 8 + 1 + 4);
         aad.extend_from_slice(AAD_DOMAIN);
         aad.extend_from_slice(&self.envelope_version.to_be_bytes());
         aad.extend_from_slice(self.event_id.as_bytes());
         aad.extend_from_slice(&self.created_at_ms.to_be_bytes());
+        aad.push(self.evidence_kind.storage_code());
         aad.extend_from_slice(&self.schema_version.to_be_bytes());
         aad
     }
@@ -119,6 +122,7 @@ impl EventCipher {
             .map_err(|error| anyhow!("could not deserialize encrypted event: {error}"))?;
 
         if event.id != metadata.event_id
+            || event.evidence_kind != metadata.evidence_kind
             || event.schema_version != metadata.schema_version
             || event.timestamp.timestamp_millis() != metadata.created_at_ms
         {

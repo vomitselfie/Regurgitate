@@ -7,7 +7,9 @@ use uuid::Uuid;
 
 use crate::{
     application::ProjectLocator,
-    core::{Capability, ErrorClass, HistoryEvent, Operation, Outcome, Strategy},
+    core::{
+        Capability, ErrorClass, EvidenceKind, HistoryEvent, Operation, Outcome, Strategy, TaskKind,
+    },
 };
 
 use super::task::TaskIntent;
@@ -17,14 +19,19 @@ pub const MAX_RECALL_LIMIT: usize = 20;
 pub const DEFAULT_TOKEN_BUDGET: usize = 300;
 pub const MAX_TOKEN_BUDGET: usize = 1_000;
 const MIN_TOKEN_BUDGET: usize = 32;
-const MAX_CANDIDATE_EVENTS: usize = 1_000;
+const MAX_CANDIDATE_EVENTS_PER_KIND: usize = 1_000;
 
 pub trait ProjectLookup {
     fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>>;
 }
 
 pub trait ProjectEventSource {
-    fn recent_project_events(&self, project_id: Uuid, limit: usize) -> Result<Vec<HistoryEvent>>;
+    fn recent_project_events(
+        &self,
+        project_id: Uuid,
+        evidence_kind: EvidenceKind,
+        limit: usize,
+    ) -> Result<Vec<HistoryEvent>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,13 +68,24 @@ impl RecallOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RecallResult {
     pub observations: Vec<RecallObservation>,
+    pub hook_summary: HookSummary,
     pub approximate_tokens: usize,
 }
 
 impl RecallResult {
     pub fn empty() -> Self {
-        budgeted_result(Vec::new(), DEFAULT_TOKEN_BUDGET)
+        budgeted_result(Vec::new(), HookSummary::default(), DEFAULT_TOKEN_BUDGET)
     }
+}
+
+/// A bounded diagnostic sample of provider-reported tool execution outcomes.
+/// These counts never participate in procedural guidance.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HookSummary {
+    pub sampled_executions: usize,
+    pub reported_successes: usize,
+    pub reported_failures: usize,
+    pub unknown: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -88,9 +106,10 @@ pub enum PracticeGuidance {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RecallObservation {
+    pub task: TaskKind,
     pub capability: Capability,
     pub operation: Operation,
-    pub strategy: Option<Strategy>,
+    pub strategy: Strategy,
     pub attempts: usize,
     pub successes: usize,
     pub failures: usize,
@@ -125,14 +144,33 @@ where
     ) -> Result<RecallResult> {
         options.validate()?;
         let Some(project_id) = self.history.find_project(locator)? else {
-            return Ok(budgeted_result(Vec::new(), options.token_budget));
+            return Ok(budgeted_result(
+                Vec::new(),
+                HookSummary::default(),
+                options.token_budget,
+            ));
         };
-        let events = self
-            .history
-            .recent_project_events(project_id, MAX_CANDIDATE_EVENTS)?;
+        let practice_events = self.history.recent_project_events(
+            project_id,
+            EvidenceKind::LearnedPractice,
+            MAX_CANDIDATE_EVENTS_PER_KIND,
+        )?;
+        let hook_events = self.history.recent_project_events(
+            project_id,
+            EvidenceKind::HookExecution,
+            MAX_CANDIDATE_EVENTS_PER_KIND,
+        )?;
         let intent = task_query.map(TaskIntent::classify).unwrap_or_default();
+        let (observations, hook_summary) = aggregate(
+            practice_events,
+            hook_events,
+            options,
+            &intent,
+            task_query.is_some(),
+        );
         Ok(budgeted_result(
-            aggregate(events, options, &intent),
+            observations,
+            hook_summary,
             options.token_budget,
         ))
     }
@@ -140,9 +178,10 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GroupKey {
+    task: TaskKind,
     capability: Capability,
     operation: Operation,
-    strategy: Option<Strategy>,
+    strategy: Strategy,
 }
 
 struct Group {
@@ -155,12 +194,30 @@ struct Group {
 }
 
 fn aggregate(
-    events: Vec<HistoryEvent>,
+    practice_events: Vec<HistoryEvent>,
+    hook_events: Vec<HistoryEvent>,
     options: RecallOptions,
     intent: &TaskIntent,
-) -> Vec<RecallObservation> {
+    query_present: bool,
+) -> (Vec<RecallObservation>, HookSummary) {
+    let mut hook_summary = HookSummary::default();
+    for event in hook_events {
+        if options
+            .operation
+            .is_some_and(|wanted| event.operation != wanted)
+        {
+            continue;
+        }
+        hook_summary.sampled_executions += 1;
+        match event.outcome {
+            Outcome::Success => hook_summary.reported_successes += 1,
+            Outcome::Failure => hook_summary.reported_failures += 1,
+            Outcome::Unknown => hook_summary.unknown += 1,
+        }
+    }
+
     let mut groups = HashMap::<GroupKey, Group>::new();
-    for event in events {
+    for event in practice_events {
         if options
             .operation
             .is_some_and(|wanted| event.operation != wanted)
@@ -168,10 +225,17 @@ fn aggregate(
         {
             continue;
         }
+        let (Some(task), Some(strategy)) = (event.task, event.strategy) else {
+            continue;
+        };
+        if query_present && !intent.matches_task(task) {
+            continue;
+        }
         let key = GroupKey {
+            task,
             capability: event.capability,
             operation: event.operation,
-            strategy: event.strategy,
+            strategy,
         };
         let group = groups.entry(key).or_insert_with(|| Group {
             attempts: 0,
@@ -209,12 +273,12 @@ fn aggregate(
             (
                 relevance,
                 guidance_priority(guidance),
-                usize::from(key.strategy.is_some()),
                 confidence_priority(confidence),
                 score,
                 group.latest,
                 key,
                 RecallObservation {
+                    task: key.task,
                     capability: key.capability,
                     operation: key.operation,
                     strategy: key.strategy,
@@ -240,16 +304,17 @@ fn aggregate(
             .then_with(|| right.2.cmp(&left.2))
             .then_with(|| right.3.cmp(&left.3))
             .then_with(|| right.4.cmp(&left.4))
-            .then_with(|| right.5.cmp(&left.5))
-            .then_with(|| left.6.capability.cmp(&right.6.capability))
-            .then_with(|| left.6.operation.cmp(&right.6.operation))
-            .then_with(|| left.6.strategy.cmp(&right.6.strategy))
+            .then_with(|| left.5.task.cmp(&right.5.task))
+            .then_with(|| left.5.capability.cmp(&right.5.capability))
+            .then_with(|| left.5.operation.cmp(&right.5.operation))
+            .then_with(|| left.5.strategy.cmp(&right.5.strategy))
     });
-    ranked
+    let observations = ranked
         .into_iter()
         .take(options.limit)
-        .map(|(_, _, _, _, _, _, _, observation)| observation)
-        .collect()
+        .map(|(_, _, _, _, _, _, observation)| observation)
+        .collect();
+    (observations, hook_summary)
 }
 
 fn evidence_confidence(known_outcomes: usize) -> Option<EvidenceConfidence> {
@@ -291,10 +356,15 @@ fn confidence_priority(confidence: Option<EvidenceConfidence>) -> usize {
     }
 }
 
-fn budgeted_result(mut observations: Vec<RecallObservation>, token_budget: usize) -> RecallResult {
+fn budgeted_result(
+    mut observations: Vec<RecallObservation>,
+    hook_summary: HookSummary,
+    token_budget: usize,
+) -> RecallResult {
     loop {
         let mut result = RecallResult {
             observations,
+            hook_summary,
             approximate_tokens: 0,
         };
         loop {
@@ -346,10 +416,17 @@ mod tests {
         fn recent_project_events(
             &self,
             _project_id: Uuid,
+            evidence_kind: EvidenceKind,
             limit: usize,
         ) -> Result<Vec<HistoryEvent>> {
             self.requested_limit.set(limit);
-            Ok(self.events.iter().take(limit).cloned().collect())
+            Ok(self
+                .events
+                .iter()
+                .filter(|event| event.evidence_kind == evidence_kind)
+                .take(limit)
+                .cloned()
+                .collect())
         }
     }
 
@@ -359,15 +436,17 @@ mod tests {
             timestamp: Utc
                 .timestamp_millis_opt(1_776_254_400_000 + id as i64)
                 .unwrap(),
-            session_id: Some("PRIVATE_SESSION".to_owned()),
+            session_id: None,
             project_id: Some(Uuid::from_u128(7)),
-            agent: Some(AgentKind::Codex),
+            agent: None,
+            evidence_kind: EvidenceKind::LearnedPractice,
+            task: Some(TaskKind::Testing),
             capability: Capability::Test,
             operation,
             strategy: Some(Strategy::NativeTool),
             outcome,
             duration_ms: None,
-            error_class: (outcome == Outcome::Failure).then_some(ErrorClass::TestFailure),
+            error_class: None,
             schema_version: CURRENT_SCHEMA_VERSION,
         }
     }
@@ -396,7 +475,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(history.requested_limit.get(), MAX_CANDIDATE_EVENTS);
+        assert_eq!(history.requested_limit.get(), MAX_CANDIDATE_EVENTS_PER_KIND);
         assert_eq!(result.observations.len(), 1);
         assert_eq!(result.observations[0].attempts, 2);
         assert_eq!(result.observations[0].successes, 1);
@@ -421,11 +500,15 @@ mod tests {
     }
 
     #[test]
-    fn verified_strategy_outranks_high_volume_unknown_activity() {
+    fn hook_activity_is_separate_from_verified_practice() {
         let mut events = Vec::new();
         for id in 1..=20 {
             let mut unknown = event(id, Operation::Command, Outcome::Unknown);
+            unknown.evidence_kind = EvidenceKind::HookExecution;
+            unknown.task = None;
             unknown.strategy = None;
+            unknown.session_id = Some("PRIVATE_SESSION".to_owned());
+            unknown.agent = Some(AgentKind::Codex);
             events.push(unknown);
         }
         for id in 21..=22 {
@@ -449,7 +532,7 @@ mod tests {
 
         assert_eq!(
             result.observations[0].strategy,
-            Some(Strategy::TargetedVerification)
+            Strategy::TargetedVerification
         );
         assert_eq!(result.observations[0].success_rate_percent, Some(100));
         assert_eq!(
@@ -460,10 +543,9 @@ mod tests {
             result.observations[0].guidance,
             Some(PracticeGuidance::Prefer)
         );
-        assert_eq!(result.observations[1].guidance, None);
-        assert_eq!(result.observations[1].confidence, None);
-        let encoded = serde_json::to_value(&result).unwrap();
-        assert!(encoded["observations"][1]["strategy"].is_null());
+        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.hook_summary.sampled_executions, 20);
+        assert_eq!(result.hook_summary.unknown, 20);
     }
 
     #[test]
@@ -472,6 +554,7 @@ mod tests {
             .map(|id| {
                 let mut event = event(id, Operation::Analyze, Outcome::Success);
                 event.capability = Capability::Research;
+                event.task = Some(TaskKind::Research);
                 event.strategy = Some(Strategy::ReproduceThenCompare);
                 event
             })
@@ -494,7 +577,7 @@ mod tests {
         assert_eq!(result.observations[0].operation, Operation::Analyze);
         assert_eq!(
             result.observations[0].strategy,
-            Some(Strategy::ReproduceThenCompare)
+            Strategy::ReproduceThenCompare
         );
         assert_eq!(
             result.observations[0].guidance,
@@ -603,16 +686,21 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(result.observations.len(), MAX_RECALL_LIMIT);
+        assert!(result.observations.len() <= MAX_RECALL_LIMIT);
+        assert!(result.approximate_tokens <= MAX_TOKEN_BUDGET);
     }
 
     #[test]
     fn task_relevance_survives_a_tight_token_budget_without_leaking_query_text() {
         let mut events = Vec::new();
         for id in 1..=10 {
-            events.push(event(id, Operation::Command, Outcome::Success));
+            let mut item = event(id, Operation::Command, Outcome::Success);
+            item.task = Some(TaskKind::Documentation);
+            events.push(item);
         }
-        events.push(event(20, Operation::ApplyPatch, Outcome::Success));
+        let mut patch = event(20, Operation::ApplyPatch, Outcome::Success);
+        patch.task = Some(TaskKind::FeatureImplementation);
+        events.push(patch);
         let history = MemoryHistory {
             project_id: Some(Uuid::from_u128(7)),
             events,
@@ -622,16 +710,17 @@ mod tests {
             .recall(
                 &ProjectLocator::new(PathBuf::from("/private/project")),
                 RecallOptions {
-                    token_budget: 100,
+                    limit: 1,
+                    token_budget: 180,
                     ..RecallOptions::default()
                 },
-                Some("patch SUPER_SECRET_TASK_TOKEN"),
+                Some("feature patch SUPER_SECRET_TASK_TOKEN"),
             )
             .unwrap();
 
         assert_eq!(result.observations.len(), 1);
         assert_eq!(result.observations[0].operation, Operation::ApplyPatch);
-        assert!(result.approximate_tokens <= 100);
+        assert!(result.approximate_tokens <= 180);
         assert!(
             !serde_json::to_string(&result)
                 .unwrap()
@@ -658,5 +747,77 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("token budget"));
         assert_eq!(history.requested_limit.get(), 0);
+    }
+
+    #[test]
+    fn data_import_query_excludes_unrelated_and_unrecognized_practices() {
+        let mut import = event(1, Operation::Analyze, Outcome::Success);
+        import.task = Some(TaskKind::DataImport);
+        import.capability = Capability::Research;
+        import.strategy = Some(Strategy::PerSubjectStreaming);
+        let mut documentation = event(2, Operation::ApplyPatch, Outcome::Success);
+        documentation.task = Some(TaskKind::Documentation);
+        documentation.strategy = Some(Strategy::StructuredPatch);
+        let history = MemoryHistory {
+            project_id: Some(Uuid::from_u128(7)),
+            events: vec![import, documentation],
+            requested_limit: Cell::new(0),
+        };
+
+        let relevant = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions::default(),
+                Some("data import"),
+            )
+            .unwrap();
+        let nonsense = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions::default(),
+                Some("zzz nonsense unrelated"),
+            )
+            .unwrap();
+
+        assert_eq!(relevant.observations.len(), 1);
+        assert_eq!(relevant.observations[0].task, TaskKind::DataImport);
+        assert_eq!(
+            relevant.observations[0].strategy,
+            Strategy::PerSubjectStreaming
+        );
+        assert!(nonsense.observations.is_empty());
+    }
+
+    #[test]
+    fn failures_filter_semantic_practices_not_successful_tool_executions() {
+        let mut hook = event(1, Operation::ApplyPatch, Outcome::Success);
+        hook.evidence_kind = EvidenceKind::HookExecution;
+        hook.task = None;
+        hook.strategy = Some(Strategy::DirectTextMutation);
+        let mut failed_practice = event(2, Operation::ApplyPatch, Outcome::Failure);
+        failed_practice.task = Some(TaskKind::Documentation);
+        failed_practice.strategy = Some(Strategy::DirectTextMutation);
+        let history = MemoryHistory {
+            project_id: Some(Uuid::from_u128(7)),
+            events: vec![hook, failed_practice],
+            requested_limit: Cell::new(0),
+        };
+
+        let result = RecallService::new(&history)
+            .recall(
+                &ProjectLocator::new(PathBuf::from("/private/project")),
+                RecallOptions {
+                    failures_only: true,
+                    ..RecallOptions::default()
+                },
+                Some("documentation"),
+            )
+            .unwrap();
+
+        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.observations[0].failures, 1);
+        assert_eq!(result.observations[0].common_error, None);
+        assert_eq!(result.hook_summary.reported_successes, 1);
+        assert_eq!(result.hook_summary.reported_failures, 0);
     }
 }

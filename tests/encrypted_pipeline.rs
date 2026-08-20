@@ -5,11 +5,13 @@ use regurgitate::{
     storage::{EncryptedStore, MasterKey},
 };
 use tempfile::tempdir;
+use uuid::Uuid;
 
 #[test]
 fn adversarial_hook_content_never_reaches_the_database() {
     let fixture = File::open("tests/fixtures/codex/post-tool-use-success.json").unwrap();
-    let event = normalize_post_tool_hook(fixture).unwrap();
+    let mut event = normalize_post_tool_hook(fixture).unwrap();
+    event.project_id = Some(Uuid::from_u128(7));
     let event_id = event.id;
 
     let temp = tempdir().unwrap();

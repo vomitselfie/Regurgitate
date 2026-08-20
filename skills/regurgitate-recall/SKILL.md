@@ -1,71 +1,66 @@
 ---
 name: regurgitate-recall
-description: Recall bounded, privacy-safe procedural evidence for the current project. Use after the task is understood when prior local strategies could prevent repeated exploration, after a meaningful failure, or before declaring an approach blocked. Never use it to recover raw history or secrets.
+description: Recall project practice and record one controlled semantic outcome after meaningful success or failure. Use after understanding a task, rejecting an approach, or finishing verified work.
 ---
 
 # Regurgitate Recall
 
-Treat Regurgitate aggregates as advisory evidence, never current truth.
+Treat Regurgitate evidence as advisory, never as current truth.
 
-## Recall once
+## Recall relevant practice
 
-After the task is understood, recall only when a procedural pattern could avoid
-repeated exploration:
-
-```bash
-regurgitate recall --project "$PWD" --query "<short non-secret category>" --token-budget 300
-```
-
-Use generic terms such as `test failure` or `dependency update`; never place
-prompts, source, commands, paths, credentials, or private values in `--query`.
-Continue normally if Regurgitate is unavailable or empty. Do not change credentials
-or privacy settings to make recall work. Validate relevant evidence against the
-current repository and constraints before acting.
-
-## Sandboxed hosts
-
-If the sandbox blocks the operating system credential store and the host
-supports per-command approval, retry once outside the sandbox. Scope approval
-to the exact `regurgitate recall` or `regurgitate learn` prefix. Never approve a shell
-wrapper, combine commands, broaden access, or change credentials or storage. If
-the retry is unavailable or fails, continue normally.
-
-## Record a verified practice
-
-After a meaningful approach is directly verified by a test, validation,
-provider result, or user confirmation, record at most one outcome:
+Recall at most once after understanding a task when prior practice could help:
 
 ```bash
-regurgitate learn --project "$PWD" --strategy <controlled-strategy> --outcome <success|failure>
+regurgitate recall --project "$PWD" --query "<short non-secret task category>" --token-budget 300
 ```
 
-Use only an exact `regurgitate learn --help` strategy, never a vague substitute.
-Skip ambiguous outcomes, low-level tool calls, duplicate milestones, or work
-with no exact strategy. Store no explanation or text.
+Use generic text such as `data import` or `integration debugging`; never include
+prompts, source, commands, paths, credentials, or private values.
+`observations` contains explicitly evaluated practice matched to the query.
+`hook_summary` is tool execution telemetry, not approach correctness. Continue
+if observations are empty or Regurgitate is unavailable, and verify guidance.
 
-Research strategies have exact meanings:
+## Record the semantic outcome
 
-- `reproduce-then-compare`: reproduce a baseline, then compare under consistent
-  criteria.
+Before finishing a milestone, or after abandoning an approach, record one
+result when a controlled strategy materially affected it:
+
+```bash
+regurgitate learn --project "$PWD" --task <task> --strategy <strategy> --outcome <success|failure>
+```
+
+Outcome means whether the strategy worked, not whether its tool call executed.
+A command can exit 0 while `direct-text-mutation` failed by corrupting a file.
+A `targeted-verification` that exposes a broken change succeeded even though
+the change failed. Record once per milestone; skip duplicates, low-level work,
+ambiguous results, and work with no exact strategy.
+
+Task values are `configuration`, `data-import`, `debugging`,
+`dependency-update`, `documentation`, `feature-implementation`, `integration`,
+`performance`, `refactoring`, `release`, `research`, `security`, and `testing`.
+Use an exact strategy from `regurgitate learn --help`. Research strategies mean:
+
+- `reproduce-then-compare`: reproduce a baseline, then compare consistently.
 - `per-subject-streaming`: complete and emit each subject independently.
 - `resource-cap-first`: set the exploration limit before research begins.
 
-## Focus after a failure
-
-After a meaningful failure, make at most one focused follow-up:
+After a meaningful failed strategy, one focused recall is allowed:
 
 ```bash
-regurgitate recall --project "$PWD" --failures --query "<short non-secret category>" --token-budget 200
+regurgitate recall --project "$PWD" --failures --query "<short non-secret task category>" --token-budget 200
 ```
 
-Do not issue overlapping recalls to reconstruct history or evade output limits.
-Act on `guidance` only when present; weigh `confidence` and
-`success_rate_percent`, treat `unknown` and small samples as weak evidence, and
-treat `common_error` only as a class to investigate.
+`--failures` selects failed learned practices, not tool calls. Use guidance only
+when present and weigh confidence and sample size.
+
+## Sandboxed hosts
+
+If the credential store is sandbox-blocked, retry once with approval scoped to
+the exact `regurgitate recall` or `regurgitate learn` prefix. Never approve a
+shell wrapper, broaden access, or change credentials or policy.
 
 ## Preserve the boundary
 
-Never inspect or export Regurgitate databases, keys, cursors, identifiers, or
-individual records. Never infer conversations, source, commands, output,
-paths, timestamps, or secrets from aggregates. If asked for raw history,
-explain that Regurgitate deliberately cannot provide it.
+Never inspect or export databases, keys, cursors, identifiers, or events.
+Queries are ephemeral; learned values are controlled. There is no raw history.

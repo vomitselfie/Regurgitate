@@ -3,7 +3,9 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::core::{CURRENT_SCHEMA_VERSION, ErrorClass, HistoryEvent, Outcome, Strategy};
+use crate::core::{
+    CURRENT_SCHEMA_VERSION, EvidenceKind, HistoryEvent, Outcome, Strategy, TaskKind,
+};
 
 use super::{EventSink, HookObservation, ProjectLocator, ProjectResolver, RecordingService};
 
@@ -38,6 +40,7 @@ where
     pub fn learn(
         &self,
         project: ProjectLocator,
+        task: TaskKind,
         strategy: Strategy,
         outcome: Outcome,
     ) -> Result<LearningReport> {
@@ -52,12 +55,14 @@ where
                 session_id: None,
                 project_id: None,
                 agent: None,
+                evidence_kind: EvidenceKind::LearnedPractice,
+                task: Some(task),
                 capability,
                 operation,
                 strategy: Some(strategy),
                 outcome,
                 duration_ms: None,
-                error_class: (outcome == Outcome::Failure).then_some(ErrorClass::Unknown),
+                error_class: None,
                 schema_version: CURRENT_SCHEMA_VERSION,
             },
             project,
@@ -107,6 +112,7 @@ mod tests {
         let report = LearningService::new(Rc::clone(&history))
             .learn(
                 ProjectLocator::new(PathBuf::from("/private/SECRET_PROJECT")),
+                TaskKind::Configuration,
                 Strategy::AtomicWrite,
                 Outcome::Success,
             )
@@ -116,6 +122,8 @@ mod tests {
         let events = history.events.borrow();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].capability, Capability::Filesystem);
+        assert_eq!(events[0].evidence_kind, EvidenceKind::LearnedPractice);
+        assert_eq!(events[0].task, Some(TaskKind::Configuration));
         assert_eq!(events[0].operation, Operation::WriteFile);
         assert_eq!(events[0].strategy, Some(Strategy::AtomicWrite));
         assert_eq!(events[0].outcome, Outcome::Success);
@@ -134,6 +142,7 @@ mod tests {
         let error = LearningService::new(Rc::clone(&history))
             .learn(
                 ProjectLocator::new(PathBuf::from("/private/project")),
+                TaskKind::Testing,
                 Strategy::StructuredPatch,
                 Outcome::Unknown,
             )
@@ -141,5 +150,22 @@ mod tests {
 
         assert!(error.to_string().contains("known outcome"));
         assert!(history.events.borrow().is_empty());
+    }
+
+    #[test]
+    fn semantic_failure_is_not_misrepresented_as_a_provider_error() {
+        let history = Rc::new(MemoryHistory::default());
+        LearningService::new(Rc::clone(&history))
+            .learn(
+                ProjectLocator::new(PathBuf::from("/private/project")),
+                TaskKind::Documentation,
+                Strategy::DirectTextMutation,
+                Outcome::Failure,
+            )
+            .unwrap();
+
+        let events = history.events.borrow();
+        assert_eq!(events[0].outcome, Outcome::Failure);
+        assert_eq!(events[0].error_class, None);
     }
 }

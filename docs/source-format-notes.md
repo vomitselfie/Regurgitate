@@ -125,10 +125,11 @@ optional duration.
 
 Regurgitate registers both terminal events. It allowlists only the session ID,
 working directory, event name, tool name, tool-use ID, and optional duration.
-The distinct hook event names are sufficient to derive success or failure, so
-the adapter has no fields for tool input, tool response, error, transcript path,
-or permission mode. The working directory becomes only a non-serializable
-project locator.
+The distinct hook event names are sufficient to derive provider-reported tool
+execution status, so the adapter has no fields for tool input, tool response,
+error, transcript path, or permission mode. This status is never treated as
+semantic approach correctness. The working directory becomes only a
+non-serializable project locator.
 
 These assumptions were checked against the current official
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) on the

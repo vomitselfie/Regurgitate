@@ -77,7 +77,9 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use uuid::Uuid;
 
-    use crate::core::{AgentKind, CURRENT_SCHEMA_VERSION, Capability, Operation, Outcome};
+    use crate::core::{
+        AgentKind, CURRENT_SCHEMA_VERSION, Capability, EvidenceKind, Operation, Outcome,
+    };
 
     use super::*;
 
@@ -125,6 +127,8 @@ mod tests {
                 session_id: Some("PRIVATE_SESSION".to_owned()),
                 project_id: None,
                 agent: Some(AgentKind::Claude),
+                evidence_kind: EvidenceKind::HookExecution,
+                task: None,
                 capability: Capability::Test,
                 operation: Operation::Command,
                 strategy: None,

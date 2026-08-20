@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::{
     application::{HookObservation, ProjectLocator},
     core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, HistoryEvent, Outcome, classify_strategy, classify_tool,
-        classify_tool_response,
+        AgentKind, CURRENT_SCHEMA_VERSION, EvidenceKind, HistoryEvent, Outcome, classify_strategy,
+        classify_tool, classify_tool_response,
     },
 };
 
@@ -69,6 +69,8 @@ fn normalize_hook_input(input: CodexHookInput) -> Result<(HistoryEvent, Option<P
         session_id: Some(input.session_id),
         project_id: None,
         agent: Some(AgentKind::Codex),
+        evidence_kind: EvidenceKind::HookExecution,
+        task: None,
         capability,
         operation,
         strategy: classify_strategy(&tool_name),
@@ -192,6 +194,8 @@ fn history_event(
         session_id: Some(session_id.to_owned()),
         project_id: None,
         agent: Some(AgentKind::Codex),
+        evidence_kind: EvidenceKind::HookExecution,
+        task: None,
         capability,
         operation,
         strategy: classify_strategy(tool_name),

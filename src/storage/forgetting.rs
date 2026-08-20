@@ -4,10 +4,7 @@ use uuid::Uuid;
 
 use crate::application::{ProjectHistoryEraser, ProjectLocator};
 
-use super::{
-    private::PrivateRecordKind, project::ProjectIdentity, query::stored_event_from_row,
-    sqlite::EncryptedStore,
-};
+use super::{private::PrivateRecordKind, project::ProjectIdentity, sqlite::EncryptedStore};
 
 impl ProjectHistoryEraser for EncryptedStore {
     fn count_project_events(&self, project: &ProjectLocator) -> Result<Option<u64>> {
@@ -30,19 +27,15 @@ impl ProjectHistoryEraser for EncryptedStore {
             return Ok(None);
         };
         let event_token = self.event_project_token(identity.project_id)?;
-        let legacy_ids = self.legacy_project_event_ids(&transaction, identity.project_id)?;
 
         transaction.execute(
             "INSERT OR IGNORE INTO forgotten_project_tokens (project_token) VALUES (?1)",
             [event_token.as_slice()],
         )?;
-        let mut deleted = transaction.execute(
+        let deleted = transaction.execute(
             "DELETE FROM events WHERE project_token = ?1",
             [event_token.as_slice()],
         )?;
-        for event_id in legacy_ids {
-            deleted += transaction.execute("DELETE FROM events WHERE id = ?1", [event_id])?;
-        }
         let deleted_mapping = transaction.execute(
             "DELETE FROM private_projects WHERE lookup_token = ?1",
             [identity.lookup_token.as_slice()],
@@ -64,46 +57,19 @@ impl EncryptedStore {
         identity: &ProjectIdentity,
     ) -> Result<u64> {
         let event_token = self.event_project_token(identity.project_id)?;
-        let direct: i64 = connection.query_row(
+        let count: i64 = connection.query_row(
             "SELECT COUNT(*) FROM events WHERE project_token = ?1",
             [event_token.as_slice()],
             |row| row.get(0),
         )?;
-        let legacy = self
-            .legacy_project_event_ids(connection, identity.project_id)?
-            .len();
-        let direct: u64 = direct
+        count
             .try_into()
-            .context("history database returned an invalid project event count")?;
-        direct
-            .checked_add(u64::try_from(legacy)?)
-            .context("project event count overflow")
+            .context("history database returned an invalid project event count")
     }
 
     fn event_project_token(&self, project_id: Uuid) -> Result<[u8; 32]> {
         self.private_cipher
             .lookup_token(PrivateRecordKind::EventProject, project_id.as_bytes())
-    }
-
-    fn legacy_project_event_ids(
-        &self,
-        connection: &Connection,
-        project_id: Uuid,
-    ) -> Result<Vec<Vec<u8>>> {
-        let mut statement = connection.prepare(
-            "SELECT id, created_at_ms, schema_version, envelope_version, nonce, ciphertext
-             FROM events WHERE project_token IS NULL",
-        )?;
-        let rows = statement.query_map([], stored_event_from_row)?;
-        let mut ids = Vec::new();
-        for row in rows {
-            let row = row?;
-            let id = row.id.clone();
-            if self.decrypt_row(row)?.project_id == Some(project_id) {
-                ids.push(id);
-            }
-        }
-        Ok(ids)
     }
 }
 
@@ -116,7 +82,10 @@ mod tests {
 
     use crate::{
         application::{CursorStore, IngestionCursor, ProjectResolver},
-        core::{AgentKind, CURRENT_SCHEMA_VERSION, Capability, HistoryEvent, Operation, Outcome},
+        core::{
+            AgentKind, CURRENT_SCHEMA_VERSION, Capability, EvidenceKind, HistoryEvent, Operation,
+            Outcome,
+        },
         query::ProjectLookup,
         storage::MasterKey,
     };
@@ -130,6 +99,8 @@ mod tests {
             session_id: Some("PRIVATE_SESSION".to_owned()),
             project_id: Some(project_id),
             agent: Some(AgentKind::Claude),
+            evidence_kind: EvidenceKind::HookExecution,
+            task: None,
             capability: Capability::Test,
             operation: Operation::Command,
             strategy: None,
@@ -159,14 +130,6 @@ mod tests {
         store.append(&event(1, wanted_id)).unwrap();
         store.append(&event(2, wanted_id)).unwrap();
         store.append(&event(3, other_id)).unwrap();
-        store
-            .connection
-            .execute(
-                "UPDATE events SET project_token = NULL WHERE id = ?1",
-                [Uuid::from_u128(2).as_bytes().as_slice()],
-            )
-            .unwrap();
-
         assert_eq!(store.count_project_events(&wanted).unwrap(), Some(2));
         assert_eq!(store.erase_project(&wanted).unwrap(), Some(2));
         assert_eq!(store.count().unwrap(), 1);

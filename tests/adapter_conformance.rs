@@ -3,7 +3,7 @@ use std::path::Path;
 use regurgitate::{
     adapters::{claude, codex},
     application::HookObservation,
-    core::{AgentKind, CURRENT_SCHEMA_VERSION, Outcome},
+    core::{AgentKind, CURRENT_SCHEMA_VERSION, EvidenceKind, Outcome},
 };
 
 const CODEX_SUCCESS: &[u8] = include_bytes!("fixtures/codex/post-tool-use-success.json");
@@ -19,6 +19,8 @@ fn assert_conforms(
     let event = observation.event();
     assert_eq!(event.schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(event.agent, Some(expected_agent));
+    assert_eq!(event.evidence_kind, EvidenceKind::HookExecution);
+    assert!(event.task.is_none());
     assert!(event.session_id.as_deref().is_some_and(|id| !id.is_empty()));
     assert!(event.project_id.is_none());
     assert_eq!(observation.project().as_path(), expected_project);

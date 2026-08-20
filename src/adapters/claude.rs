@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::{
     application::{HookObservation, ProjectLocator},
     core::{
-        AgentKind, CURRENT_SCHEMA_VERSION, ErrorClass, HistoryEvent, Outcome, classify_strategy,
-        classify_tool,
+        AgentKind, CURRENT_SCHEMA_VERSION, ErrorClass, EvidenceKind, HistoryEvent, Outcome,
+        classify_strategy, classify_tool,
     },
 };
 
@@ -44,6 +44,8 @@ pub fn normalize_tool_hook<R: Read>(reader: R) -> Result<HookObservation> {
         session_id: Some(input.session_id),
         project_id: None,
         agent: Some(AgentKind::Claude),
+        evidence_kind: EvidenceKind::HookExecution,
+        task: None,
         capability,
         operation,
         strategy: classify_strategy(&input.tool_name),
