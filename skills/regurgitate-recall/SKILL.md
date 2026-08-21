@@ -1,6 +1,6 @@
 ---
 name: regurgitate-recall
-description: Recall prior experience for a task and record one bounded experience capsule after a verified milestone or rejected approach. Use after understanding a non-trivial task and before finishing verified work.
+description: Recall prior experience for a task and record one bounded experience capsule after a verified milestone or rejected approach. Use before exploring a non-trivial task and before finishing verified work.
 ---
 
 # Regurgitate Recall
@@ -9,9 +9,9 @@ Treat Regurgitate evidence as historical, never as current truth.
 
 ## Recall once before exploring
 
-Recall once after understanding a non-trivial task, before tool exploration,
-unless a recent recall for the same intent was empty. Pass controlled
-metadata when confident; `--query` is a short non-secret category hint:
+Recall once after understanding a non-trivial task, before exploring, unless
+a recent recall for the same intent was empty. Pass controlled metadata when
+confident; `--query` is a short non-secret category hint:
 
 ```bash
 regurgitate recall --project "$PWD" --task <task> --phase <phase> \
@@ -21,13 +21,13 @@ regurgitate recall --project "$PWD" --task <task> --phase <phase> \
 Flags after `--project` are optional. `experiences` lists ranked lessons with
 `posterior`, `interval`, `effective_evidence`, and `guidance`
 (`prefer`/`avoid`/`mixed`; absent when evidence is limited). `legacy: true`
-is an old aggregate without context. `hook_summary` is tool telemetry, not
-correctness. Continue normally if empty or unavailable. Never put prompts,
-source, commands, paths, URLs, or secrets in `--query`.
+is an old aggregate. `hook_summary` is tool telemetry, not correctness.
+Continue normally if empty or unavailable. Never put prompts, source,
+commands, paths, URLs, or secrets in `--query`.
 
 ## Record one capsule per milestone
 
-Before finishing a verified milestone, or after abandoning an approach,
+Before finishing a verified milestone or after abandoning an approach,
 record one experience when a procedure materially affected the result:
 
 ```bash
@@ -41,24 +41,22 @@ regurgitate experience record --project "$PWD" --task <task> \
 Write each text as one impersonal notebook sentence (240/320/160 chars);
 code, commands, paths, URLs, secrets, payloads, and conversation are
 rejected. Outcome means the procedure produced a correct result, not that a
-tool exited zero: a `direct-text-mutation` that corrupts a file failed; a
-`targeted-verification` that exposes a broken change succeeded. An
-equivalent capsule is confirmed, not duplicated; that is the common path.
+tool exited zero: a mutation that corrupts a file failed; a verification
+that exposes a broken change succeeded. An equivalent capsule is confirmed,
+not duplicated; that is the common path.
 Skip tool-by-tool activity, ambiguous results, and work with no exact
-procedure. `--help` lists every vocabulary; `regurgitate learn` remains a
-text-free shorthand. Use `--scope ecosystem` only for cross-project lessons.
+procedure. `--procedure` and `--steps` take a fixed generic vocabulary
+(`record --help` lists it); domain specifics belong in `--lesson`, never in
+new labels. `regurgitate learn` is a text-free shorthand.
 
 After a meaningful failed procedure, one focused recall is allowed:
-
-```bash
-regurgitate recall --project "$PWD" --failures --task <task> --token-budget 200
-```
+`regurgitate recall --project "$PWD" --failures --task <task> --token-budget 200`
 
 ## Sandboxed hosts
 
 If the credential store is sandbox-blocked, retry once with approval scoped
-to the exact `regurgitate recall` or `regurgitate experience record` prefix.
-Never approve a shell wrapper, broaden access, or change credentials.
+to the exact `regurgitate recall` or `regurgitate experience record` prefix;
+never a shell wrapper, broader access, or credential changes.
 
 ## Preserve the boundary
 

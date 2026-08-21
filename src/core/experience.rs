@@ -381,10 +381,25 @@ impl Procedure {
             } else if let Ok(mode) = label.parse::<IntegrationMode>() {
                 set_once(&mut procedure.integration, mode, "integration")?;
             } else {
-                bail!("unknown procedure dimension {label:?}");
+                bail!(
+                    "unknown procedure dimension {label:?}; the vocabulary is fixed and \
+                     generic (put domain detail in the lesson text). Valid labels: {}",
+                    Self::dimension_labels().join(", ")
+                );
             }
         }
         Ok(procedure)
+    }
+
+    /// Every accepted dimension label, for help and error text.
+    pub fn dimension_labels() -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        labels.extend(MutationMode::ALL.iter().map(|mode| mode.label()));
+        labels.extend(VerificationMode::ALL.iter().map(|mode| mode.label()));
+        labels.extend(ExecutionMode::ALL.iter().map(|mode| mode.label()));
+        labels.extend(ResearchMode::ALL.iter().map(|mode| mode.label()));
+        labels.extend(IntegrationMode::ALL.iter().map(|mode| mode.label()));
+        labels
     }
 
     pub fn parse_steps(value: &str) -> Result<Vec<ProcedureStep>> {
@@ -844,6 +859,12 @@ mod tests {
             Some(MutationMode::IncrementalNativeRegeneration)
         );
         assert_eq!(procedure.verification, Some(VerificationMode::Native));
+        let error = Procedure::parse_dimensions("hypothesis-revision")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("structured-patch"));
+        assert!(error.contains("reproduce-then-compare"));
+        assert!(error.contains("lesson text"));
         assert!(Procedure::parse_dimensions("rm -rf everything").is_err());
         assert!(Procedure::parse_dimensions("structured-patch,bulk-change").is_err());
         assert_eq!(

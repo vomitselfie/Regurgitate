@@ -362,12 +362,18 @@ pub(crate) enum ExperienceCommand {
         #[arg(long)]
         caveat: Option<String>,
 
-        /// Comma-separated procedure dimensions, e.g. structured-patch,targeted-verification.
-        #[arg(long)]
+        /// Comma-separated generic procedure dimensions (domain detail goes in --lesson).
+        /// Mutation: structured-patch, direct-text-mutation, incremental-native-regeneration,
+        /// bulk-change. Verification: targeted-verification, full-verification,
+        /// native-verification. Execution: preview-then-apply, atomic-write, native-tool.
+        /// Research: reproduce-then-compare, per-subject-streaming, resource-cap-first.
+        /// Integration: native-hook, transcript-fallback.
+        #[arg(long, verbatim_doc_comment)]
         procedure: String,
 
-        /// Comma-separated ordered steps, e.g. inspect,patch,verify-targeted (max 6).
-        #[arg(long)]
+        /// Comma-separated ordered steps, max 6: inspect, reproduce, compare, patch,
+        /// regenerate, preview, apply, verify-targeted, verify-full, verify-native, rollback.
+        #[arg(long, verbatim_doc_comment)]
         steps: Option<String>,
 
         /// Whether the procedure produced a correct result.

@@ -23,7 +23,7 @@ const MAX_SYMBOL_RATIO: f64 = 0.15;
 /// Characters that are far more common in commands, code, templates, and
 /// serialized payloads than in a notebook sentence.
 const FORBIDDEN_CHARS: &[char] = &[
-    '`', '$', '|', '{', '}', '<', '>', '\\', '=', '#', '@', '^', '~', '*',
+    '`', '$', '|', '{', '}', '<', '>', '\\', '#', '@', '^', '~', '*',
 ];
 
 /// Lower-case markers that indicate credentials or key material.
@@ -143,6 +143,14 @@ pub fn admit_text(text: &str, max_chars: usize) -> Result<(), AdmissionRejection
     if trimmed
         .chars()
         .any(|character| FORBIDDEN_CHARS.contains(&character))
+    {
+        return Err(AdmissionRejection::CommandOrCodeLike);
+    }
+    // `a = b` in prose is fine; `KEY=value` glued together is an assignment,
+    // an environment variable, or a query parameter.
+    if trimmed
+        .split_whitespace()
+        .any(|word| word.contains('=') && word.len() > 1)
     {
         return Err(AdmissionRejection::CommandOrCodeLike);
     }
@@ -355,6 +363,21 @@ mod tests {
         assert_eq!(
             admit_text("the AKIAIOSFODNN7EXAMPLE account was used", 320),
             Err(AdmissionRejection::SecretLike)
+        );
+    }
+
+    #[test]
+    fn equals_is_prose_unless_glued_into_an_assignment() {
+        assert_eq!(
+            admit_text(
+                "Treat an 'earlier = more likely' hypothesis as untested.",
+                320
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            admit_text("export FOO=bar before the run", 320),
+            Err(AdmissionRejection::CommandOrCodeLike)
         );
     }
 
