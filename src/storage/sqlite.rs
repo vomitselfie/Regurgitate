@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     MasterKey,
-    crypto::{EnvelopeMetadata, EventCipher},
+    crypto::{EnvelopeMetadata, EventCipher, ExperienceCipher},
     private::{PrivateMetadataCipher, PrivateRecordKind},
 };
 
@@ -25,6 +25,7 @@ pub struct EncryptedStore {
     pub(super) connection: Connection,
     cipher: EventCipher,
     pub(super) private_cipher: PrivateMetadataCipher,
+    pub(super) experience_cipher: ExperienceCipher,
 }
 
 pub(super) struct StoredEvent {
@@ -101,7 +102,22 @@ impl EncryptedStore {
              );
              CREATE TABLE IF NOT EXISTS forgotten_project_tokens (
                  project_token BLOB PRIMARY KEY NOT NULL
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS experiences (
+                 id               BLOB PRIMARY KEY NOT NULL,
+                 scope_token      BLOB NOT NULL,
+                 origin_token     BLOB NOT NULL,
+                 created_at_ms    INTEGER NOT NULL,
+                 updated_at_ms    INTEGER NOT NULL,
+                 schema_version   INTEGER NOT NULL,
+                 envelope_version INTEGER NOT NULL,
+                 nonce            BLOB NOT NULL,
+                 ciphertext       BLOB NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS experiences_scope_updated_idx
+             ON experiences(scope_token, updated_at_ms DESC);
+             CREATE INDEX IF NOT EXISTS experiences_origin_updated_idx
+             ON experiences(origin_token, updated_at_ms DESC);",
         )?;
         connection.execute(
             "CREATE INDEX IF NOT EXISTS events_project_kind_created_idx
@@ -117,6 +133,7 @@ impl EncryptedStore {
             connection,
             cipher: EventCipher::new(master_key)?,
             private_cipher: PrivateMetadataCipher::new(master_key)?,
+            experience_cipher: ExperienceCipher::new(master_key)?,
         })
     }
 

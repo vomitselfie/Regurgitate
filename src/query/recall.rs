@@ -6,20 +6,26 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
-    application::ProjectLocator,
+    application::{ProjectLocator, ScopeKey, workspace_locator},
     core::{
-        Capability, ErrorClass, EvidenceKind, HistoryEvent, Operation, Outcome, Strategy, TaskKind,
+        ArtifactKind, EXPERIENCE_SCHEMA_VERSION, Ecosystem, ErrorClass, EvidenceEntry,
+        EvidenceKind, ExperienceCapsule, ExperienceIdentity, FailureReason, HistoryEvent,
+        HostClass, MemoryLifecycle, MemoryScope, Operation, Outcome, Phase, Procedure,
+        SemanticOutcome, TaskKind, ToolFamily,
     },
 };
 
-use super::task::TaskIntent;
+use super::{RankingPolicy, policy::Posterior, task::TaskIntent};
 
 pub const DEFAULT_RECALL_LIMIT: usize = 10;
 pub const MAX_RECALL_LIMIT: usize = 20;
 pub const DEFAULT_TOKEN_BUDGET: usize = 300;
 pub const MAX_TOKEN_BUDGET: usize = 1_000;
+pub const DEFAULT_PREFLIGHT_TOKEN_BUDGET: usize = 220;
 const MIN_TOKEN_BUDGET: usize = 32;
 const MAX_CANDIDATE_EVENTS_PER_KIND: usize = 1_000;
+/// Bounded decrypt window per scope bucket.
+pub const MAX_CANDIDATES_PER_SCOPE: usize = 300;
 
 pub trait ProjectLookup {
     fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>>;
@@ -32,6 +38,11 @@ pub trait ProjectEventSource {
         evidence_kind: EvidenceKind,
         limit: usize,
     ) -> Result<Vec<HistoryEvent>>;
+}
+
+/// Read-only candidate access for one scope bucket.
+pub trait ExperienceSource {
+    fn scoped_experiences(&self, scope: ScopeKey, limit: usize) -> Result<Vec<ExperienceCapsule>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,9 +76,36 @@ impl RecallOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// The current task, normalized ephemerally. Explicit controlled metadata
+/// outranks keyword inference from `query`; the query text is never stored.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EphemeralTaskContext<'a> {
+    pub query: Option<&'a str>,
+    pub task: Option<TaskKind>,
+    pub phase: Option<Phase>,
+    pub artifact: Option<ArtifactKind>,
+    pub ecosystem: Option<Ecosystem>,
+    pub tool_family: Option<ToolFamily>,
+}
+
+impl<'a> EphemeralTaskContext<'a> {
+    pub fn from_query(query: Option<&'a str>) -> Self {
+        Self {
+            query,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the query text maps onto at least one controlled task.
+    pub fn has_task_hints(&self) -> bool {
+        self.query
+            .is_some_and(|query| TaskIntent::classify(query).has_task_hints())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RecallResult {
-    pub observations: Vec<RecallObservation>,
+    pub experiences: Vec<ExperienceBriefItem>,
     pub hook_summary: HookSummary,
     pub approximate_tokens: usize,
 }
@@ -90,8 +128,8 @@ pub struct HookSummary {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EvidenceConfidence {
-    Weak,
+pub enum EvidenceStrength {
+    Limited,
     Moderate,
     Strong,
 }
@@ -104,43 +142,73 @@ pub enum PracticeGuidance {
     Mixed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RecallObservation {
+/// One ranked lesson. Numbers are rounded so the serialized brief stays
+/// small; identifiers and timestamps are deliberately absent.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExperienceBriefItem {
+    pub scope: MemoryScope,
     pub task: TaskKind,
-    pub capability: Capability,
-    pub operation: Operation,
-    pub strategy: Strategy,
-    pub attempts: usize,
-    pub successes: usize,
-    pub failures: usize,
-    pub unknown: usize,
+    pub procedure: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub success_rate_percent: Option<usize>,
+    pub situation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<EvidenceConfidence>,
+    pub lesson: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caveat: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guidance: Option<PracticeGuidance>,
+    pub strength: EvidenceStrength,
+    pub posterior: f64,
+    pub interval: [f64; 2],
+    pub effective_evidence: f64,
+    pub successes: usize,
+    pub failures: usize,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub challenged: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<FailureReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub common_error: Option<ErrorClass>,
 }
 
 pub struct RecallService<'a, H> {
     history: &'a H,
+    policy: RankingPolicy,
 }
 
 impl<'a, H> RecallService<'a, H>
 where
-    H: ProjectLookup + ProjectEventSource,
+    H: ProjectLookup + ProjectEventSource + ExperienceSource,
 {
     pub fn new(history: &'a H) -> Self {
-        Self { history }
+        Self {
+            history,
+            policy: RankingPolicy::default(),
+        }
+    }
+
+    pub fn with_policy(mut self, policy: RankingPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     pub fn recall(
         &self,
         locator: &ProjectLocator,
         options: RecallOptions,
-        task_query: Option<&str>,
+        context: EphemeralTaskContext<'_>,
+    ) -> Result<RecallResult> {
+        self.recall_at(locator, options, context, Utc::now())
+    }
+
+    pub fn recall_at(
+        &self,
+        locator: &ProjectLocator,
+        options: RecallOptions,
+        context: EphemeralTaskContext<'_>,
+        now: DateTime<Utc>,
     ) -> Result<RecallResult> {
         options.validate()?;
         let Some(project_id) = self.history.find_project(locator)? else {
@@ -150,57 +218,79 @@ where
                 options.token_budget,
             ));
         };
-        let practice_events = self.history.recent_project_events(
-            project_id,
-            EvidenceKind::LearnedPractice,
-            MAX_CANDIDATE_EVENTS_PER_KIND,
-        )?;
         let hook_events = self.history.recent_project_events(
             project_id,
             EvidenceKind::HookExecution,
             MAX_CANDIDATE_EVENTS_PER_KIND,
         )?;
-        let intent = task_query.map(TaskIntent::classify).unwrap_or_default();
-        let (observations, hook_summary) = aggregate(
-            practice_events,
-            hook_events,
+        let hook_summary = summarize_hooks(&hook_events, options);
+
+        let intent = context.query.map(TaskIntent::classify).unwrap_or_default();
+        let matcher = ContextMatcher::new(&context, &intent);
+
+        // Stage 1: bounded project-scope window, including v2 legacy rows.
+        let mut candidates = self
+            .history
+            .scoped_experiences(ScopeKey::Project(project_id), MAX_CANDIDATES_PER_SCOPE)?;
+        let practice_events = self.history.recent_project_events(
+            project_id,
+            EvidenceKind::LearnedPractice,
+            MAX_CANDIDATE_EVENTS_PER_KIND,
+        )?;
+        let (legacy, legacy_errors) = materialize_legacy(project_id, &practice_events);
+        candidates.extend(legacy);
+
+        let local_active = candidates
+            .iter()
+            .filter(|capsule| {
+                capsule.lifecycle == MemoryLifecycle::Active
+                    && matcher.applicability(&self.policy, capsule).is_some()
+            })
+            .count();
+        if local_active < self.policy.sparse_local_evidence {
+            if let Some(workspace) = workspace_locator(locator)
+                && let Some(workspace_id) = self.history.find_project(&workspace)?
+            {
+                candidates.extend(self.history.scoped_experiences(
+                    ScopeKey::Workspace(workspace_id),
+                    MAX_CANDIDATES_PER_SCOPE,
+                )?);
+            }
+            for ecosystem in matcher.ecosystems() {
+                candidates.extend(self.history.scoped_experiences(
+                    ScopeKey::Ecosystem(ecosystem),
+                    MAX_CANDIDATES_PER_SCOPE,
+                )?);
+            }
+            candidates.extend(
+                self.history
+                    .scoped_experiences(ScopeKey::Machine, MAX_CANDIDATES_PER_SCOPE)?,
+            );
+            candidates.extend(
+                self.history
+                    .scoped_experiences(ScopeKey::Global, MAX_CANDIDATES_PER_SCOPE)?,
+            );
+        }
+
+        // Stage 2: contextual reranking over the decrypted window.
+        let experiences = rank(
+            &self.policy,
+            &matcher,
             options,
-            &intent,
-            task_query.is_some(),
+            candidates,
+            &legacy_errors,
+            now,
         );
         Ok(budgeted_result(
-            observations,
+            experiences,
             hook_summary,
             options.token_budget,
         ))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct GroupKey {
-    task: TaskKind,
-    capability: Capability,
-    operation: Operation,
-    strategy: Strategy,
-}
-
-struct Group {
-    attempts: usize,
-    successes: usize,
-    failures: usize,
-    unknown: usize,
-    errors: BTreeMap<ErrorClass, usize>,
-    latest: DateTime<Utc>,
-}
-
-fn aggregate(
-    practice_events: Vec<HistoryEvent>,
-    hook_events: Vec<HistoryEvent>,
-    options: RecallOptions,
-    intent: &TaskIntent,
-    query_present: bool,
-) -> (Vec<RecallObservation>, HookSummary) {
-    let mut hook_summary = HookSummary::default();
+fn summarize_hooks(hook_events: &[HistoryEvent], options: RecallOptions) -> HookSummary {
+    let mut summary = HookSummary::default();
     for event in hook_events {
         if options
             .operation
@@ -208,162 +298,421 @@ fn aggregate(
         {
             continue;
         }
-        hook_summary.sampled_executions += 1;
+        summary.sampled_executions += 1;
         match event.outcome {
-            Outcome::Success => hook_summary.reported_successes += 1,
-            Outcome::Failure => hook_summary.reported_failures += 1,
-            Outcome::Unknown => hook_summary.unknown += 1,
+            Outcome::Success => summary.reported_successes += 1,
+            Outcome::Failure => summary.reported_failures += 1,
+            Outcome::Unknown => summary.unknown += 1,
         }
     }
+    summary
+}
 
-    let mut groups = HashMap::<GroupKey, Group>::new();
-    for event in practice_events {
-        if options
-            .operation
-            .is_some_and(|wanted| event.operation != wanted)
-            || (options.failures_only && event.outcome != Outcome::Failure)
-        {
-            continue;
-        }
+/// v2 `LearnedPractice` rows become one text-free legacy capsule per
+/// task/strategy pair. Their lower specificity is explicit in the output.
+fn materialize_legacy(
+    project_id: Uuid,
+    events: &[HistoryEvent],
+) -> (Vec<ExperienceCapsule>, LegacyErrors) {
+    let mut legacy_errors = LegacyErrors::new();
+    #[derive(PartialEq, Eq, Hash)]
+    struct Key(TaskKind, crate::core::Strategy);
+    let mut groups: HashMap<Key, (Vec<EvidenceEntry>, BTreeMap<ErrorClass, usize>)> =
+        HashMap::new();
+    for event in events {
         let (Some(task), Some(strategy)) = (event.task, event.strategy) else {
             continue;
         };
-        if query_present && !intent.matches_task(task) {
-            continue;
-        }
-        let key = GroupKey {
-            task,
-            capability: event.capability,
-            operation: event.operation,
-            strategy,
+        let outcome = match event.outcome {
+            Outcome::Success => SemanticOutcome::Success,
+            Outcome::Failure => SemanticOutcome::Failure,
+            Outcome::Unknown => continue,
         };
-        let group = groups.entry(key).or_insert_with(|| Group {
-            attempts: 0,
-            successes: 0,
-            failures: 0,
-            unknown: 0,
-            errors: BTreeMap::new(),
-            latest: event.timestamp,
+        let entry = groups.entry(Key(task, strategy)).or_default();
+        entry.0.push(EvidenceEntry {
+            at: event.timestamp,
+            outcome,
+            failure_reason: None,
         });
-        group.attempts += 1;
-        match event.outcome {
-            Outcome::Success => group.successes += 1,
-            Outcome::Failure => group.failures += 1,
-            Outcome::Unknown => group.unknown += 1,
-        }
         if let Some(error) = event.error_class {
-            *group.errors.entry(error).or_default() += 1;
+            *entry.1.entry(error).or_default() += 1;
         }
-        group.latest = group.latest.max(event.timestamp);
+    }
+    let mut legacy: Vec<ExperienceCapsule> = groups
+        .into_iter()
+        .map(|(Key(task, strategy), (mut evidence, errors))| {
+            evidence.sort_by_key(|entry| entry.at);
+            let created_at = evidence.first().map(|entry| entry.at).unwrap_or_default();
+            let last_confirmed_at = evidence.last().map(|entry| entry.at).unwrap_or_default();
+            let mut capsule = ExperienceCapsule {
+                // Deterministic, never persisted.
+                id: Uuid::new_v5(
+                    &project_id,
+                    format!("legacy:{task:?}:{strategy:?}").as_bytes(),
+                ),
+                project_id,
+                scope: MemoryScope::Project,
+                scope_id: Some(project_id),
+                task,
+                situation: None,
+                lesson: None,
+                caveat: None,
+                procedure: Procedure::from_strategy(strategy),
+                applicability: Default::default(),
+                environment: Default::default(),
+                lifecycle: MemoryLifecycle::Active,
+                evidence,
+                created_at,
+                last_confirmed_at,
+                schema_version: EXPERIENCE_SCHEMA_VERSION,
+            };
+            capsule.evidence.truncate(crate::core::MAX_EVIDENCE_ENTRIES);
+            legacy_errors.insert(capsule.id, errors);
+            capsule
+        })
+        .collect();
+    legacy.sort_by_key(|capsule| capsule.id);
+    (legacy, legacy_errors)
+}
+
+/// Provider error classes for legacy aggregates, keyed by the transient
+/// legacy capsule id. Lives only for the duration of one recall.
+type LegacyErrors = HashMap<Uuid, BTreeMap<ErrorClass, usize>>;
+
+struct ContextMatcher<'c> {
+    context: &'c EphemeralTaskContext<'c>,
+    intent: &'c TaskIntent,
+    host: Option<HostClass>,
+}
+
+impl<'c> ContextMatcher<'c> {
+    fn new(context: &'c EphemeralTaskContext<'c>, intent: &'c TaskIntent) -> Self {
+        Self {
+            context,
+            intent,
+            host: HostClass::current(),
+        }
     }
 
-    let mut ranked: Vec<_> = groups
+    fn ecosystems(&self) -> Vec<Ecosystem> {
+        if let Some(ecosystem) = self.context.ecosystem {
+            return vec![ecosystem];
+        }
+        self.intent.ecosystems().iter().copied().collect()
+    }
+
+    fn task_filter_active(&self) -> bool {
+        self.context.task.is_some() || self.intent.has_task_hints()
+    }
+
+    /// Returns `None` when the capsule is outside the current task region.
+    fn applicability(&self, policy: &RankingPolicy, capsule: &ExperienceCapsule) -> Option<f64> {
+        let task = match self.context.task {
+            Some(task) => f64::from(u8::from(task == capsule.task)),
+            None if self.intent.has_task_hints() => {
+                f64::from(u8::from(self.intent.matches_task(capsule.task)))
+            }
+            None => 1.0,
+        };
+        if self.task_filter_active() && task == 0.0 {
+            return None;
+        }
+        let artifact = match_term(
+            self.context.artifact,
+            self.intent.artifacts().iter().copied(),
+            capsule.applicability.artifact_kind,
+        );
+        let ecosystem = match_term(
+            self.context.ecosystem,
+            self.intent.ecosystems().iter().copied(),
+            capsule.applicability.ecosystem,
+        );
+        let tool = match_term(
+            self.context.tool_family,
+            self.intent.tool_families().iter().copied(),
+            capsule
+                .applicability
+                .tool_family
+                .or(capsule.environment.tool_family),
+        );
+        let phase = match_term(
+            self.context.phase,
+            self.intent.phases().iter().copied(),
+            capsule.applicability.phase,
+        );
+        let environment = match (capsule.environment.host_class, self.host) {
+            (Some(recorded), Some(current)) if recorded == current => 1.0,
+            (Some(_), Some(_)) => 0.25,
+            _ => 0.75,
+        };
+        let score = policy.applicability_task * task
+            + policy.applicability_artifact * artifact
+            + policy.applicability_ecosystem * (0.5 * ecosystem + 0.5 * tool)
+            + policy.applicability_phase * phase
+            + policy.applicability_environment * environment;
+        if score < policy.min_applicability {
+            return None;
+        }
+        if capsule.scope != MemoryScope::Project && score < policy.broader_scope_min_applicability {
+            return None;
+        }
+        Some(score)
+    }
+}
+
+/// 1 on agreement, 0 on disagreement. A context that says nothing about a
+/// dimension cannot penalize it (1); a capsule that carries no tag is less
+/// specific than one that matches (0.5).
+fn match_term<T: Copy + PartialEq>(
+    explicit: Option<T>,
+    inferred: impl Iterator<Item = T>,
+    recorded: Option<T>,
+) -> f64 {
+    let mut hints: Vec<T> = explicit.into_iter().collect();
+    if hints.is_empty() {
+        hints.extend(inferred);
+    }
+    if hints.is_empty() {
+        return 1.0;
+    }
+    match recorded {
+        None => 0.5,
+        Some(recorded) => f64::from(u8::from(hints.contains(&recorded))),
+    }
+}
+
+struct Cluster {
+    representative: ExperienceCapsule,
+    representative_rank: (u8, f64, DateTime<Utc>),
+    weights: Vec<(f64, bool)>,
+    successes: usize,
+    failures: usize,
+    best_applicability: f64,
+    best_scope_weight: f64,
+    latest: DateTime<Utc>,
+    challenged: bool,
+    legacy: bool,
+    failure_reasons: BTreeMap<FailureReason, usize>,
+    errors: BTreeMap<ErrorClass, usize>,
+}
+
+fn rank(
+    policy: &RankingPolicy,
+    matcher: &ContextMatcher<'_>,
+    options: RecallOptions,
+    candidates: Vec<ExperienceCapsule>,
+    legacy_errors: &LegacyErrors,
+    now: DateTime<Utc>,
+) -> Vec<ExperienceBriefItem> {
+    let mut clusters: BTreeMap<ExperienceIdentity, Cluster> = BTreeMap::new();
+    let mut seen = std::collections::HashSet::new();
+    for capsule in candidates {
+        if !seen.insert(capsule.id) {
+            continue;
+        }
+        if matches!(
+            capsule.lifecycle,
+            MemoryLifecycle::Superseded | MemoryLifecycle::Obsolete
+        ) {
+            continue;
+        }
+        if options
+            .operation
+            .is_some_and(|wanted| capsule.procedure.classification().1 != wanted)
+        {
+            continue;
+        }
+        if options.failures_only && capsule.failures() == 0 {
+            continue;
+        }
+        let Some(applicability) = matcher.applicability(policy, &capsule) else {
+            continue;
+        };
+        let scope_weight = policy.scope_weight(capsule.scope);
+        let lifecycle_weight = policy.lifecycle_weight(capsule.lifecycle);
+        let weights: Vec<(f64, bool)> = capsule
+            .evidence
+            .iter()
+            .map(|entry| {
+                let age_days = (now - entry.at).num_seconds() as f64 / 86_400.0;
+                (
+                    scope_weight
+                        * policy.age_weight(capsule.scope, age_days)
+                        * applicability
+                        * lifecycle_weight,
+                    entry.outcome == SemanticOutcome::Success,
+                )
+            })
+            .collect();
+        let legacy = legacy_errors.contains_key(&capsule.id);
+        let representative_rank = (
+            u8::from(capsule.has_text()),
+            scope_weight * applicability,
+            capsule.last_confirmed_at,
+        );
+        let identity = capsule.identity();
+        let cluster = clusters.entry(identity).or_insert_with(|| Cluster {
+            representative: capsule.clone(),
+            representative_rank,
+            weights: Vec::new(),
+            successes: 0,
+            failures: 0,
+            best_applicability: 0.0,
+            best_scope_weight: 0.0,
+            latest: capsule.last_confirmed_at,
+            challenged: false,
+            legacy: true,
+            failure_reasons: BTreeMap::new(),
+            errors: BTreeMap::new(),
+        });
+        if representative_rank > cluster.representative_rank {
+            cluster.representative = capsule.clone();
+            cluster.representative_rank = representative_rank;
+        }
+        cluster.weights.extend(weights);
+        cluster.successes += capsule.successes();
+        cluster.failures += capsule.failures();
+        cluster.best_applicability = cluster.best_applicability.max(applicability);
+        cluster.best_scope_weight = cluster.best_scope_weight.max(scope_weight);
+        cluster.latest = cluster.latest.max(capsule.last_confirmed_at);
+        cluster.challenged |= capsule.lifecycle == MemoryLifecycle::Challenged;
+        cluster.legacy &= legacy;
+        for entry in &capsule.evidence {
+            if let Some(reason) = entry.failure_reason {
+                *cluster.failure_reasons.entry(reason).or_default() += 1;
+            }
+        }
+        if let Some(errors) = legacy_errors.get(&capsule.id) {
+            for (error, count) in errors {
+                *cluster.errors.entry(*error).or_default() += count;
+            }
+        }
+    }
+
+    let mut ranked: Vec<(
+        f64,
+        u8,
+        DateTime<Utc>,
+        ExperienceIdentity,
+        ExperienceBriefItem,
+    )> = clusters
         .into_iter()
-        .map(|(key, group)| {
-            let common_error = group
-                .errors
-                .into_iter()
-                .max_by_key(|(error, count)| (*count, std::cmp::Reverse(*error)))
-                .map(|(error, _)| error);
-            let score = group.successes.saturating_mul(4) + group.failures.saturating_mul(3);
-            let relevance = intent.relevance(key.capability, key.operation);
-            let known_outcomes = group.successes + group.failures;
-            let confidence = evidence_confidence(known_outcomes);
-            let guidance = practice_guidance(group.successes, group.failures);
+        .map(|(identity, cluster)| {
+            let posterior = Posterior::from_weighted(policy, &cluster.weights);
+            let guidance = guidance(policy, &posterior);
+            let strength = strength(policy, &posterior);
+            let guidance_strength = match guidance {
+                Some(PracticeGuidance::Prefer | PracticeGuidance::Avoid) => {
+                    ((posterior.mean - 0.5).abs() * 2.0).clamp(0.0, 1.0)
+                }
+                Some(PracticeGuidance::Mixed) => 0.25,
+                None => 0.0,
+            };
+            let confidence = (1.0 - (posterior.upper - posterior.lower)).clamp(0.0, 1.0);
+            let age_days = (now - cluster.latest).num_seconds() as f64 / 86_400.0;
+            let recency = policy.age_weight(cluster.representative.scope, age_days);
+            let score = policy.rank_applicability * cluster.best_applicability
+                + policy.rank_guidance * guidance_strength
+                + policy.rank_confidence * confidence
+                + policy.rank_recency * recency
+                + policy.rank_scope * cluster.best_scope_weight
+                + if cluster.representative.has_text() {
+                    policy.rank_context_bonus
+                } else {
+                    0.0
+                };
+            let representative = cluster.representative;
+            let item = ExperienceBriefItem {
+                scope: representative.scope,
+                task: representative.task,
+                procedure: representative.procedure.summary(),
+                situation: representative
+                    .situation
+                    .map(|text| text.as_str().to_owned()),
+                lesson: representative.lesson.map(|text| text.as_str().to_owned()),
+                caveat: representative.caveat.map(|text| text.as_str().to_owned()),
+                guidance,
+                strength,
+                posterior: round(posterior.mean, 100.0),
+                interval: [round(posterior.lower, 100.0), round(posterior.upper, 100.0)],
+                effective_evidence: round(posterior.effective_evidence, 10.0),
+                successes: cluster.successes,
+                failures: cluster.failures,
+                challenged: cluster.challenged,
+                legacy: cluster.legacy,
+                failure_reason: most_common(&cluster.failure_reasons),
+                common_error: most_common(&cluster.errors),
+            };
             (
-                relevance,
-                guidance_priority(guidance),
-                confidence_priority(confidence),
                 score,
-                group.latest,
-                key,
-                RecallObservation {
-                    task: key.task,
-                    capability: key.capability,
-                    operation: key.operation,
-                    strategy: key.strategy,
-                    attempts: group.attempts,
-                    successes: group.successes,
-                    failures: group.failures,
-                    unknown: group.unknown,
-                    success_rate_percent: (known_outcomes >= 2).then(|| {
-                        (group.successes.saturating_mul(100) + known_outcomes / 2) / known_outcomes
-                    }),
-                    confidence,
-                    guidance,
-                    common_error,
-                },
+                u8::from(item.lesson.is_some()),
+                cluster.latest,
+                identity,
+                item,
             )
         })
         .collect();
     ranked.sort_by(|left, right| {
         right
             .0
-            .cmp(&left.0)
+            .total_cmp(&left.0)
             .then_with(|| right.1.cmp(&left.1))
             .then_with(|| right.2.cmp(&left.2))
-            .then_with(|| right.3.cmp(&left.3))
-            .then_with(|| right.4.cmp(&left.4))
-            .then_with(|| left.5.task.cmp(&right.5.task))
-            .then_with(|| left.5.capability.cmp(&right.5.capability))
-            .then_with(|| left.5.operation.cmp(&right.5.operation))
-            .then_with(|| left.5.strategy.cmp(&right.5.strategy))
+            .then_with(|| left.3.cmp(&right.3))
     });
-    let observations = ranked
+    ranked
         .into_iter()
         .take(options.limit)
-        .map(|(_, _, _, _, _, _, observation)| observation)
-        .collect();
-    (observations, hook_summary)
+        .map(|(_, _, _, _, item)| item)
+        .collect()
 }
 
-fn evidence_confidence(known_outcomes: usize) -> Option<EvidenceConfidence> {
-    match known_outcomes {
-        0..=1 => None,
-        2 => Some(EvidenceConfidence::Weak),
-        3..=7 => Some(EvidenceConfidence::Moderate),
-        _ => Some(EvidenceConfidence::Strong),
+fn most_common<T: Copy + Ord>(counts: &BTreeMap<T, usize>) -> Option<T> {
+    counts
+        .iter()
+        .max_by_key(|(key, count)| (**count, std::cmp::Reverse(**key)))
+        .map(|(key, _)| *key)
+}
+
+fn guidance(policy: &RankingPolicy, posterior: &Posterior) -> Option<PracticeGuidance> {
+    if posterior.effective_evidence < policy.min_effective_evidence {
+        return None;
     }
-}
-
-fn practice_guidance(successes: usize, failures: usize) -> Option<PracticeGuidance> {
-    let known_outcomes = successes + failures;
-    if known_outcomes < 2 {
-        None
-    } else if successes.saturating_mul(4) >= known_outcomes.saturating_mul(3) {
+    if posterior.lower >= policy.prefer_threshold {
         Some(PracticeGuidance::Prefer)
-    } else if failures.saturating_mul(4) >= known_outcomes.saturating_mul(3) {
+    } else if posterior.upper <= policy.avoid_threshold {
         Some(PracticeGuidance::Avoid)
-    } else {
+    } else if posterior.mean > policy.avoid_threshold && posterior.mean < policy.prefer_threshold {
         Some(PracticeGuidance::Mixed)
+    } else {
+        // Leaning one way but the credible interval has not cleared the
+        // threshold; the posterior stays visible without a label.
+        None
     }
 }
 
-fn guidance_priority(guidance: Option<PracticeGuidance>) -> usize {
-    match guidance {
-        Some(PracticeGuidance::Prefer | PracticeGuidance::Avoid) => 2,
-        Some(PracticeGuidance::Mixed) => 1,
-        None => 0,
+fn strength(policy: &RankingPolicy, posterior: &Posterior) -> EvidenceStrength {
+    if posterior.effective_evidence < policy.min_effective_evidence {
+        EvidenceStrength::Limited
+    } else if posterior.effective_evidence < policy.strong_effective_evidence {
+        EvidenceStrength::Moderate
+    } else {
+        EvidenceStrength::Strong
     }
 }
 
-fn confidence_priority(confidence: Option<EvidenceConfidence>) -> usize {
-    match confidence {
-        None => 0,
-        Some(EvidenceConfidence::Weak) => 1,
-        Some(EvidenceConfidence::Moderate) => 2,
-        Some(EvidenceConfidence::Strong) => 3,
-    }
+fn round(value: f64, scale: f64) -> f64 {
+    (value * scale).round() / scale
 }
 
 fn budgeted_result(
-    mut observations: Vec<RecallObservation>,
+    mut experiences: Vec<ExperienceBriefItem>,
     hook_summary: HookSummary,
     token_budget: usize,
 ) -> RecallResult {
     loop {
         let mut result = RecallResult {
-            observations,
+            experiences,
             hook_summary,
             approximate_tokens: 0,
         };
@@ -374,15 +723,15 @@ fn budgeted_result(
             }
             result.approximate_tokens = estimate;
         }
-        if result.approximate_tokens <= token_budget || result.observations.is_empty() {
+        if result.approximate_tokens <= token_budget || result.experiences.is_empty() {
             return result;
         }
-        observations = result.observations;
-        observations.pop();
+        experiences = result.experiences;
+        experiences.pop();
     }
 }
 
-fn estimate_tokens(value: &impl Serialize) -> usize {
+pub(super) fn estimate_tokens(value: &impl Serialize) -> usize {
     let bytes = serde_json::to_vec_pretty(value)
         .expect("fixed-schema recall output must remain serializable")
         .len()
@@ -396,19 +745,38 @@ mod tests {
 
     use chrono::TimeZone;
 
-    use crate::core::{AgentKind, CURRENT_SCHEMA_VERSION};
+    use crate::core::{
+        AgentKind, ApplicabilityTags, CURRENT_SCHEMA_VERSION, Capability, EnvironmentFingerprint,
+        Lesson, MutationMode, Situation, Strategy, VerificationMode,
+    };
 
     use super::*;
 
     struct MemoryHistory {
         project_id: Option<Uuid>,
         events: Vec<HistoryEvent>,
+        capsules: Vec<ExperienceCapsule>,
         requested_limit: Cell<usize>,
     }
 
+    impl MemoryHistory {
+        fn new(project_id: Option<Uuid>) -> Self {
+            Self {
+                project_id,
+                events: Vec::new(),
+                capsules: Vec::new(),
+                requested_limit: Cell::new(0),
+            }
+        }
+    }
+
     impl ProjectLookup for MemoryHistory {
-        fn find_project(&self, _locator: &ProjectLocator) -> Result<Option<Uuid>> {
-            Ok(self.project_id)
+        fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>> {
+            if locator.as_path().ends_with("project") {
+                Ok(self.project_id)
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -430,11 +798,37 @@ mod tests {
         }
     }
 
+    impl ExperienceSource for MemoryHistory {
+        fn scoped_experiences(
+            &self,
+            scope: ScopeKey,
+            limit: usize,
+        ) -> Result<Vec<ExperienceCapsule>> {
+            Ok(self
+                .capsules
+                .iter()
+                .filter(|capsule| ScopeKey::for_capsule(capsule).unwrap() == scope)
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+    }
+
+    const NOW_MS: i64 = 1_776_254_400_000;
+
+    fn now() -> DateTime<Utc> {
+        Utc.timestamp_millis_opt(NOW_MS).unwrap()
+    }
+
+    fn project() -> ProjectLocator {
+        ProjectLocator::new(PathBuf::from("/private/project"))
+    }
+
     fn event(id: u128, operation: Operation, outcome: Outcome) -> HistoryEvent {
         HistoryEvent {
             id: Uuid::from_u128(id),
             timestamp: Utc
-                .timestamp_millis_opt(1_776_254_400_000 + id as i64)
+                .timestamp_millis_opt(NOW_MS - 3_600_000 + id as i64)
                 .unwrap(),
             session_id: None,
             project_id: Some(Uuid::from_u128(7)),
@@ -443,7 +837,7 @@ mod tests {
             task: Some(TaskKind::Testing),
             capability: Capability::Test,
             operation,
-            strategy: Some(Strategy::NativeTool),
+            strategy: Some(Strategy::TargetedVerification),
             outcome,
             duration_ms: None,
             error_class: None,
@@ -451,57 +845,100 @@ mod tests {
         }
     }
 
+    fn capsule(id: u128, scope: MemoryScope, outcomes: &[SemanticOutcome]) -> ExperienceCapsule {
+        let at = now() - chrono::Duration::days(1);
+        ExperienceCapsule {
+            id: Uuid::from_u128(id),
+            project_id: Uuid::from_u128(7),
+            scope,
+            scope_id: (scope == MemoryScope::Project).then(|| Uuid::from_u128(7)),
+            task: TaskKind::Debugging,
+            situation: Some(
+                Situation::new("Generated native artifact where parser acceptance is weak.")
+                    .unwrap(),
+            ),
+            lesson: Some(
+                Lesson::new("Change one placement class at a time, then verify natively.").unwrap(),
+            ),
+            caveat: None,
+            procedure: Procedure {
+                mutation: Some(MutationMode::IncrementalNativeRegeneration),
+                verification: Some(VerificationMode::Native),
+                ..Procedure::default()
+            },
+            applicability: ApplicabilityTags {
+                artifact_kind: Some(ArtifactKind::NativeCad),
+                phase: Some(Phase::Verify),
+                ecosystem: Some(Ecosystem::Kicad),
+                ..ApplicabilityTags::default()
+            },
+            environment: EnvironmentFingerprint::default(),
+            lifecycle: MemoryLifecycle::Active,
+            evidence: outcomes
+                .iter()
+                .enumerate()
+                .map(|(index, outcome)| EvidenceEntry {
+                    at: at + chrono::Duration::minutes(index as i64),
+                    outcome: *outcome,
+                    failure_reason: None,
+                })
+                .collect(),
+            created_at: at,
+            last_confirmed_at: at + chrono::Duration::minutes(outcomes.len() as i64),
+            schema_version: EXPERIENCE_SCHEMA_VERSION,
+        }
+    }
+
+    fn recall(
+        history: &MemoryHistory,
+        options: RecallOptions,
+        context: EphemeralTaskContext<'_>,
+    ) -> RecallResult {
+        RecallService::new(history)
+            .recall_at(&project(), options, context, now())
+            .unwrap()
+    }
+
     #[test]
-    fn returns_bounded_aggregate_observations_without_identifiers() {
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events: vec![
-                event(1, Operation::Command, Outcome::Success),
-                event(2, Operation::Command, Outcome::Failure),
-                event(3, Operation::ApplyPatch, Outcome::Success),
-            ],
-            requested_limit: Cell::new(0),
-        };
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions {
-                    operation: Some(Operation::Command),
-                    failures_only: false,
-                    limit: 1,
-                    token_budget: DEFAULT_TOKEN_BUDGET,
-                },
-                None,
-            )
-            .unwrap();
+    fn legacy_practice_is_aggregated_without_identifiers() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.events = vec![
+            event(1, Operation::Command, Outcome::Success),
+            event(2, Operation::Command, Outcome::Failure),
+            event(3, Operation::ApplyPatch, Outcome::Success),
+        ];
+        let result = recall(
+            &history,
+            RecallOptions {
+                operation: Some(Operation::Command),
+                limit: 1,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::default(),
+        );
 
         assert_eq!(history.requested_limit.get(), MAX_CANDIDATE_EVENTS_PER_KIND);
-        assert_eq!(result.observations.len(), 1);
-        assert_eq!(result.observations[0].attempts, 2);
-        assert_eq!(result.observations[0].successes, 1);
-        assert_eq!(result.observations[0].failures, 1);
-        assert_eq!(result.observations[0].success_rate_percent, Some(50));
-        assert_eq!(
-            result.observations[0].confidence,
-            Some(EvidenceConfidence::Weak)
-        );
-        assert_eq!(
-            result.observations[0].guidance,
-            Some(PracticeGuidance::Mixed)
-        );
+        assert_eq!(result.experiences.len(), 1);
+        let item = &result.experiences[0];
+        assert!(item.legacy);
+        assert_eq!(item.successes, 2);
+        assert_eq!(item.failures, 1);
+        assert_eq!(item.guidance, Some(PracticeGuidance::Mixed));
+        assert_eq!(item.strength, EvidenceStrength::Moderate);
+        assert!(item.lesson.is_none());
         let encoded = serde_json::to_string(&result).unwrap();
         for forbidden in [
-            "PRIVATE_SESSION",
             "/private/project",
             &Uuid::from_u128(7).to_string(),
+            "\"id\"",
         ] {
-            assert!(!encoded.contains(forbidden));
+            assert!(!encoded.contains(forbidden), "{forbidden}");
         }
     }
 
     #[test]
     fn hook_activity_is_separate_from_verified_practice() {
-        let mut events = Vec::new();
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
         for id in 1..=20 {
             let mut unknown = event(id, Operation::Command, Outcome::Unknown);
             unknown.evidence_kind = EvidenceKind::HookExecution;
@@ -509,113 +946,311 @@ mod tests {
             unknown.strategy = None;
             unknown.session_id = Some("PRIVATE_SESSION".to_owned());
             unknown.agent = Some(AgentKind::Codex);
-            events.push(unknown);
+            history.events.push(unknown);
         }
         for id in 21..=22 {
             let mut verified = event(id, Operation::Command, Outcome::Success);
             verified.strategy = Some(Strategy::TargetedVerification);
-            events.push(verified);
+            history.events.push(verified);
         }
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events,
-            requested_limit: Cell::new(0),
-        };
 
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions::default(),
-                Some("test verification"),
-            )
-            .unwrap();
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("test verification")),
+        );
 
-        assert_eq!(
-            result.observations[0].strategy,
-            Strategy::TargetedVerification
-        );
-        assert_eq!(result.observations[0].success_rate_percent, Some(100));
-        assert_eq!(
-            result.observations[0].confidence,
-            Some(EvidenceConfidence::Weak)
-        );
-        assert_eq!(
-            result.observations[0].guidance,
-            Some(PracticeGuidance::Prefer)
-        );
-        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].procedure, "targeted-verification");
+        assert_eq!(result.experiences[0].successes, 2);
+        // Two successes are no longer a recommendation.
+        assert_eq!(result.experiences[0].guidance, None);
+        assert!(result.experiences[0].interval[0] < 0.65);
         assert_eq!(result.hook_summary.sampled_executions, 20);
         assert_eq!(result.hook_summary.unknown, 20);
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("PRIVATE_SESSION")
+        );
     }
 
     #[test]
-    fn research_practice_is_recalled_as_analysis_evidence() {
-        let events = (1..=2)
-            .map(|id| {
-                let mut event = event(id, Operation::Analyze, Outcome::Success);
-                event.capability = Capability::Research;
-                event.task = Some(TaskKind::Research);
-                event.strategy = Some(Strategy::ReproduceThenCompare);
-                event
-            })
-            .collect();
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events,
-            requested_limit: Cell::new(0),
-        };
+    fn two_successes_cannot_become_strong_guidance_but_eight_can() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.capsules.push(capsule(
+            1,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 2],
+        ));
+        let weak = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(weak.experiences[0].guidance, None);
+        assert_eq!(weak.experiences[0].strength, EvidenceStrength::Limited);
 
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions::default(),
-                Some("research reproduce compare"),
-            )
-            .unwrap();
-
-        assert_eq!(result.observations[0].capability, Capability::Research);
-        assert_eq!(result.observations[0].operation, Operation::Analyze);
-        assert_eq!(
-            result.observations[0].strategy,
-            Strategy::ReproduceThenCompare
+        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        let strong = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
         );
         assert_eq!(
-            result.observations[0].guidance,
+            strong.experiences[0].guidance,
             Some(PracticeGuidance::Prefer)
         );
+        assert_eq!(strong.experiences[0].strength, EvidenceStrength::Strong);
+        assert!(strong.experiences[0].effective_evidence >= 6.0);
+
+        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Failure; 8]);
+        let avoid = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(avoid.experiences[0].guidance, Some(PracticeGuidance::Avoid));
+    }
+
+    #[test]
+    fn stale_evidence_decays_and_recent_contradiction_wins() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut stale = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        for entry in &mut stale.evidence {
+            entry.at -= chrono::Duration::days(720);
+        }
+        stale.created_at -= chrono::Duration::days(720);
+        stale.last_confirmed_at -= chrono::Duration::days(720);
+        for offset in 0..3 {
+            stale.confirm(EvidenceEntry {
+                at: now() - chrono::Duration::hours(offset),
+                outcome: SemanticOutcome::Failure,
+                failure_reason: Some(FailureReason::VersionMismatch),
+            });
+        }
+        history.capsules.push(stale);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        let item = &result.experiences[0];
+        assert_eq!(item.successes, 8);
+        assert_eq!(item.failures, 3);
+        assert!(item.posterior < 0.5, "posterior {}", item.posterior);
+        assert_ne!(item.guidance, Some(PracticeGuidance::Prefer));
+        assert_eq!(item.failure_reason, Some(FailureReason::VersionMismatch));
+    }
+
+    #[test]
+    fn explicit_metadata_outranks_keyword_inference() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.capsules.push(capsule(
+            1,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 3],
+        ));
+        let mut testing = capsule(2, MemoryScope::Project, &[SemanticOutcome::Success; 3]);
+        testing.task = TaskKind::Testing;
+        history.capsules.push(testing);
+
+        let roomy = RecallOptions {
+            token_budget: MAX_TOKEN_BUDGET,
+            ..RecallOptions::default()
+        };
+        let inferred = recall(
+            &history,
+            roomy,
+            EphemeralTaskContext::from_query(Some("debug the flaky test")),
+        );
+        assert_eq!(inferred.experiences.len(), 2);
+
+        let explicit = recall(
+            &history,
+            roomy,
+            EphemeralTaskContext {
+                query: Some("debug the flaky test"),
+                task: Some(TaskKind::Testing),
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert_eq!(explicit.experiences.len(), 1);
+        assert_eq!(explicit.experiences[0].task, TaskKind::Testing);
+    }
+
+    #[test]
+    fn paraphrased_queries_retrieve_the_same_capsule_set() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.capsules.push(capsule(
+            1,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 3],
+        ));
+        let first = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("debugging generated kicad pcb drc")),
+        );
+        let second = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some(
+                "fix the broken schematic footprint verification bug",
+            )),
+        );
+        assert_eq!(first.experiences.len(), 1);
+        assert_eq!(second.experiences.len(), 1);
+        assert_eq!(first.experiences[0].lesson, second.experiences[0].lesson);
+        assert_eq!(
+            first.experiences[0].procedure,
+            second.experiences[0].procedure
+        );
+        let unrelated = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("write release notes documentation")),
+        );
+        assert!(unrelated.experiences.is_empty());
+    }
+
+    #[test]
+    fn project_scope_beats_global_at_equal_applicability() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut global = capsule(1, MemoryScope::Global, &[SemanticOutcome::Success; 4]);
+        global.scope_id = None;
+        global.lesson =
+            Some(Lesson::new("Regenerate everything in bulk and verify once at the end.").unwrap());
+        global.procedure = Procedure {
+            mutation: Some(MutationMode::BulkChange),
+            ..Procedure::default()
+        };
+        history.capsules.push(global);
+        history.capsules.push(capsule(
+            2,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 4],
+        ));
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(result.experiences.len(), 2);
+        assert_eq!(result.experiences[0].scope, MemoryScope::Project);
+        assert_eq!(result.experiences[1].scope, MemoryScope::Global);
+    }
+
+    #[test]
+    fn broader_scopes_are_consulted_only_when_local_evidence_is_sparse() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut global = capsule(1, MemoryScope::Global, &[SemanticOutcome::Success; 4]);
+        global.scope_id = None;
+        history.capsules.push(global);
+        for id in 2..=5 {
+            let mut local = capsule(id, MemoryScope::Project, &[SemanticOutcome::Success; 2]);
+            local.procedure.steps = vec![ProcedureStep::Inspect; (id - 1) as usize];
+            history.capsules.push(local);
+        }
+        let result = recall(
+            &history,
+            RecallOptions {
+                limit: MAX_RECALL_LIMIT,
+                token_budget: MAX_TOKEN_BUDGET,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::default(),
+        );
         assert!(
-            serde_json::to_string(&result)
-                .unwrap()
-                .contains("reproduce_then_compare")
+            result
+                .experiences
+                .iter()
+                .all(|item| item.scope == MemoryScope::Project)
+        );
+    }
+
+    use crate::core::ProcedureStep;
+
+    #[test]
+    fn other_projects_private_capsules_never_surface() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut foreign = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        foreign.project_id = Uuid::from_u128(8);
+        foreign.scope_id = Some(Uuid::from_u128(8));
+        foreign.lesson =
+            Some(Lesson::new("FOREIGN LESSON must never leak across projects.").unwrap());
+        history.capsules.push(foreign);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert!(result.experiences.is_empty());
+        assert!(!serde_json::to_string(&result).unwrap().contains("FOREIGN"));
+    }
+
+    #[test]
+    fn superseded_and_obsolete_capsules_are_excluded_and_challenged_are_flagged() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut superseded = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        superseded.lifecycle = MemoryLifecycle::Superseded;
+        let mut obsolete = capsule(2, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        obsolete.lifecycle = MemoryLifecycle::Obsolete;
+        obsolete.procedure.steps = vec![ProcedureStep::Rollback];
+        let mut challenged = capsule(3, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        challenged.lifecycle = MemoryLifecycle::Challenged;
+        challenged.procedure.steps = vec![ProcedureStep::Inspect];
+        history.capsules.extend([superseded, obsolete, challenged]);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(result.experiences.len(), 1);
+        assert!(result.experiences[0].challenged);
+        assert_ne!(
+            result.experiences[0].guidance,
+            Some(PracticeGuidance::Prefer)
         );
     }
 
     #[test]
-    fn guidance_requires_repetition_and_uses_known_outcomes_only() {
-        assert_eq!(practice_guidance(1, 0), None);
-        assert_eq!(practice_guidance(2, 0), Some(PracticeGuidance::Prefer));
-        assert_eq!(practice_guidance(0, 2), Some(PracticeGuidance::Avoid));
-        assert_eq!(practice_guidance(2, 2), Some(PracticeGuidance::Mixed));
-        assert_eq!(evidence_confidence(0), None);
-        assert_eq!(evidence_confidence(3), Some(EvidenceConfidence::Moderate));
-        assert_eq!(evidence_confidence(8), Some(EvidenceConfidence::Strong));
+    fn equivalent_capsules_cluster_before_aggregation() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.capsules.push(capsule(
+            1,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 3],
+        ));
+        let mut twin = capsule(2, MemoryScope::Project, &[SemanticOutcome::Success; 3]);
+        twin.lesson = Some(
+            Lesson::new("Change a single placement class at a time and verify natively.").unwrap(),
+        );
+        history.capsules.push(twin);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].successes, 6);
+        assert_eq!(
+            result.experiences[0].guidance,
+            Some(PracticeGuidance::Prefer)
+        );
     }
 
     #[test]
     fn rejects_enumeration_sized_limits_before_querying_storage() {
-        let history = MemoryHistory {
-            project_id: Some(Uuid::nil()),
-            events: Vec::new(),
-            requested_limit: Cell::new(0),
-        };
+        let history = MemoryHistory::new(Some(Uuid::nil()));
         let error = RecallService::new(&history)
             .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
+                &project(),
                 RecallOptions {
                     limit: MAX_RECALL_LIMIT + 1,
                     ..RecallOptions::default()
                 },
-                None,
+                EphemeralTaskContext::default(),
             )
             .unwrap_err();
         assert!(error.to_string().contains("recall limit"));
@@ -624,105 +1259,47 @@ mod tests {
 
     #[test]
     fn unknown_project_returns_no_observations() {
-        let history = MemoryHistory {
-            project_id: None,
-            events: Vec::new(),
-            requested_limit: Cell::new(0),
-        };
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions::default(),
-                None,
-            )
-            .unwrap();
-        assert!(result.observations.is_empty());
+        let history = MemoryHistory::new(None);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert!(result.experiences.is_empty());
         assert_eq!(history.requested_limit.get(), 0);
     }
 
     #[test]
-    fn hard_limit_survives_many_distinct_groups() {
-        let operations = [
-            Operation::Command,
-            Operation::ContinueCommand,
-            Operation::ApplyPatch,
-            Operation::ReadFile,
-            Operation::WriteFile,
-            Operation::Search,
-            Operation::WebRequest,
-            Operation::InspectImage,
-            Operation::UpdatePlan,
-            Operation::Delegate,
-            Operation::Wait,
-            Operation::ToolCall,
-        ];
-        let mut events = Vec::new();
-        for id in 0..24_u128 {
-            let mut item = event(
-                id + 1,
-                operations[id as usize % operations.len()],
-                Outcome::Success,
-            );
-            item.strategy = if id < 12 {
-                Some(Strategy::NativeTool)
-            } else {
-                Some(Strategy::StructuredPatch)
-            };
-            events.push(item);
+    fn hard_limit_and_token_budget_survive_many_distinct_groups() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        for id in 0..30_u128 {
+            let mut item = capsule(id + 1, MemoryScope::Project, &[SemanticOutcome::Success; 3]);
+            item.procedure.steps =
+                vec![ProcedureStep::ALL[(id % 11) as usize]; 1 + (id / 11) as usize];
+            history.capsules.push(item);
         }
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events,
-            requested_limit: Cell::new(0),
-        };
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions {
-                    limit: MAX_RECALL_LIMIT,
-                    token_budget: MAX_TOKEN_BUDGET,
-                    ..RecallOptions::default()
-                },
-                None,
-            )
-            .unwrap();
-        assert!(result.observations.len() <= MAX_RECALL_LIMIT);
+        let result = recall(
+            &history,
+            RecallOptions {
+                limit: MAX_RECALL_LIMIT,
+                token_budget: MAX_TOKEN_BUDGET,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::default(),
+        );
+        assert!(result.experiences.len() <= MAX_RECALL_LIMIT);
         assert!(result.approximate_tokens <= MAX_TOKEN_BUDGET);
-    }
-
-    #[test]
-    fn task_relevance_survives_a_tight_token_budget_without_leaking_query_text() {
-        let mut events = Vec::new();
-        for id in 1..=10 {
-            let mut item = event(id, Operation::Command, Outcome::Success);
-            item.task = Some(TaskKind::Documentation);
-            events.push(item);
-        }
-        let mut patch = event(20, Operation::ApplyPatch, Outcome::Success);
-        patch.task = Some(TaskKind::FeatureImplementation);
-        events.push(patch);
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events,
-            requested_limit: Cell::new(0),
-        };
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions {
-                    limit: 1,
-                    token_budget: 180,
-                    ..RecallOptions::default()
-                },
-                Some("feature patch SUPER_SECRET_TASK_TOKEN"),
-            )
-            .unwrap();
-
-        assert_eq!(result.observations.len(), 1);
-        assert_eq!(result.observations[0].operation, Operation::ApplyPatch);
-        assert!(result.approximate_tokens <= 180);
+        let tight = recall(
+            &history,
+            RecallOptions {
+                token_budget: 120,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::from_query(Some("debug SUPER_SECRET_TASK_TOKEN")),
+        );
+        assert!(tight.approximate_tokens <= 120);
         assert!(
-            !serde_json::to_string(&result)
+            !serde_json::to_string(&tight)
                 .unwrap()
                 .contains("SUPER_SECRET_TASK_TOKEN")
         );
@@ -730,19 +1307,15 @@ mod tests {
 
     #[test]
     fn rejects_oversized_token_budgets_before_querying_storage() {
-        let history = MemoryHistory {
-            project_id: Some(Uuid::nil()),
-            events: Vec::new(),
-            requested_limit: Cell::new(0),
-        };
+        let history = MemoryHistory::new(Some(Uuid::nil()));
         let error = RecallService::new(&history)
             .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
+                &project(),
                 RecallOptions {
                     token_budget: MAX_TOKEN_BUDGET + 1,
                     ..RecallOptions::default()
                 },
-                None,
+                EphemeralTaskContext::default(),
             )
             .unwrap_err();
         assert!(error.to_string().contains("token budget"));
@@ -750,46 +1323,8 @@ mod tests {
     }
 
     #[test]
-    fn data_import_query_excludes_unrelated_and_unrecognized_practices() {
-        let mut import = event(1, Operation::Analyze, Outcome::Success);
-        import.task = Some(TaskKind::DataImport);
-        import.capability = Capability::Research;
-        import.strategy = Some(Strategy::PerSubjectStreaming);
-        let mut documentation = event(2, Operation::ApplyPatch, Outcome::Success);
-        documentation.task = Some(TaskKind::Documentation);
-        documentation.strategy = Some(Strategy::StructuredPatch);
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events: vec![import, documentation],
-            requested_limit: Cell::new(0),
-        };
-
-        let relevant = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions::default(),
-                Some("data import"),
-            )
-            .unwrap();
-        let nonsense = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions::default(),
-                Some("zzz nonsense unrelated"),
-            )
-            .unwrap();
-
-        assert_eq!(relevant.observations.len(), 1);
-        assert_eq!(relevant.observations[0].task, TaskKind::DataImport);
-        assert_eq!(
-            relevant.observations[0].strategy,
-            Strategy::PerSubjectStreaming
-        );
-        assert!(nonsense.observations.is_empty());
-    }
-
-    #[test]
-    fn failures_filter_semantic_practices_not_successful_tool_executions() {
+    fn failures_filter_selects_failed_practice_not_tool_executions() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
         let mut hook = event(1, Operation::ApplyPatch, Outcome::Success);
         hook.evidence_kind = EvidenceKind::HookExecution;
         hook.task = None;
@@ -797,27 +1332,52 @@ mod tests {
         let mut failed_practice = event(2, Operation::ApplyPatch, Outcome::Failure);
         failed_practice.task = Some(TaskKind::Documentation);
         failed_practice.strategy = Some(Strategy::DirectTextMutation);
-        let history = MemoryHistory {
-            project_id: Some(Uuid::from_u128(7)),
-            events: vec![hook, failed_practice],
-            requested_limit: Cell::new(0),
-        };
+        history.events = vec![hook, failed_practice];
+        history.capsules.push(capsule(
+            3,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 3],
+        ));
 
-        let result = RecallService::new(&history)
-            .recall(
-                &ProjectLocator::new(PathBuf::from("/private/project")),
-                RecallOptions {
-                    failures_only: true,
-                    ..RecallOptions::default()
-                },
-                Some("documentation"),
-            )
-            .unwrap();
+        let result = recall(
+            &history,
+            RecallOptions {
+                failures_only: true,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::default(),
+        );
 
-        assert_eq!(result.observations.len(), 1);
-        assert_eq!(result.observations[0].failures, 1);
-        assert_eq!(result.observations[0].common_error, None);
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].failures, 1);
+        assert_eq!(result.experiences[0].task, TaskKind::Documentation);
+        assert_eq!(result.experiences[0].common_error, None);
         assert_eq!(result.hook_summary.reported_successes, 1);
-        assert_eq!(result.hook_summary.reported_failures, 0);
+    }
+
+    #[test]
+    fn context_bearing_capsules_rank_above_equally_relevant_legacy_aggregates() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        for id in 1..=4 {
+            let mut legacy = event(id, Operation::ApplyPatch, Outcome::Success);
+            legacy.task = Some(TaskKind::Debugging);
+            legacy.strategy = Some(Strategy::IncrementalNativeRegeneration);
+            history.events.push(legacy);
+        }
+        let mut modern = capsule(9, MemoryScope::Project, &[SemanticOutcome::Success; 4]);
+        modern.applicability = ApplicabilityTags::default();
+        modern.procedure = Procedure {
+            mutation: Some(MutationMode::StructuredPatch),
+            ..Procedure::default()
+        };
+        history.capsules.push(modern);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(result.experiences.len(), 2);
+        assert!(!result.experiences[0].legacy);
+        assert!(result.experiences[1].legacy);
     }
 }

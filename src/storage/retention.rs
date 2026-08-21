@@ -27,15 +27,33 @@ impl RetentionStore for EncryptedStore {
                 .context("could not begin retention transaction")?;
         let limit = i64::try_from(limit)?;
         let deleted = match selection {
-            RetentionSelection::Before(cutoff) => transaction.execute(
-                "DELETE FROM events WHERE id IN (
-                    SELECT id FROM events
-                    WHERE created_at_ms < ?1
-                    ORDER BY created_at_ms ASC, id ASC
-                    LIMIT ?2
-                )",
-                params![cutoff.timestamp_millis(), limit],
-            )?,
+            RetentionSelection::Before(cutoff) => {
+                let cutoff_ms = cutoff.timestamp_millis();
+                let events = transaction.execute(
+                    "DELETE FROM events WHERE id IN (
+                        SELECT id FROM events
+                        WHERE created_at_ms < ?1
+                        ORDER BY created_at_ms ASC, id ASC
+                        LIMIT ?2
+                    )",
+                    params![cutoff_ms, limit],
+                )?;
+                let remaining = limit - i64::try_from(events)?;
+                let experiences = if remaining > 0 {
+                    transaction.execute(
+                        "DELETE FROM experiences WHERE id IN (
+                            SELECT id FROM experiences
+                            WHERE updated_at_ms < ?1
+                            ORDER BY updated_at_ms ASC, id ASC
+                            LIMIT ?2
+                        )",
+                        params![cutoff_ms, remaining],
+                    )?
+                } else {
+                    0
+                };
+                events + experiences
+            }
             RetentionSelection::BeyondNewest(keep) => transaction.execute(
                 "DELETE FROM events WHERE id IN (
                     SELECT id FROM events
@@ -63,8 +81,11 @@ fn event_count(connection: &Connection) -> Result<u64> {
 }
 
 fn count_before(connection: &Connection, cutoff_ms: i64) -> Result<u64> {
+    // Capsules age by their last confirmation, so a lesson that keeps being
+    // confirmed is retained while stale ones expire with old events.
     let count: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM events WHERE created_at_ms < ?1",
+        "SELECT (SELECT COUNT(*) FROM events WHERE created_at_ms < ?1)
+              + (SELECT COUNT(*) FROM experiences WHERE updated_at_ms < ?1)",
         [cutoff_ms],
         |row| row.get(0),
     )?;

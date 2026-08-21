@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::{
     application::{HookObservation, ProjectLocator},
@@ -57,6 +58,48 @@ pub fn normalize_tool_hook<R: Read>(reader: R) -> Result<HookObservation> {
     Ok(HookObservation::new(event, ProjectLocator::new(input.cwd)))
 }
 
+/// The complete allowlist read from a Claude Code `UserPromptSubmit` hook.
+/// The prompt is consumed transiently for controlled classification and is
+/// never persisted; everything else in the payload is ignored.
+#[derive(Deserialize)]
+struct ClaudePromptInput {
+    cwd: PathBuf,
+    hook_event_name: String,
+    prompt: Option<String>,
+}
+
+pub struct PreflightRequest {
+    pub project: ProjectLocator,
+    pub prompt: Zeroizing<String>,
+}
+
+pub fn normalize_prompt_submit<R: Read>(reader: R) -> Result<PreflightRequest> {
+    let input: ClaudePromptInput =
+        serde_json::from_reader(reader).context("invalid Claude hook JSON")?;
+    if input.hook_event_name != "UserPromptSubmit" {
+        bail!("expected a Claude UserPromptSubmit event");
+    }
+    Ok(PreflightRequest {
+        project: ProjectLocator::new(input.cwd),
+        prompt: Zeroizing::new(input.prompt.unwrap_or_default()),
+    })
+}
+
+/// Claude Code injects `additionalContext` into the model's context before
+/// it reasons about the prompt. An empty brief produces no output at all so
+/// irrelevant tasks carry zero overhead.
+pub fn preflight_response(brief: &str) -> Option<serde_json::Value> {
+    if brief.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": brief
+        }
+    }))
+}
+
 fn stable_event_id(session_id: &str, tool_use_id: &str) -> Uuid {
     let source = format!("claude:{session_id}:{tool_use_id}");
     Uuid::new_v5(&Uuid::NAMESPACE_OID, source.as_bytes())
@@ -65,6 +108,37 @@ fn stable_event_id(session_id: &str, tool_use_id: &str) -> Uuid {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    #[test]
+    fn prompt_submit_keeps_only_cwd_and_a_transient_prompt() {
+        let fixture = br#"{
+            "session_id": "claude-session-1",
+            "transcript_path": "/home/alice/.claude/private.jsonl",
+            "cwd": "/home/alice/secret-project",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "fix the flaky pytest run"
+        }"#;
+        let request = normalize_prompt_submit(&fixture[..]).unwrap();
+        assert_eq!(
+            request.project.as_path(),
+            Path::new("/home/alice/secret-project")
+        );
+        assert_eq!(request.prompt.as_str(), "fix the flaky pytest run");
+        assert!(
+            normalize_prompt_submit(&br#"{"cwd":"/x","hook_event_name":"PostToolUse"}"#[..])
+                .is_err()
+        );
+        assert!(preflight_response("").is_none());
+        let response = preflight_response("one lesson").unwrap();
+        assert_eq!(
+            response["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+        assert_eq!(
+            response["hookSpecificOutput"]["additionalContext"],
+            "one lesson"
+        );
+    }
 
     use crate::core::{Capability, Operation, Strategy};
 

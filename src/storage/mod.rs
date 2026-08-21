@@ -1,5 +1,6 @@
 mod crypto;
 mod cursor;
+mod experience;
 mod forgetting;
 mod health;
 mod keyring;

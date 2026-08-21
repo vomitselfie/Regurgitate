@@ -6,9 +6,10 @@ Coding agents often repeat the same investigation every time you open a new
 session. Regurgitate gives them a small, private notebook of procedural
 evidence: which kind of approach was tried, whether it worked, and how often.
 
-It remembers things like “targeted verification has worked reliably in this
-project.” It does not remember what you said, what the agent said, or the
-contents of your files.
+It remembers things like “for generated native artifacts, change one
+placement class at a time and run the native check—parser acceptance alone
+was not enough.” It does not remember what you said, what the agent said, or
+the contents of your files.
 
 ## What changes for you?
 
@@ -17,7 +18,7 @@ contents of your files.
 | A new session starts from zero | A new session can check what worked before |
 | You paste old logs or explain past attempts | The agent requests a small aggregate summary |
 | One agent's lessons stay with that agent | Codex, Claude Code, AoE, and other CLI-capable agents can share the same local evidence |
-| “Memory” may mean storing entire conversations | Regurgitate stores only controlled categories and outcomes |
+| “Memory” may mean storing entire conversations | Regurgitate stores controlled categories, outcomes, and three bounded sentences per lesson |
 
 The practical goal is less repeated exploration, fewer wasted tokens, and more
 consistent choices across sessions. Regurgitate is procedural memory, not a
@@ -25,18 +26,24 @@ chat archive or a replacement for project documentation.
 
 ```text
 agent hook → encrypted execution summary
-verified agent judgment → task + strategy + outcome → relevant recall
+verified agent judgment → situation + procedure + outcome + caveat → encrypted experience capsule
+new task → scoped, recency- and evidence-weighted recall → 100–300 token brief
 ```
 
 ## What does it store?
 
 Regurgitate keeps two deliberately separate ledgers. Hooks record controlled
-tool-execution categories and provider-reported status. Explicit learning
-records a controlled task category, strategy, and semantic `success` or
-`failure`. A command exiting successfully does not make a bad approach
-successful. Recall returns learned-practice counts and guidance; hook activity
-appears only in a separately labeled summary. Neither returns individual
-events.
+tool-execution categories and provider-reported status. Explicit experience
+records an **experience capsule**: a controlled task, a compositional
+procedure, a semantic `success` or `failure`, controlled applicability tags,
+and three bounded sentences—when the lesson applies, what to do, and a
+caveat. Those sentences are capped, structurally checked so that code,
+commands, paths, URLs, secrets, payloads, and conversation are rejected, and
+encrypted before they reach SQLite. A command exiting successfully does not
+make a bad approach successful. Recall returns ranked lessons with an
+explicit posterior, credible interval, and effective evidence size; hook
+activity appears only in a separately labeled summary. Neither returns
+individual events.
 
 Regurgitate never stores:
 
@@ -224,25 +231,34 @@ regurgitate recall --project "$PWD" --query "data import"
 
 `not_configured` before the first recorded event is normal. Once a hook records
 an event, status should report ready history and separate `hook_event_count`
-from `learned_practice_count`. Recall may still be empty until the agent has
-recorded useful practice for that task. Regurgitate does not retain the query
+from `experience_count`. Recall may still be empty until the agent has
+recorded a useful lesson for that task. Regurgitate does not retain the query
 text, although your shell may keep commands you type in its own history.
 
 ## Day-to-day use
 
 Once the hook and skill are installed, there is usually nothing to manage.
 Hooks record tiny sanitized execution observations in the background. The
-agent requests relevant practice when useful and records one controlled
-semantic result after a meaningful milestone or failed approach.
+agent recalls once before exploring a non-trivial task and records or
+confirms one bounded experience capsule after a meaningful milestone or
+failed approach. With Claude Code, the installed `UserPromptSubmit` hook
+injects a short brief automatically when a prior lesson is relevant and stays
+silent otherwise.
 
 Useful commands:
 
 | Command | What it does |
 | --- | --- |
 | `regurgitate status` | Checks the key store and encrypted history |
-| `regurgitate recall --project "$PWD" --query "data import"` | Shows learned practice relevant to this task |
-| `regurgitate recall --project "$PWD" --failures --query "data import"` | Shows semantically failed practices for this task |
-| `regurgitate learn --project "$PWD" --task data-import --strategy per-subject-streaming --outcome success` | Records one verified procedural result |
+| `regurgitate recall --project "$PWD" --task data-import --query "csv importer"` | Shows ranked lessons relevant to this task |
+| `regurgitate recall --project "$PWD" --failures --task data-import` | Shows lessons with failed evidence for this task |
+| `regurgitate experience record --project "$PWD" --task data-import --situation "…" --lesson "…" --procedure per-subject-streaming --outcome success` | Records or confirms one experience capsule |
+| `regurgitate experience list --project "$PWD"` | Lists capsule status and shape (never lesson text) |
+| `regurgitate experience challenge\|obsolete --project "$PWD" --match <selector>` | Marks a capsule challenged or obsolete |
+| `regurgitate experience supersede --project "$PWD" --old <sel> --new <sel>` | Replaces one capsule with another |
+| `regurgitate preflight --project "$PWD" --query "…"` | Prints the plain-text brief a host could inject |
+| `regurgitate learn --project "$PWD" --task data-import --strategy per-subject-streaming --outcome success` | Text-free shorthand for `experience record` |
+| `regurgitate bench-report --runs runs.jsonl` | Summarizes paired cold/warm benchmark runs |
 | `regurgitate forget --project "$PWD"` | Previews deleting this project's history |
 | `regurgitate forget --project "$PWD" --apply` | Deletes this project's history |
 | `regurgitate prune --keep-recent 10000` | Previews a global retention cleanup |
@@ -254,11 +270,13 @@ Destructive commands preview what they will remove unless you add `--apply`.
 ## Token impact
 
 Hook recording adds no chat output: successful hooks are silent. Recall
-defaults to an approximate 300-token output limit and returns aggregates
-instead of replaying history. The core skill plus a default recall has a
-Regurgitate-controlled ceiling of about 1,010 tokens, 44% smaller than the
-original implementation. AoE setup adds one short instruction containing its
-local executable path, so that exact total varies slightly by computer.
+defaults to an approximate 300-token output limit, the preflight brief to
+220, and both trim lowest-ranked lessons first instead of replaying history.
+An irrelevant task gets no brief at all. The core skill plus a default recall
+has a Regurgitate-controlled ceiling of about 1,050 tokens. AoE setup adds one
+short instruction containing its local executable path, so that exact total
+varies slightly by computer. Whether that context pays for itself is what the
+[paired benchmark](benchmarks/README.md) measures.
 
 That is a context-size ceiling, not a promise about provider billing. The
 payoff comes when a small recall prevents an agent from repeating a much larger

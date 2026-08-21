@@ -4,6 +4,30 @@ Regurgitate is being built in small vertical slices. Each slice keeps host-speci
 discovery, application policy, query logic, and persistence behind separate
 module boundaries.
 
+## v0.8 direction: encrypted experience memory
+
+The semantic unit changes from one task + one strategy + one outcome to a
+bounded, encrypted, context-bearing experience capsule. The task list and
+phase status live in [v0.8 plan](v0.8-plan.md); the invariant is recorded in
+[ADR 0001](adr/0001-bounded-semantic-experience.md). Shipped so far:
+
+- schema v3 `ExperienceCapsule` with admitted bounded text and a separate
+  authenticated `experiences` table;
+- compositional `Procedure` with a `Strategy` migration mapping;
+- hierarchical scope (project, workspace, ecosystem, machine, global) as a
+  relevance prior;
+- recency decay, applicability, Beta posterior, credible interval, and Kish
+  effective evidence behind one `RankingPolicy`;
+- two-stage retrieval with dual-read of v2 practice rows;
+- confirm/merge, challenge, supersede, and obsolete lifecycle handling;
+- host-neutral `RecallBroker` with Claude Code `UserPromptSubmit` preflight
+  injection and a plain-text `preflight` command;
+- paired cold/warm benchmark protocol and `bench-report` release gate.
+
+Still open: populating the baseline benchmark numbers, running the paired
+suite as the release gate, and automatic preflight for hosts that expose a
+stable pre-task hook.
+
 ## Working now
 
 - AoE-managed Codex session discovery and strict normalization;
@@ -12,9 +36,10 @@ module boundaries.
 - encrypted project mappings and append-safe ingestion cursors;
 - manual, interruption-safe session ingestion;
 - project-scoped aggregate recall;
-- fixed-vocabulary task and strategy learning for semantic practice outcomes;
-- strategy confidence and `prefer`/`avoid` guidance that discounts unknown
-  activity volume;
+- bounded encrypted experience capsules with situation, lesson, caveat,
+  compositional procedure, applicability, and lifecycle;
+- uncertainty-aware `prefer`/`avoid`/`mixed` guidance from a Beta posterior
+  and effective evidence size, with legacy practice rows still contributing;
 - transient task-query filtering with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;

@@ -1,4 +1,7 @@
-use std::{io, path::PathBuf};
+use std::{
+    io::{self, BufReader, Write},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
@@ -6,21 +9,28 @@ use zeroize::Zeroizing;
 use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
-        ForgetReport, ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation,
-        HookProvider, HookReadiness, IngestionReport, IngestionService, LearningReport,
-        LearningService, ProjectLocator, RecordingReport, RecordingService, RetentionPolicy,
-        RetentionReport, RetentionService, RetentionStatus, SessionEventSource,
-        ValidatedRetentionPolicy,
+        ExperienceInput, ExperienceReport, ExperienceService, ExperienceSummary, ForgetReport,
+        ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation, HookProvider,
+        HookReadiness, IngestionReport, IngestionService, ProjectLocator, RecordingReport,
+        RecordingService, RetentionPolicy, RetentionReport, RetentionService, RetentionStatus,
+        SessionEventSource, TransitionReport, ValidatedRetentionPolicy,
     },
-    cli::{Cli, Command, HookAgentArg},
-    core::{AgentKind, DebugEvent, Outcome, Strategy, TaskKind},
+    cli::{Cli, Command, ExperienceCommand, HookAgentArg, PreflightAgentArg},
+    core::{
+        AgentKind, ApplicabilityTags, Caveat, DebugEvent, EnvironmentFingerprint, Lesson,
+        MemoryLifecycle, MemoryScope, Outcome, Procedure, SemanticOutcome, Situation, Strategy,
+        TaskKind,
+    },
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
         inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_claude_hook,
         install_codex_hook, install_skill,
     },
     paths::default_data_home,
-    query::{RecallOptions, RecallResult, RecallService},
+    query::{
+        EphemeralTaskContext, ExperienceBrief, RecallBroker, RecallOptions, RecallResult,
+        RecallService,
+    },
     storage::{
         EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
         SystemKeyProvider, existing_history_database, history_database_for_read,
@@ -57,6 +67,76 @@ pub fn execute(cli: Cli) -> Result<()> {
                 &SystemKeyProvider::default(),
             )?;
             print_json(&report)
+        }
+        Command::Experience { command } => execute_experience(command),
+        Command::Preflight {
+            project,
+            query,
+            task,
+            phase,
+            artifact,
+            ecosystem,
+            tool_family,
+            token_budget,
+            agent,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let query = query.map(Zeroizing::new);
+            let metadata = EphemeralTaskContext {
+                query: None,
+                task: task.map(Into::into),
+                phase,
+                artifact,
+                ecosystem,
+                tool_family,
+            };
+            match agent {
+                Some(PreflightAgentArg::Claude) => {
+                    let request = claude::normalize_prompt_submit(io::stdin().lock())?;
+                    let context = EphemeralTaskContext {
+                        query: Some(request.prompt.as_str()),
+                        ..metadata
+                    };
+                    let brief = preflight_brief(
+                        request.project,
+                        context,
+                        token_budget,
+                        data_home,
+                        &SystemKeyProvider::default(),
+                    )?;
+                    if let Some(response) = claude::preflight_response(&brief.text) {
+                        print_json(&response)?;
+                    }
+                    Ok(())
+                }
+                None => {
+                    let project = project.context("--project is required without --agent")?;
+                    let context = EphemeralTaskContext {
+                        query: query.as_ref().map(|value| value.as_str()),
+                        ..metadata
+                    };
+                    let brief = preflight_brief(
+                        ProjectLocator::new(project),
+                        context,
+                        token_budget,
+                        data_home,
+                        &SystemKeyProvider::default(),
+                    )?;
+                    if !brief.text.is_empty() {
+                        let mut stdout = io::stdout().lock();
+                        stdout.write_all(brief.text.as_bytes())?;
+                        stdout.write_all(b"\n")?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+        Command::BenchReport { runs } => {
+            let file = std::fs::File::open(&runs)
+                .with_context(|| format!("could not open benchmark runs at {}", runs.display()))?;
+            let parsed = crate::bench::parse_runs(BufReader::new(file))?;
+            print_json(&crate::bench::summarize(&parsed)?)
         }
         Command::AoeHook => {
             let context = aoe_hook::current_context()?;
@@ -172,6 +252,11 @@ pub fn execute(cli: Cli) -> Result<()> {
             failures,
             limit,
             query,
+            task,
+            phase,
+            artifact,
+            ecosystem,
+            tool_family,
             token_budget,
             data_home,
         } => {
@@ -185,7 +270,14 @@ pub fn execute(cli: Cli) -> Result<()> {
                     limit,
                     token_budget,
                 },
-                query.as_ref().map(|value| value.as_str()),
+                EphemeralTaskContext {
+                    query: query.as_ref().map(|value| value.as_str()),
+                    task: task.map(Into::into),
+                    phase,
+                    artifact,
+                    ecosystem,
+                    tool_family,
+                },
                 data_home,
                 &SystemKeyProvider::default(),
             )?;
@@ -261,6 +353,128 @@ fn record_hook(
     RecordingService::new(store).record(observation)
 }
 
+fn execute_experience(command: ExperienceCommand) -> Result<()> {
+    match command {
+        ExperienceCommand::Record {
+            project,
+            scope,
+            task,
+            situation,
+            lesson,
+            caveat,
+            procedure,
+            steps,
+            outcome,
+            failure_reason,
+            phase,
+            artifact,
+            ecosystem,
+            tool_family,
+            risks,
+            tool_major,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let situation = Zeroizing::new(situation);
+            let lesson = Zeroizing::new(lesson);
+            let caveat = caveat.map(Zeroizing::new);
+            let mut procedure = Procedure::parse_dimensions(&procedure)?;
+            if let Some(steps) = steps {
+                procedure.steps = Procedure::parse_steps(&steps)?;
+            }
+            let input = ExperienceInput {
+                scope,
+                task: task.into(),
+                situation: Some(Situation::new(&situation).context("situation rejected")?),
+                lesson: Some(Lesson::new(&lesson).context("lesson rejected")?),
+                caveat: caveat
+                    .as_deref()
+                    .map(|text| Caveat::new(text).context("caveat rejected"))
+                    .transpose()?,
+                procedure,
+                outcome: match Outcome::from(outcome) {
+                    Outcome::Failure => SemanticOutcome::Failure,
+                    _ => SemanticOutcome::Success,
+                },
+                failure_reason,
+                applicability: ApplicabilityTags {
+                    artifact_kind: artifact,
+                    phase,
+                    ecosystem,
+                    tool_family,
+                    risk_shapes: risks.into_iter().collect(),
+                },
+                environment: EnvironmentFingerprint {
+                    tool_family,
+                    major_version: tool_major,
+                    host_class: None,
+                },
+            };
+            let report =
+                record_experience(project, input, data_home, &SystemKeyProvider::default())?;
+            print_json(&report)
+        }
+        ExperienceCommand::List {
+            project,
+            limit,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let listing =
+                list_experiences(project, limit, data_home, &SystemKeyProvider::default())?;
+            print_json(&listing)
+        }
+        ExperienceCommand::Challenge {
+            project,
+            selector,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = transition_experience(
+                project,
+                &selector,
+                MemoryLifecycle::Challenged,
+                data_home,
+                &SystemKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
+        ExperienceCommand::Obsolete {
+            project,
+            selector,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = transition_experience(
+                project,
+                &selector,
+                MemoryLifecycle::Obsolete,
+                data_home,
+                &SystemKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
+        ExperienceCommand::Supersede {
+            project,
+            old,
+            new,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let report = supersede_experience(
+                project,
+                &old,
+                &new,
+                data_home,
+                &SystemKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
+    }
+}
+
+/// Compatibility shorthand: one controlled strategy becomes a text-free
+/// project-scoped capsule so old workflows keep contributing evidence.
 fn learn_practice(
     project: PathBuf,
     task: TaskKind,
@@ -268,11 +482,94 @@ fn learn_practice(
     outcome: Outcome,
     data_home: PathBuf,
     key_provider: &impl MasterKeyProvider,
-) -> Result<LearningReport> {
+) -> Result<ExperienceReport> {
+    let outcome = match outcome {
+        Outcome::Success => SemanticOutcome::Success,
+        Outcome::Failure => SemanticOutcome::Failure,
+        Outcome::Unknown => {
+            anyhow::bail!("an explicitly learned practice requires a known outcome")
+        }
+    };
+    record_experience(
+        project,
+        ExperienceInput {
+            scope: MemoryScope::Project,
+            task,
+            situation: None,
+            lesson: None,
+            caveat: None,
+            procedure: Procedure::from_strategy(strategy),
+            outcome,
+            failure_reason: None,
+            applicability: ApplicabilityTags::default(),
+            environment: EnvironmentFingerprint::default(),
+        },
+        data_home,
+        key_provider,
+    )
+}
+
+fn record_experience(
+    project: PathBuf,
+    input: ExperienceInput,
+    data_home: PathBuf,
+    key_provider: &impl MasterKeyProvider,
+) -> Result<ExperienceReport> {
     let database = prepare_history_database(&data_home)?;
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&database, &key)?;
-    LearningService::new(store).learn(ProjectLocator::new(project), task, strategy, outcome)
+    ExperienceService::new(store).record(ProjectLocator::new(project), input)
+}
+
+fn list_experiences(
+    project: PathBuf,
+    limit: usize,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<Vec<ExperienceSummary>> {
+    let Some(store) = open_existing_history(&data_home, true, key_provider)? else {
+        return Ok(Vec::new());
+    };
+    ExperienceService::new(store).list(&ProjectLocator::new(project), limit.clamp(1, 200))
+}
+
+fn transition_experience(
+    project: PathBuf,
+    selector: &str,
+    lifecycle: MemoryLifecycle,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<TransitionReport> {
+    let store = open_existing_history(&data_home, true, key_provider)?
+        .context("no Regurgitate history exists yet")?;
+    ExperienceService::new(store).transition(&ProjectLocator::new(project), selector, lifecycle)
+}
+
+fn supersede_experience(
+    project: PathBuf,
+    old: &str,
+    new: &str,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<TransitionReport> {
+    let store = open_existing_history(&data_home, true, key_provider)?
+        .context("no Regurgitate history exists yet")?;
+    ExperienceService::new(store).supersede(&ProjectLocator::new(project), old, new)
+}
+
+fn preflight_brief(
+    project: ProjectLocator,
+    context: EphemeralTaskContext<'_>,
+    token_budget: usize,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<ExperienceBrief> {
+    // Preflight must never fail a host prompt: missing history or key simply
+    // yields no brief.
+    let Ok(Some(store)) = open_existing_history(&data_home, false, key_provider) else {
+        return Ok(ExperienceBrief::empty());
+    };
+    RecallService::new(&store).brief(&project, context, token_budget)
 }
 
 fn health_status(
@@ -347,7 +644,7 @@ fn open_existing_history(
 fn recall_project(
     project: PathBuf,
     options: RecallOptions,
-    task_query: Option<&str>,
+    context: EphemeralTaskContext<'_>,
     data_home: PathBuf,
     key_provider: &impl ExistingMasterKeyProvider,
 ) -> Result<RecallResult> {
@@ -355,7 +652,7 @@ fn recall_project(
     let Some(store) = open_existing_history(&data_home, false, key_provider)? else {
         return Ok(RecallResult::empty());
     };
-    RecallService::new(&store).recall(&ProjectLocator::new(project), options, task_query)
+    RecallService::new(&store).recall(&ProjectLocator::new(project), options, context)
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -493,12 +790,12 @@ mod tests {
         let recalled = recall_project(
             project_dir,
             RecallOptions::default(),
-            Some("SUPER_SECRET_QUERY"),
+            EphemeralTaskContext::from_query(Some("SUPER_SECRET_QUERY")),
             data_home.clone(),
             &FixedKeyProvider,
         )
         .unwrap();
-        assert!(recalled.observations.is_empty());
+        assert!(recalled.experiences.is_empty());
         assert_eq!(recalled.hook_summary.sampled_executions, 2);
         let recalled_json = serde_json::to_string(&recalled).unwrap();
         for forbidden in ["aoe-1", "PLAINTEXT_SENTINEL_PROJECT", "SECRET"] {
@@ -664,7 +961,11 @@ mod tests {
                 &FixedKeyProvider,
             )
             .unwrap();
-            assert_eq!(report.status, crate::application::LearningStatus::Recorded);
+            assert!(matches!(
+                report.status,
+                crate::application::ExperienceStatus::Recorded
+                    | crate::application::ExperienceStatus::Confirmed
+            ));
         }
 
         let database_path = data_home.join("regurgitate/history.db");
@@ -672,20 +973,18 @@ mod tests {
         let result = recall_project(
             project,
             RecallOptions::default(),
-            Some("atomic config write"),
+            EphemeralTaskContext::from_query(Some("atomic config write")),
             data_home,
             &FixedKeyProvider,
         )
         .unwrap();
 
-        assert_eq!(result.observations.len(), 1);
-        assert_eq!(result.observations[0].task, TaskKind::Configuration);
-        assert_eq!(result.observations[0].strategy, Strategy::AtomicWrite);
-        assert_eq!(result.observations[0].success_rate_percent, Some(100));
-        assert_eq!(
-            result.observations[0].guidance,
-            Some(crate::query::PracticeGuidance::Prefer)
-        );
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].task, TaskKind::Configuration);
+        assert_eq!(result.experiences[0].procedure, "atomic-write");
+        assert_eq!(result.experiences[0].successes, 2);
+        assert_eq!(result.experiences[0].guidance, None);
+        assert!(!result.experiences[0].legacy);
         assert_eq!(fs::read(&database_path).unwrap(), before_recall);
         let encoded = serde_json::to_string(&result).unwrap();
         assert!(!encoded.contains("SECRET_LEARNING_PROJECT"));
@@ -697,6 +996,241 @@ mod tests {
         );
     }
 
+    fn kicad_input(lesson: &str, outcome: SemanticOutcome) -> ExperienceInput {
+        ExperienceInput {
+            scope: MemoryScope::Project,
+            task: TaskKind::Debugging,
+            situation: Some(
+                Situation::new(
+                    "SITUATION_SENTINEL generated native artifact; parser acceptance is weak.",
+                )
+                .unwrap(),
+            ),
+            lesson: Some(Lesson::new(lesson).unwrap()),
+            caveat: Some(
+                Caveat::new("CAVEAT_SENTINEL serialization success proves nothing.").unwrap(),
+            ),
+            procedure: Procedure {
+                mutation: Some(crate::core::MutationMode::IncrementalNativeRegeneration),
+                verification: Some(crate::core::VerificationMode::Native),
+                ..Procedure::default()
+            },
+            outcome,
+            failure_reason: None,
+            applicability: ApplicabilityTags {
+                artifact_kind: Some(crate::core::ArtifactKind::NativeCad),
+                phase: Some(crate::core::Phase::Verify),
+                ecosystem: Some(crate::core::Ecosystem::Kicad),
+                tool_family: Some(crate::core::ToolFamily::Kicad),
+                ..ApplicabilityTags::default()
+            },
+            environment: EnvironmentFingerprint {
+                tool_family: Some(crate::core::ToolFamily::Kicad),
+                major_version: Some(10),
+                host_class: None,
+            },
+        }
+    }
+
+    #[test]
+    fn experience_capsules_are_encrypted_confirmed_recalled_and_forgotten() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("SECRET_EXPERIENCE_PROJECT");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        let lesson = "LESSON_SENTINEL change one placement class at a time, then verify natively.";
+
+        let first = record_experience(
+            project.clone(),
+            kicad_input(lesson, SemanticOutcome::Success),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(first.status, crate::application::ExperienceStatus::Recorded);
+        for _ in 0..5 {
+            let again = record_experience(
+                project.clone(),
+                kicad_input(lesson, SemanticOutcome::Success),
+                data_home.clone(),
+                &FixedKeyProvider,
+            )
+            .unwrap();
+            assert_eq!(
+                again.status,
+                crate::application::ExperienceStatus::Confirmed
+            );
+        }
+        let listing =
+            list_experiences(project.clone(), 10, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(listing.len(), 1);
+        assert_eq!(listing[0].successes, 6);
+        let listing_json = serde_json::to_string(&listing).unwrap();
+        assert!(!listing_json.contains("SENTINEL"));
+
+        let database_path = data_home.join("regurgitate/history.db");
+        let before_recall = fs::read(&database_path).unwrap();
+        let result = recall_project(
+            project.clone(),
+            RecallOptions {
+                token_budget: crate::query::MAX_TOKEN_BUDGET,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&database_path).unwrap(), before_recall);
+        assert_eq!(result.experiences.len(), 1);
+        let item = &result.experiences[0];
+        assert_eq!(item.lesson.as_deref(), Some(lesson));
+        assert_eq!(item.successes, 6);
+        assert_eq!(item.guidance, Some(crate::query::PracticeGuidance::Prefer));
+        assert!(!item.legacy);
+
+        let brief = preflight_brief(
+            ProjectLocator::new(project.clone()),
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            220,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(brief.items, 1);
+        assert!(brief.text.contains("LESSON_SENTINEL"));
+        assert!(brief.text.contains("Caveat: CAVEAT_SENTINEL"));
+        assert!(brief.approximate_tokens <= 220);
+        let silent = preflight_brief(
+            ProjectLocator::new(project.clone()),
+            EphemeralTaskContext::from_query(Some("write the release notes documentation")),
+            220,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(silent, ExperienceBrief::empty());
+
+        let database = fs::read(&database_path).unwrap();
+        for forbidden in [
+            b"SECRET_EXPERIENCE_PROJECT".as_slice(),
+            b"SITUATION_SENTINEL",
+            b"LESSON_SENTINEL",
+            b"CAVEAT_SENTINEL",
+            b"kicad",
+            b"placement",
+        ] {
+            assert!(
+                !database
+                    .windows(forbidden.len())
+                    .any(|window| window == forbidden),
+                "database leaked {:?}",
+                String::from_utf8_lossy(forbidden)
+            );
+        }
+
+        let obsolete = transition_experience(
+            project.clone(),
+            &listing[0].selector,
+            MemoryLifecycle::Obsolete,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(obsolete.previous, MemoryLifecycle::Active);
+        let after = recall_project(
+            project.clone(),
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert!(after.experiences.is_empty());
+
+        let forgotten =
+            forget_project(project.clone(), true, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(forgotten.status, ForgetStatus::Forgotten);
+        assert_eq!(forgotten.events, 1);
+        assert!(
+            list_experiences(project, 10, data_home, &FixedKeyProvider)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn preflight_without_history_or_key_is_silent_and_creates_nothing() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+        let brief = preflight_brief(
+            ProjectLocator::new(temp.path().to_path_buf()),
+            EphemeralTaskContext::from_query(Some("anything")),
+            220,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(brief, ExperienceBrief::empty());
+        assert!(!data_home.exists());
+    }
+
+    #[test]
+    fn contradicting_experience_challenges_and_supersession_resolves() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        record_experience(
+            project.clone(),
+            kicad_input(
+                "Change one placement class at a time, then verify natively.",
+                SemanticOutcome::Success,
+            ),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let report = record_experience(
+            project.clone(),
+            kicad_input(
+                "Regenerate the entire board in bulk and verify once at the end.",
+                SemanticOutcome::Success,
+            ),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(
+            report.status,
+            crate::application::ExperienceStatus::Challenged
+        );
+        let listing =
+            list_experiences(project.clone(), 10, data_home.clone(), &FixedKeyProvider).unwrap();
+        assert_eq!(listing.len(), 2);
+        assert!(
+            listing
+                .iter()
+                .all(|summary| summary.lifecycle == MemoryLifecycle::Challenged)
+        );
+
+        let newest = &listing[0].selector;
+        let oldest = &listing[1].selector;
+        let report = supersede_experience(
+            project.clone(),
+            oldest,
+            newest,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(report.lifecycle, MemoryLifecycle::Superseded);
+        let listing = list_experiences(project, 10, data_home, &FixedKeyProvider).unwrap();
+        let lifecycles: Vec<_> = listing.iter().map(|summary| summary.lifecycle).collect();
+        assert!(lifecycles.contains(&MemoryLifecycle::Active));
+        assert!(lifecycles.contains(&MemoryLifecycle::Superseded));
+    }
+
     #[test]
     fn recall_missing_history_does_not_initialize_state() {
         let temp = tempdir().unwrap();
@@ -705,13 +1239,13 @@ mod tests {
         let result = recall_project(
             temp.path().to_path_buf(),
             RecallOptions::default(),
-            None,
+            EphemeralTaskContext::default(),
             data_home.clone(),
             &FixedKeyProvider,
         )
         .unwrap();
 
-        assert!(result.observations.is_empty());
+        assert!(result.experiences.is_empty());
         assert!(!data_home.exists());
     }
 
@@ -824,12 +1358,12 @@ mod tests {
         let still_present = recall_project(
             project.clone(),
             RecallOptions::default(),
-            None,
+            EphemeralTaskContext::default(),
             data_home.clone(),
             &FixedKeyProvider,
         )
         .unwrap();
-        assert!(still_present.observations.is_empty());
+        assert!(still_present.experiences.is_empty());
         assert_eq!(still_present.hook_summary.sampled_executions, 1);
 
         let forgotten =
@@ -839,12 +1373,12 @@ mod tests {
         let recalled = recall_project(
             project,
             RecallOptions::default(),
-            None,
+            EphemeralTaskContext::default(),
             data_home.clone(),
             &FixedKeyProvider,
         )
         .unwrap();
-        assert!(recalled.observations.is_empty());
+        assert!(recalled.experiences.is_empty());
         assert_eq!(recalled.hook_summary.sampled_executions, 0);
 
         let encoded = serde_json::to_string(&forgotten).unwrap();

@@ -18,6 +18,7 @@ pub struct HistoryCounts {
     pub event_count: u64,
     pub hook_event_count: u64,
     pub learned_practice_count: u64,
+    pub experience_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -68,6 +69,8 @@ pub struct HistoryHealth {
     pub hook_event_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learned_practice_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experience_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -115,18 +118,21 @@ where
                 event_count: Some(counts.event_count),
                 hook_event_count: Some(counts.hook_event_count),
                 learned_practice_count: Some(counts.learned_practice_count),
+                experience_count: Some(counts.experience_count),
             },
             Ok(None) => HistoryHealth {
                 status: ComponentReadiness::NotConfigured,
                 event_count: None,
                 hook_event_count: None,
                 learned_practice_count: None,
+                experience_count: None,
             },
             Err(_) => HistoryHealth {
                 status: ComponentReadiness::Unavailable,
                 event_count: None,
                 hook_event_count: None,
                 learned_practice_count: None,
+                experience_count: None,
             },
         };
         let mut status = match (key_store, history.status) {
@@ -208,6 +214,7 @@ mod tests {
                 event_count: 7,
                 hook_event_count: 5,
                 learned_practice_count: 2,
+                experience_count: 1,
             }))),
         )
         .inspect();
@@ -255,6 +262,7 @@ mod tests {
                 event_count: 7,
                 hook_event_count: 5,
                 learned_practice_count: 2,
+                experience_count: 1,
             }))),
         )
         .inspect_with_hooks([
@@ -293,6 +301,7 @@ mod tests {
                 event_count: 7,
                 hook_event_count: 5,
                 learned_practice_count: 2,
+                experience_count: 1,
             }))),
         )
         .inspect_with_hooks([

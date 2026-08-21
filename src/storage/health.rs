@@ -50,7 +50,20 @@ impl HistoryReadinessProbe for HistoryDatabaseProbe {
             ],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
+        let has_experiences: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'experiences'",
+            [],
+            |row| row.get(0),
+        )?;
+        let experiences: i64 = if has_experiences == 1 {
+            connection.query_row("SELECT COUNT(*) FROM experiences", [], |row| row.get(0))?
+        } else {
+            0
+        };
         Ok(Some(HistoryCounts {
+            experience_count: experiences
+                .try_into()
+                .context("history database returned an invalid experience count")?,
             event_count: events
                 .try_into()
                 .context("history database returned an invalid event count")?,
@@ -130,6 +143,7 @@ mod tests {
                 event_count: 0,
                 hook_event_count: 0,
                 learned_practice_count: 0,
+                experience_count: 0,
             })
         );
         let after = fs::metadata(path).unwrap().modified().unwrap();
@@ -155,6 +169,7 @@ mod tests {
                 event_count: 2,
                 hook_event_count: 1,
                 learned_practice_count: 1,
+                experience_count: 0,
             })
         );
     }

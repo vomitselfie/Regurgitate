@@ -1,13 +1,19 @@
 mod cursor;
+mod experience;
 mod forgetting;
 mod health;
 mod ingestion;
-mod learning;
 mod project;
 mod recording;
 mod retention;
 
 pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
+pub use experience::{
+    CHALLENGE_RESOLUTION_EVIDENCE, CONTRADICTING_LESSON_SIMILARITY,
+    EQUIVALENT_SITUATION_SIMILARITY, ExperienceInput, ExperienceReport, ExperienceService,
+    ExperienceStatus, ExperienceStore, ExperienceSummary, MAX_DEDUP_CANDIDATES, ScopeKey,
+    TransitionReport, workspace_locator,
+};
 pub use forgetting::{ForgetReport, ForgetService, ForgetStatus, ProjectHistoryEraser};
 pub use health::{
     ComponentReadiness, HealthReport, HealthService, HistoryCounts, HistoryHealth,
@@ -18,7 +24,6 @@ pub use ingestion::{
     CursorStore, EventBatch, EventSink, IngestionReport, IngestionService, ProjectResolver,
     SessionEventSource,
 };
-pub use learning::{LearningReport, LearningService, LearningStatus};
 pub use project::ProjectLocator;
 pub use recording::{HookObservation, RecordingReport, RecordingService};
 pub use retention::{

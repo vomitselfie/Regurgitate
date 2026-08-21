@@ -1,0 +1,25 @@
+Here is the prompt the user sent: please refactor the auth module and keep secrets out of logs
+The assistant replied: I will now run the tests and report back with the results
+fn verify(board: &Board) -> Result<(), DrcError> { board.check_all() }
+const API_KEY = process.env.API_KEY; fetch(url, { headers: { Authorization: API_KEY } })
+cargo test -- --nocapture 2>&1 | tee /tmp/out.log
+rm -rf ./build && make -j8 && ./run_tests.sh
+https://internal.example.test/wiki/PlacementRules
+See www.example.test for the full discussion of the bug
+/home/alice/projects/boardgen/src/placement/verify.rs
+C:\Users\alice\Documents\boards\main.kicad_pcb
+~/.config/regurgitate/history.db contains the encrypted rows
+sk-fixture-secret-abcdef0123456789 is the staging key
+ghp_0123456789abcdef0123456789abcdef0123 grants repo access
+AKIAIOSFODNN7EXAMPLE should be rotated soon
+-----BEGIN OPENSSH PRIVATE KEY----- b3BlbnNzaC1rZXktdjEAAAAABG5vbmU
+the database password is hunter2 on staging
+Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0
+{"tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"abc123"}
+commit 3f9a8c1d2e4b5a6f7c8d9e0f1a2b3c4d5e6f7a8b broke the build
+export DATABASE_URL=postgres://user:pw@localhost:5432/app
+error[E0308]: mismatched types --> src/main.rs:42:13
+PRIVATE_USER_HOME=/home/alice/secret and HOSTNAME=alice-laptop
+DEBUG=1 pytest tests/test_placement.py::test_drc -x
+<div class="board"><span id="drc">ok</span></div>
+SELECT * FROM users WHERE password = 'hunter2';

@@ -36,6 +36,10 @@ impl ProjectHistoryEraser for EncryptedStore {
             "DELETE FROM events WHERE project_token = ?1",
             [event_token.as_slice()],
         )?;
+        let deleted_experiences = transaction.execute(
+            "DELETE FROM experiences WHERE origin_token = ?1",
+            [event_token.as_slice()],
+        )?;
         let deleted_mapping = transaction.execute(
             "DELETE FROM private_projects WHERE lookup_token = ?1",
             [identity.lookup_token.as_slice()],
@@ -44,7 +48,7 @@ impl ProjectHistoryEraser for EncryptedStore {
             bail!("encrypted project identity changed during deletion");
         }
         transaction.commit()?;
-        u64::try_from(deleted)
+        u64::try_from(deleted + deleted_experiences)
             .context("project deletion returned an invalid event count")
             .map(Some)
     }
@@ -58,7 +62,8 @@ impl EncryptedStore {
     ) -> Result<u64> {
         let event_token = self.event_project_token(identity.project_id)?;
         let count: i64 = connection.query_row(
-            "SELECT COUNT(*) FROM events WHERE project_token = ?1",
+            "SELECT (SELECT COUNT(*) FROM events WHERE project_token = ?1)
+                  + (SELECT COUNT(*) FROM experiences WHERE origin_token = ?1)",
             [event_token.as_slice()],
             |row| row.get(0),
         )?;
@@ -158,5 +163,77 @@ mod tests {
         let replacement_id = store.resolve_project(&wanted).unwrap();
         assert_ne!(replacement_id, wanted_id);
         assert!(store.append(&event(5, replacement_id)).unwrap());
+    }
+
+    #[test]
+    fn forgetting_removes_capsules_recorded_from_the_project_in_every_scope() {
+        use crate::{
+            application::{ExperienceStore, ScopeKey},
+            core::{
+                ApplicabilityTags, EXPERIENCE_SCHEMA_VERSION, EnvironmentFingerprint,
+                EvidenceEntry, ExperienceCapsule, MemoryLifecycle, MemoryScope, MutationMode,
+                Procedure, SemanticOutcome, TaskKind,
+            },
+        };
+        let temp = tempdir().unwrap();
+        let wanted_path = temp.path().join("WANTED");
+        let other_path = temp.path().join("OTHER");
+        fs::create_dir(&wanted_path).unwrap();
+        fs::create_dir(&other_path).unwrap();
+        let store = EncryptedStore::open_in_memory(&MasterKey::from_bytes([72; 32])).unwrap();
+        let wanted = ProjectLocator::new(wanted_path);
+        let wanted_id = store.resolve_project(&wanted).unwrap();
+        let other_id = store
+            .resolve_project(&ProjectLocator::new(other_path))
+            .unwrap();
+        let capsule = |id: u128, project: Uuid, scope: MemoryScope| {
+            let at = Utc.timestamp_millis_opt(1_776_254_400_000).unwrap();
+            ExperienceCapsule {
+                id: Uuid::from_u128(id),
+                project_id: project,
+                scope,
+                scope_id: (scope == MemoryScope::Project).then_some(project),
+                task: TaskKind::Testing,
+                situation: None,
+                lesson: None,
+                caveat: None,
+                procedure: Procedure {
+                    mutation: Some(MutationMode::StructuredPatch),
+                    ..Procedure::default()
+                },
+                applicability: ApplicabilityTags::default(),
+                environment: EnvironmentFingerprint::default(),
+                lifecycle: MemoryLifecycle::Active,
+                evidence: vec![EvidenceEntry {
+                    at,
+                    outcome: SemanticOutcome::Success,
+                    failure_reason: None,
+                }],
+                created_at: at,
+                last_confirmed_at: at,
+                schema_version: EXPERIENCE_SCHEMA_VERSION,
+            }
+        };
+        store
+            .append_experience(&capsule(1, wanted_id, MemoryScope::Project))
+            .unwrap();
+        store
+            .append_experience(&capsule(2, wanted_id, MemoryScope::Global))
+            .unwrap();
+        store
+            .append_experience(&capsule(3, other_id, MemoryScope::Global))
+            .unwrap();
+        store.append(&event(4, wanted_id)).unwrap();
+
+        assert_eq!(store.count_project_events(&wanted).unwrap(), Some(3));
+        assert_eq!(store.erase_project(&wanted).unwrap(), Some(3));
+        let globals = store.scoped_experiences(ScopeKey::Global, 10).unwrap();
+        assert_eq!(globals.len(), 1);
+        assert_eq!(globals[0].project_id, other_id);
+        assert!(
+            !store
+                .append_experience(&capsule(5, wanted_id, MemoryScope::Global))
+                .unwrap()
+        );
     }
 }

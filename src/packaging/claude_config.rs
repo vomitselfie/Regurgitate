@@ -15,8 +15,11 @@ use super::{
 };
 
 const CLAUDE_HOOK_COMMAND: &str = "regurgitate record-hook --agent claude";
+const CLAUDE_PREFLIGHT_COMMAND: &str = "regurgitate preflight --agent claude";
+const RECORD_HOOK_SUFFIX: &str = "record-hook --agent claude";
+const PREFLIGHT_SUFFIX: &str = "preflight --agent claude";
 const CONFIG_LOCK_FILENAME: &str = "settings.json.lock";
-const HOOK_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
+const HOOK_EVENTS: [&str; 3] = ["PostToolUse", "PostToolUseFailure", "UserPromptSubmit"];
 
 pub const CLAUDE_CONFIG_SNIPPET: &str = r#"{
   "hooks": {
@@ -36,6 +39,16 @@ pub const CLAUDE_CONFIG_SNIPPET: &str = r#"{
           {
             "type": "command",
             "command": "regurgitate record-hook --agent claude"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "regurgitate preflight --agent claude"
           }
         ]
       }
@@ -125,12 +138,15 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let mut changes = Vec::with_capacity(HOOK_EVENTS.len());
 
     for event in HOOK_EVENTS {
+        let Some(command) = event_command(event, hook_command) else {
+            continue;
+        };
         let groups = hooks
             .entry(event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .with_context(|| format!("Claude hooks.{event} must be an array"))?;
-        match regurgitate_hook_coverage(groups, hook_command)? {
+        match regurgitate_hook_coverage(groups, &command)? {
             RegurgitateHookCoverage::AllTools => continue,
             RegurgitateHookCoverage::Restricted => {
                 bail!("Regurgitate Claude {event} hook is already restricted by a matcher")
@@ -140,7 +156,7 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
         groups.push(json!({
             "hooks": [{
                 "type": "command",
-                "command": hook_command
+                "command": command
             }]
         }));
         changes.push(event);
@@ -149,6 +165,19 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let mut content = serde_json::to_string_pretty(&document)?;
     content.push('\n');
     Ok(PreparedConfig { content, changes })
+}
+
+/// The command for one Claude event. Tool events record; the prompt event
+/// runs the preflight brief. A custom record command that does not end in
+/// the standard suffix cannot be mapped, so preflight is skipped for it.
+fn event_command(event: &str, hook_command: &str) -> Option<String> {
+    if event == "UserPromptSubmit" {
+        hook_command
+            .strip_suffix(RECORD_HOOK_SUFFIX)
+            .map(|prefix| format!("{prefix}{PREFLIGHT_SUFFIX}"))
+    } else {
+        Some(hook_command.to_owned())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,7 +211,9 @@ fn regurgitate_hook_coverage(
                     .get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|command| {
-                        command == hook_command || command == CLAUDE_HOOK_COMMAND
+                        command == hook_command
+                            || command == CLAUDE_HOOK_COMMAND
+                            || command == CLAUDE_PREFLIGHT_COMMAND
                     });
             Ok::<_, anyhow::Error>(found || matches)
         })?;
@@ -230,13 +261,34 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn snippet_is_valid_and_covers_both_terminal_tool_events() {
+    fn snippet_is_valid_and_covers_tool_events_and_preflight() {
         let value: Value = serde_json::from_str(CLAUDE_CONFIG_SNIPPET).unwrap();
         let hooks = value["hooks"].as_object().unwrap();
-        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks.len(), 3);
         for event in HOOK_EVENTS {
-            assert_eq!(hooks[event][0]["hooks"][0]["command"], CLAUDE_HOOK_COMMAND);
+            let expected = event_command(event, CLAUDE_HOOK_COMMAND).unwrap();
+            assert_eq!(hooks[event][0]["hooks"][0]["command"], expected);
         }
+        assert_eq!(
+            hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
+            CLAUDE_PREFLIGHT_COMMAND
+        );
+    }
+
+    #[test]
+    fn custom_worker_commands_derive_a_matching_preflight_command() {
+        assert_eq!(
+            event_command(
+                "UserPromptSubmit",
+                "'/plugins/regurgitate' record-hook --agent claude"
+            ),
+            Some("'/plugins/regurgitate' preflight --agent claude".to_owned())
+        );
+        assert_eq!(event_command("UserPromptSubmit", "custom-wrapper"), None);
+        assert_eq!(
+            event_command("PostToolUse", "custom-wrapper"),
+            Some("custom-wrapper".to_owned())
+        );
     }
 
     #[test]

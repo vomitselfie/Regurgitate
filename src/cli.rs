@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::core::{Operation, Outcome, Strategy, TaskKind};
+use crate::core::{
+    ArtifactKind, Ecosystem, FailureReason, MemoryScope, Operation, Outcome, Phase, RiskShape,
+    Strategy, TaskKind, ToolFamily,
+};
 
 #[derive(Parser)]
 #[command(name = "regurgitate", version, about)]
@@ -245,6 +248,26 @@ pub(crate) enum Command {
         #[arg(long)]
         query: Option<String>,
 
+        /// Explicit controlled task category; outranks keyword inference.
+        #[arg(long, value_enum)]
+        task: Option<TaskKindArg>,
+
+        /// Explicit phase: diagnose, mutate, verify, release, research, integration.
+        #[arg(long)]
+        phase: Option<Phase>,
+
+        /// Explicit artifact kind: source, generated-source, native-cad, config, dataset, binary, docs.
+        #[arg(long)]
+        artifact: Option<ArtifactKind>,
+
+        /// Explicit ecosystem such as rust, python, kicad, git, or generic.
+        #[arg(long)]
+        ecosystem: Option<Ecosystem>,
+
+        /// Explicit tool family such as cargo, pytest, npm, kicad, or docker.
+        #[arg(long)]
+        tool_family: Option<ToolFamily>,
+
         /// Approximate maximum JSON output tokens (hard maximum: 1000).
         #[arg(long, default_value_t = crate::query::DEFAULT_TOKEN_BUDGET)]
         token_budget: usize,
@@ -253,6 +276,197 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         data_home: Option<PathBuf>,
     },
+
+    /// Record, confirm, list, or transition encrypted experience capsules.
+    Experience {
+        #[command(subcommand)]
+        command: ExperienceCommand,
+    },
+
+    /// Emit a plain-text experience brief for host preflight injection.
+    Preflight {
+        /// Local project directory; read from the hook payload with --agent.
+        #[arg(long, required_unless_present = "agent")]
+        project: Option<PathBuf>,
+
+        /// Ephemeral task text reduced to controlled categories.
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Explicit controlled task category.
+        #[arg(long, value_enum)]
+        task: Option<TaskKindArg>,
+
+        /// Explicit phase.
+        #[arg(long)]
+        phase: Option<Phase>,
+
+        /// Explicit artifact kind.
+        #[arg(long)]
+        artifact: Option<ArtifactKind>,
+
+        /// Explicit ecosystem.
+        #[arg(long)]
+        ecosystem: Option<Ecosystem>,
+
+        /// Explicit tool family.
+        #[arg(long)]
+        tool_family: Option<ToolFamily>,
+
+        /// Approximate maximum brief tokens (hard maximum: 1000).
+        #[arg(long, default_value_t = crate::query::DEFAULT_PREFLIGHT_TOKEN_BUDGET)]
+        token_budget: usize,
+
+        /// Read a host lifecycle payload from stdin and answer in its format.
+        #[arg(long, value_enum)]
+        agent: Option<PreflightAgentArg>,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// Summarize paired cold/warm benchmark runs from a JSONL file.
+    BenchReport {
+        /// JSONL file; one object per paired run (see benchmarks/README.md).
+        #[arg(long)]
+        runs: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ExperienceCommand {
+    /// Record one experience capsule, or confirm an equivalent active one.
+    Record {
+        /// Local project directory used only for encrypted identity lookup.
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Relevance scope: project, workspace, ecosystem, machine, global.
+        #[arg(long, default_value = "project")]
+        scope: MemoryScope,
+
+        /// Controlled task category in which the procedure was evaluated.
+        #[arg(long, value_enum)]
+        task: TaskKindArg,
+
+        /// Condition under which the lesson applies (one bounded sentence, max 240 chars).
+        #[arg(long)]
+        situation: String,
+
+        /// Actionable procedural conclusion (one bounded sentence, max 320 chars).
+        #[arg(long)]
+        lesson: String,
+
+        /// Boundary or counterexample (one bounded sentence, max 160 chars).
+        #[arg(long)]
+        caveat: Option<String>,
+
+        /// Comma-separated procedure dimensions, e.g. structured-patch,targeted-verification.
+        #[arg(long)]
+        procedure: String,
+
+        /// Comma-separated ordered steps, e.g. inspect,patch,verify-targeted (max 6).
+        #[arg(long)]
+        steps: Option<String>,
+
+        /// Whether the procedure produced a correct result.
+        #[arg(long, value_enum)]
+        outcome: LearnedOutcomeArg,
+
+        /// Semantic reason a failed procedure was rejected.
+        #[arg(long)]
+        failure_reason: Option<FailureReason>,
+
+        /// Applicability phase.
+        #[arg(long)]
+        phase: Option<Phase>,
+
+        /// Applicability artifact kind.
+        #[arg(long)]
+        artifact: Option<ArtifactKind>,
+
+        /// Applicability ecosystem (required for --scope ecosystem).
+        #[arg(long)]
+        ecosystem: Option<Ecosystem>,
+
+        /// Applicability and environment tool family.
+        #[arg(long)]
+        tool_family: Option<ToolFamily>,
+
+        /// Risk shapes: destructive, expensive, flaky, version-sensitive, sandbox-sensitive.
+        #[arg(long = "risk")]
+        risks: Vec<RiskShape>,
+
+        /// Major version of the tool family the lesson was observed on.
+        #[arg(long)]
+        tool_major: Option<u16>,
+
+        /// Override XDG_DATA_HOME (primarily for fixture tests).
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// List capsule status and shape for this project; never lesson text.
+    List {
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Maximum capsules to list.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// Mark a capsule challenged by contradicting evidence.
+    Challenge {
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Opaque capsule selector from `experience list`.
+        #[arg(long = "match")]
+        selector: String,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// Mark a capsule obsolete; it leaves normal recall.
+    Obsolete {
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Opaque capsule selector from `experience list`.
+        #[arg(long = "match")]
+        selector: String,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
+    /// Replace one capsule with another; the old one is kept for audit only.
+    Supersede {
+        #[arg(long)]
+        project: PathBuf,
+
+        /// Selector of the capsule being replaced.
+        #[arg(long)]
+        old: String,
+
+        /// Selector of the replacement capsule.
+        #[arg(long)]
+        new: String,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum PreflightAgentArg {
+    Claude,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -390,6 +604,132 @@ impl From<OperationArg> for Operation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn experience_record_parses_controlled_vocabularies_only() {
+        let cli = Cli::try_parse_from([
+            "regurgitate",
+            "experience",
+            "record",
+            "--project",
+            "/private/project",
+            "--scope",
+            "ecosystem",
+            "--task",
+            "debugging",
+            "--situation",
+            "Generated native artifact; parser acceptance is not authoritative.",
+            "--lesson",
+            "Change one placement class at a time and run native verification.",
+            "--procedure",
+            "incremental-native-regeneration,native-verification",
+            "--steps",
+            "regenerate,verify-native",
+            "--outcome",
+            "failure",
+            "--failure-reason",
+            "verification-failed",
+            "--phase",
+            "verify",
+            "--artifact",
+            "native-cad",
+            "--ecosystem",
+            "kicad",
+            "--tool-family",
+            "kicad",
+            "--risk",
+            "version-sensitive",
+            "--risk",
+            "expensive",
+            "--tool-major",
+            "10",
+        ])
+        .unwrap();
+        let Command::Experience {
+            command:
+                ExperienceCommand::Record {
+                    scope,
+                    failure_reason,
+                    phase,
+                    ecosystem,
+                    risks,
+                    tool_major,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected experience record");
+        };
+        assert_eq!(scope, MemoryScope::Ecosystem);
+        assert_eq!(failure_reason, Some(FailureReason::VerificationFailed));
+        assert_eq!(phase, Some(Phase::Verify));
+        assert_eq!(ecosystem, Some(Ecosystem::Kicad));
+        assert_eq!(
+            risks,
+            vec![RiskShape::VersionSensitive, RiskShape::Expensive]
+        );
+        assert_eq!(tool_major, Some(10));
+
+        assert!(
+            Cli::try_parse_from([
+                "regurgitate",
+                "experience",
+                "record",
+                "--project",
+                "/p",
+                "--task",
+                "debugging",
+                "--situation",
+                "a b c",
+                "--lesson",
+                "d e f",
+                "--procedure",
+                "structured-patch",
+                "--outcome",
+                "success",
+                "--phase",
+                "arbitrary-phase",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn recall_accepts_explicit_metadata_and_preflight_needs_a_project_or_agent() {
+        let cli = Cli::try_parse_from([
+            "regurgitate",
+            "recall",
+            "--project",
+            "/p",
+            "--task",
+            "testing",
+            "--ecosystem",
+            "rust",
+            "--tool-family",
+            "cargo",
+        ])
+        .unwrap();
+        let Command::Recall {
+            task,
+            ecosystem,
+            tool_family,
+            ..
+        } = cli.command
+        else {
+            panic!("expected recall");
+        };
+        assert_eq!(task, Some(TaskKindArg::Testing));
+        assert_eq!(ecosystem, Some(Ecosystem::Rust));
+        assert_eq!(tool_family, Some(ToolFamily::Cargo));
+
+        assert!(Cli::try_parse_from(["regurgitate", "preflight"]).is_err());
+        assert!(Cli::try_parse_from(["regurgitate", "preflight", "--agent", "claude"]).is_ok());
+        let cli = Cli::try_parse_from(["regurgitate", "preflight", "--project", "/p"]).unwrap();
+        let Command::Preflight { token_budget, .. } = cli.command else {
+            panic!("expected preflight");
+        };
+        assert_eq!(token_budget, crate::query::DEFAULT_PREFLIGHT_TOKEN_BUDGET);
+    }
 
     #[test]
     fn debug_hook_defaults_to_codex_and_record_hook_requires_a_provider() {

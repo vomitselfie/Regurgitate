@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod aoe_plugin;
 pub mod application;
+pub mod bench;
 pub mod cli;
 pub mod core;
 pub mod packaging;

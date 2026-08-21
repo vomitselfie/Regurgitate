@@ -1,66 +1,67 @@
 ---
 name: regurgitate-recall
-description: Recall project practice and record one controlled semantic outcome after meaningful success or failure. Use after understanding a task, rejecting an approach, or finishing verified work.
+description: Recall prior experience for a task and record one bounded experience capsule after a verified milestone or rejected approach. Use after understanding a non-trivial task and before finishing verified work.
 ---
 
 # Regurgitate Recall
 
-Treat Regurgitate evidence as advisory, never as current truth.
+Treat Regurgitate evidence as historical, never as current truth.
 
-## Recall relevant practice
+## Recall once before exploring
 
-Recall at most once after understanding a task when prior practice could help:
-
-```bash
-regurgitate recall --project "$PWD" --query "<short non-secret task category>" --token-budget 300
-```
-
-Use generic text such as `data import` or `integration debugging`; never include
-prompts, source, commands, paths, credentials, or private values.
-`observations` contains explicitly evaluated practice matched to the query.
-`hook_summary` is tool execution telemetry, not approach correctness. Continue
-if observations are empty or Regurgitate is unavailable, and verify guidance.
-
-## Record the semantic outcome
-
-Before finishing a milestone, or after abandoning an approach, record one
-result when a controlled strategy materially affected it:
+Recall once after understanding a non-trivial task, before tool exploration,
+unless a recent recall for the same intent was empty. Pass controlled
+metadata when confident; `--query` is a short non-secret category hint:
 
 ```bash
-regurgitate learn --project "$PWD" --task <task> --strategy <strategy> --outcome <success|failure>
+regurgitate recall --project "$PWD" --task <task> --phase <phase> \
+  --ecosystem <eco> --query "<category>" --token-budget 300
 ```
 
-Outcome means whether the strategy worked, not whether its tool call executed.
-A command can exit 0 while `direct-text-mutation` failed by corrupting a file.
-A `targeted-verification` that exposes a broken change succeeded even though
-the change failed. Record once per milestone; skip duplicates, low-level work,
-ambiguous results, and work with no exact strategy.
+Flags after `--project` are optional. `experiences` lists ranked lessons with
+`posterior`, `interval`, `effective_evidence`, and `guidance`
+(`prefer`/`avoid`/`mixed`; absent when evidence is limited). `legacy: true`
+is an old aggregate without context. `hook_summary` is tool telemetry, not
+correctness. Continue normally if empty or unavailable. Never put prompts,
+source, commands, paths, URLs, or secrets in `--query`.
 
-Task values are `configuration`, `data-import`, `debugging`,
-`dependency-update`, `documentation`, `feature-implementation`, `integration`,
-`performance`, `refactoring`, `release`, `research`, `security`, and `testing`.
-Use an exact strategy from `regurgitate learn --help`. Research strategies mean:
+## Record one capsule per milestone
 
-- `reproduce-then-compare`: reproduce a baseline, then compare consistently.
-- `per-subject-streaming`: complete and emit each subject independently.
-- `resource-cap-first`: set the exploration limit before research begins.
-
-After a meaningful failed strategy, one focused recall is allowed:
+Before finishing a verified milestone, or after abandoning an approach,
+record one experience when a procedure materially affected the result:
 
 ```bash
-regurgitate recall --project "$PWD" --failures --query "<short non-secret task category>" --token-budget 200
+regurgitate experience record --project "$PWD" --task <task> \
+  --situation "<when the lesson applies>" --lesson "<what to do>" \
+  --caveat "<boundary>" --procedure <dim>[,<dim>] --steps <step>[,<step>] \
+  --outcome <success|failure> [--failure-reason <r>] [--phase <p>] \
+  [--artifact <a>] [--ecosystem <e>] [--tool-family <t>]
 ```
 
-`--failures` selects failed learned practices, not tool calls. Use guidance only
-when present and weigh confidence and sample size.
+Write each text as one impersonal notebook sentence (240/320/160 chars);
+code, commands, paths, URLs, secrets, payloads, and conversation are
+rejected. Outcome means the procedure produced a correct result, not that a
+tool exited zero: a `direct-text-mutation` that corrupts a file failed; a
+`targeted-verification` that exposes a broken change succeeded. An
+equivalent capsule is confirmed, not duplicated; that is the common path.
+Skip tool-by-tool activity, ambiguous results, and work with no exact
+procedure. `--help` lists every vocabulary; `regurgitate learn` remains a
+text-free shorthand. Use `--scope ecosystem` only for cross-project lessons.
+
+After a meaningful failed procedure, one focused recall is allowed:
+
+```bash
+regurgitate recall --project "$PWD" --failures --task <task> --token-budget 200
+```
 
 ## Sandboxed hosts
 
-If the credential store is sandbox-blocked, retry once with approval scoped to
-the exact `regurgitate recall` or `regurgitate learn` prefix. Never approve a
-shell wrapper, broaden access, or change credentials or policy.
+If the credential store is sandbox-blocked, retry once with approval scoped
+to the exact `regurgitate recall` or `regurgitate experience record` prefix.
+Never approve a shell wrapper, broaden access, or change credentials.
 
 ## Preserve the boundary
 
 Never inspect or export databases, keys, cursors, identifiers, or events.
-Queries are ephemeral; learned values are controlled. There is no raw history.
+Queries are ephemeral; capsule text is bounded and encrypted; there is no
+raw history. `experience list/challenge/obsolete/supersede` are for humans.

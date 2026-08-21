@@ -1,4 +1,4 @@
 interface:
   display_name: "Regurgitate Recall"
-  short_description: "Recall and record controlled project practice"
-  default_prompt: "Use $regurgitate-recall to retrieve relevant project practice and record one semantic outcome after meaningful verified work or a rejected approach."
+  short_description: "Recall prior experience and record one bounded lesson"
+  default_prompt: "Use $regurgitate-recall to retrieve relevant prior experience before exploring and to record one bounded experience capsule after verified work or a rejected approach."

@@ -294,6 +294,7 @@ mod tests {
                     event_count: Some(9),
                     hook_event_count: Some(7),
                     learned_practice_count: Some(2),
+                    experience_count: Some(1),
                 },
                 hooks: vec![],
             },

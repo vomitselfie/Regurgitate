@@ -8,9 +8,16 @@ use super::{
 };
 
 pub(super) fn status_bar(report: &HealthReport) -> Value {
-    let text = match (report.status, report.history.learned_practice_count) {
-        (OverallHealth::Ready, Some(practices)) => {
-            format!("Regurgitate {practices} practices")
+    let lessons = match (
+        report.history.learned_practice_count,
+        report.history.experience_count,
+    ) {
+        (None, None) => None,
+        (practices, experiences) => Some(practices.unwrap_or(0) + experiences.unwrap_or(0)),
+    };
+    let text = match (report.status, lessons) {
+        (OverallHealth::Ready, Some(lessons)) => {
+            format!("Regurgitate {lessons} lessons")
         }
         (OverallHealth::Ready, None) => "Regurgitate ready".to_owned(),
         (OverallHealth::NotConfigured, _) => "Regurgitate not configured".to_owned(),
@@ -30,11 +37,16 @@ pub(super) fn settings_page(snapshot: &PluginSnapshot, last_setup: Option<SetupN
         .into_iter()
         .any(integration_ready);
     let (title, detail, tone) = match report.status {
-        OverallHealth::Ready if report.history.learned_practice_count == Some(0) => (
-            "Regurgitate is recording",
-            "Hooks are connected. Learned practice will appear after the agent evaluates a meaningful strategy.",
-            "info",
-        ),
+        OverallHealth::Ready
+            if report.history.learned_practice_count == Some(0)
+                && report.history.experience_count.unwrap_or(0) == 0 =>
+        {
+            (
+                "Regurgitate is recording",
+                "Hooks are connected. Learned practice will appear after the agent evaluates a meaningful strategy.",
+                "info",
+            )
+        }
         OverallHealth::Ready => (
             "Regurgitate is ready",
             "Encrypted procedural observations are available to bounded agent recall.",
@@ -260,6 +272,7 @@ mod tests {
                 event_count: (component == ComponentReadiness::Ready).then_some(493),
                 hook_event_count: (component == ComponentReadiness::Ready).then_some(490),
                 learned_practice_count: (component == ComponentReadiness::Ready).then_some(3),
+                experience_count: (component == ComponentReadiness::Ready).then_some(2),
             },
             hooks: vec![],
         }
@@ -286,7 +299,7 @@ mod tests {
         let snapshot = snapshot(OverallHealth::Ready, ComponentReadiness::Ready);
         assert_eq!(
             status_bar(&snapshot.health)["text"],
-            json!("Regurgitate 3 practices")
+            json!("Regurgitate 5 lessons")
         );
         assert_eq!(status_bar(&snapshot.health)["tone"], json!("success"));
 
@@ -322,6 +335,7 @@ mod tests {
         let mut snapshot = snapshot(OverallHealth::Ready, ComponentReadiness::Ready);
         snapshot.health.history.event_count = Some(490);
         snapshot.health.history.learned_practice_count = Some(0);
+        snapshot.health.history.experience_count = Some(0);
 
         let page = settings_page(&snapshot, None);
         assert_eq!(
@@ -330,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             status_bar(&snapshot.health)["text"],
-            json!("Regurgitate 0 practices")
+            json!("Regurgitate 0 lessons")
         );
     }
 

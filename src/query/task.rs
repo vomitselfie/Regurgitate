@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use zeroize::Zeroizing;
 
-use crate::core::{Capability, Operation, TaskKind};
+use crate::core::{ArtifactKind, Capability, Ecosystem, Operation, Phase, TaskKind, ToolFamily};
 
 /// Controlled, content-free task hints derived from an ephemeral query.
 /// The source query is never retained in this value.
@@ -11,6 +11,10 @@ pub(super) struct TaskIntent {
     capabilities: BTreeSet<Capability>,
     operations: BTreeSet<Operation>,
     tasks: BTreeSet<TaskKind>,
+    ecosystems: BTreeSet<Ecosystem>,
+    tool_families: BTreeSet<ToolFamily>,
+    phases: BTreeSet<Phase>,
+    artifacts: BTreeSet<ArtifactKind>,
 }
 
 impl TaskIntent {
@@ -147,17 +151,173 @@ impl TaskIntent {
                 }
                 _ => {}
             }
+            match token {
+                "rust" | "cargo" | "clippy" | "rustfmt" | "crate" => {
+                    intent.ecosystems.insert(Ecosystem::Rust);
+                    intent.tool_families.insert(ToolFamily::Cargo);
+                }
+                "python" | "pytest" | "pip" | "venv" | "uv" => {
+                    intent.ecosystems.insert(Ecosystem::Python);
+                    intent.tool_families.insert(ToolFamily::Pytest);
+                }
+                "javascript" | "node" | "npm" | "npx" => {
+                    intent.ecosystems.insert(Ecosystem::Javascript);
+                    intent.tool_families.insert(ToolFamily::Npm);
+                }
+                "typescript" | "tsc" => {
+                    intent.ecosystems.insert(Ecosystem::Typescript);
+                }
+                "jest" | "vitest" => {
+                    intent.tool_families.insert(ToolFamily::Jest);
+                }
+                "pnpm" => {
+                    intent.tool_families.insert(ToolFamily::Pnpm);
+                }
+                "yarn" => {
+                    intent.tool_families.insert(ToolFamily::Yarn);
+                }
+                "go" | "golang" => {
+                    intent.ecosystems.insert(Ecosystem::Go);
+                }
+                "java" | "gradle" | "maven" => {
+                    intent.ecosystems.insert(Ecosystem::Java);
+                }
+                "dotnet" | "csharp" | "nuget" => {
+                    intent.ecosystems.insert(Ecosystem::Dotnet);
+                }
+                "cmake" => {
+                    intent.ecosystems.insert(Ecosystem::Cpp);
+                    intent.tool_families.insert(ToolFamily::Cmake);
+                }
+                "make" | "makefile" => {
+                    intent.tool_families.insert(ToolFamily::Make);
+                }
+                "gcc" => {
+                    intent.ecosystems.insert(Ecosystem::C);
+                    intent.tool_families.insert(ToolFamily::Gcc);
+                }
+                "clang" => {
+                    intent.ecosystems.insert(Ecosystem::Cpp);
+                    intent.tool_families.insert(ToolFamily::Clang);
+                }
+                "cuda" | "nvcc" | "gpu" | "kernel" => {
+                    intent.ecosystems.insert(Ecosystem::Cuda);
+                    intent.tool_families.insert(ToolFamily::Nvcc);
+                }
+                "php" | "composer" => {
+                    intent.ecosystems.insert(Ecosystem::Php);
+                }
+                "laravel" | "artisan" => {
+                    intent.ecosystems.insert(Ecosystem::Laravel);
+                }
+                "ruby" | "rails" | "bundler" => {
+                    intent.ecosystems.insert(Ecosystem::Ruby);
+                }
+                "shell" | "bash" | "zsh" | "script" => {
+                    intent.ecosystems.insert(Ecosystem::Shell);
+                }
+                "kicad" | "pcb" | "schematic" | "footprint" | "drc" | "erc" | "gerber" => {
+                    intent.ecosystems.insert(Ecosystem::Kicad);
+                    intent.tool_families.insert(ToolFamily::Kicad);
+                    intent.artifacts.insert(ArtifactKind::NativeCad);
+                }
+                "sql" | "sqlite" | "postgres" | "mysql" | "schema" => {
+                    intent.ecosystems.insert(Ecosystem::Sql);
+                }
+                "kubectl" | "kubernetes" | "k8s" | "helm" => {
+                    intent.tool_families.insert(ToolFamily::Kubectl);
+                }
+                "terraform" | "tofu" => {
+                    intent.tool_families.insert(ToolFamily::Terraform);
+                }
+                "playwright" | "e2e" => {
+                    intent.tool_families.insert(ToolFamily::Playwright);
+                }
+                _ => {}
+            }
+            match token {
+                "git" | "commit" | "merge" | "rebase" | "branch" => {
+                    intent.ecosystems.insert(Ecosystem::Git);
+                    intent.tool_families.insert(ToolFamily::Git);
+                }
+                "docker" | "podman" | "container" | "dockerfile" | "compose" => {
+                    intent.ecosystems.insert(Ecosystem::Docker);
+                    intent.tool_families.insert(ToolFamily::Docker);
+                }
+                _ => {}
+            }
+            match token {
+                "debug" | "debugging" | "diagnose" | "investigate" | "bug" | "failure"
+                | "error" | "broken" | "flaky" => {
+                    intent.phases.insert(Phase::Diagnose);
+                }
+                "edit" | "change" | "modify" | "fix" | "implement" | "refactor" | "patch"
+                | "write" | "add" | "remove" | "rename" => {
+                    intent.phases.insert(Phase::Mutate);
+                }
+                "test" | "tests" | "testing" | "verify" | "verification" | "check" | "lint"
+                | "validate" => {
+                    intent.phases.insert(Phase::Verify);
+                }
+                "release" | "publish" | "deploy" | "package" | "ship" | "tag" => {
+                    intent.phases.insert(Phase::Release);
+                }
+                "research" | "analysis" | "analyze" | "compare" | "explore" | "survey" => {
+                    intent.phases.insert(Phase::Research);
+                }
+                "integration" | "integrate" | "hook" | "hooks" | "plugin" | "adapter" | "api" => {
+                    intent.phases.insert(Phase::Integration);
+                }
+                _ => {}
+            }
+            match token {
+                "generated" | "codegen" | "autogenerated" | "scaffold" => {
+                    intent.artifacts.insert(ArtifactKind::GeneratedSource);
+                }
+                "config" | "configuration" | "settings" | "toml" | "yaml" | "json" | "ini"
+                | "dotenv" => {
+                    intent.artifacts.insert(ArtifactKind::Config);
+                }
+                "dataset" | "csv" | "parquet" | "data" => {
+                    intent.artifacts.insert(ArtifactKind::Dataset);
+                }
+                "binary" | "executable" | "artifact" | "wheel" | "tarball" => {
+                    intent.artifacts.insert(ArtifactKind::Binary);
+                }
+                "doc" | "docs" | "documentation" | "readme" | "changelog" => {
+                    intent.artifacts.insert(ArtifactKind::Docs);
+                }
+                "source" | "code" | "module" | "function" | "struct" | "class" => {
+                    intent.artifacts.insert(ArtifactKind::Source);
+                }
+                _ => {}
+            }
         }
         intent
     }
 
-    pub fn matches_task(&self, task: TaskKind) -> bool {
-        self.tasks.contains(&task)
+    pub fn has_task_hints(&self) -> bool {
+        !self.tasks.is_empty()
     }
 
-    pub fn relevance(&self, capability: Capability, operation: Operation) -> usize {
-        usize::from(self.operations.contains(&operation)) * 4
-            + usize::from(self.capabilities.contains(&capability)) * 3
+    pub fn ecosystems(&self) -> &BTreeSet<Ecosystem> {
+        &self.ecosystems
+    }
+
+    pub fn tool_families(&self) -> &BTreeSet<ToolFamily> {
+        &self.tool_families
+    }
+
+    pub fn phases(&self) -> &BTreeSet<Phase> {
+        &self.phases
+    }
+
+    pub fn artifacts(&self) -> &BTreeSet<ArtifactKind> {
+        &self.artifacts
+    }
+
+    pub fn matches_task(&self, task: TaskKind) -> bool {
+        self.tasks.contains(&task)
     }
 }
 
@@ -191,7 +351,9 @@ mod tests {
     #[test]
     fn matches_tokens_not_substrings() {
         let intent = TaskIntent::classify("contestant dispatches work");
-        assert_eq!(intent.relevance(Capability::Test, Operation::ApplyPatch), 0);
+        assert!(!intent.capabilities.contains(&Capability::Test));
+        assert!(!intent.operations.contains(&Operation::ApplyPatch));
+        assert!(!intent.has_task_hints());
     }
 
     #[test]
@@ -203,6 +365,17 @@ mod tests {
         assert!(intent.capabilities.contains(&Capability::Research));
         assert!(intent.operations.contains(&Operation::Analyze));
         assert!(intent.matches_task(TaskKind::Research));
+    }
+
+    #[test]
+    fn infers_controlled_applicability_hints() {
+        let intent = TaskIntent::classify("debug generated kicad pcb placement drc failure");
+        assert!(intent.ecosystems().contains(&Ecosystem::Kicad));
+        assert!(intent.tool_families().contains(&ToolFamily::Kicad));
+        assert!(intent.artifacts().contains(&ArtifactKind::NativeCad));
+        assert!(intent.artifacts().contains(&ArtifactKind::GeneratedSource));
+        assert!(intent.phases().contains(&Phase::Diagnose));
+        assert!(TaskIntent::classify("zzz").ecosystems().is_empty());
     }
 
     #[test]

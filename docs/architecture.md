@@ -54,27 +54,112 @@ success. `print-claude-config` still emits a fragment for manual use, while
 The installer preserves unrelated settings and personal hook groups, and
 refuses malformed, disabled, or matcher-restricted Regurgitate configurations.
 
-## Explicit learning flow
+## Experience flow (schema v3)
 
 Provider hooks report execution status, not whether an approach produced a
-correct result. `regurgitate learn` supplies that semantic boundary without
-opening a free-text memory path. It accepts only a project locator, one fixed
-task enum, one fixed strategy enum, and an explicit `success` or `failure`.
-Each strategy maps to one canonical capability/operation pair; arbitrary
-labels and `unknown` outcomes are rejected by the CLI/application boundary.
+correct result. `regurgitate experience record` supplies that semantic
+boundary as an **experience capsule**: a controlled task, a compositional
+`Procedure` (mutation / verification / execution / research / integration
+dimensions plus up to six ordered steps), a semantic `success` or `failure`
+with an optional controlled `FailureReason`, controlled applicability tags
+(artifact kind, phase, ecosystem, tool family, risk shapes), a minimal
+environment fingerprint (tool family, major version, host class), a
+lifecycle state, and a bounded evidence log.
 
-Research methods use the shared `research` capability and `analyze` operation,
-with `reproduce_then_compare`, `per_subject_streaming`, or
-`resource_cap_first` carrying the procedural distinction. They are
-explicit-only because neither a provider tool name nor private tool arguments
-can safely establish which analysis method was used.
+The only natural language in the vault is three deliberately authored
+sentences: `situation` (≤ 240 chars), `lesson` (≤ 320), and `caveat`
+(≤ 160). `BoundedText<N>` enforces the cap and a conservative structural
+admission check at construction *and* at deserialization, rejecting anything
+that resembles URLs, paths, file names, commands, code, serialized payloads,
+credentials, opaque identifiers, or conversation. False rejections are
+accepted by design; a rejected sentence is rephrased, a wrongly admitted one
+would be archived.
 
-The learning service marks the event as `learned_practice`, includes its
-controlled task, and omits session and agent identity. It then reuses the same
-encrypted project resolver and recording port as native hooks. The agent-facing
-skill records at most once per meaningful milestone or rejected approach and
-defines outcome as strategy correctness rather than process exit status.
-Tool-by-tool activity and ambiguous outcomes are deliberately not learned.
+Capsules live in a separate `experiences` table. The plaintext columns are an
+opaque id, an HMAC scope token, an HMAC origin (project) token, two
+timestamps, and version numbers; everything else is inside an
+XChaCha20-Poly1305 envelope whose associated data binds those columns, so a
+row cannot be moved between scopes, origins, or times. Storage never gains a
+semantic plaintext column.
+
+Before inserting, the experience service loads a bounded window from the
+target scope, decrypts it in memory, and looks for a capsule with the same
+controlled identity (task + procedure + applicability) whose situation text
+is equivalent by ephemeral token similarity. An equivalent capsule is
+**confirmed** (evidence appended, `last_confirmed_at` advanced) instead of
+duplicated. An equivalent situation with a dissimilar lesson marks both
+capsules **challenged**; `experience supersede` resolves such conflicts
+explicitly, and `obsolete` retires a lesson. Superseded and obsolete capsules
+never enter normal recall; challenged ones surface flagged and down-weighted.
+No similarity vectors or decrypted working sets are retained after the call.
+
+`regurgitate learn --task --strategy --outcome` is kept as a compatibility
+shorthand: it records a text-free project-scoped capsule whose procedure is
+the `Strategy -> Procedure` migration mapping. Pre-v0.8 `LearnedPractice`
+rows are never rewritten; recall materializes them as legacy one-step
+capsules without context, which rank below context-bearing capsules of
+equal relevance but still contribute posterior evidence.
+
+Scope is a relevance prior, not access control: project, workspace (parent
+directory identity), ecosystem, machine, and global buckets each get their own
+HMAC token. Forgetting a project deletes every capsule recorded from it in
+any scope, and a forgotten identity's tombstone rejects late capsule writes
+exactly as it rejects late events. Age-based retention prunes capsules by
+their last confirmation alongside old events.
+
+## Recall flow
+
+Recall is two-stage and read-only. Stage one normalizes the task
+ephemerally—explicit controlled metadata (`--task`, `--phase`, `--artifact`,
+`--ecosystem`, `--tool-family`) outranks keyword inference from `--query`,
+and the query text is zeroized—then loads a bounded candidate window from
+the project scope (capsules plus legacy rows). Only if fewer than a handful of
+applicable active project capsules exist does it expand outward to workspace,
+ecosystem, machine, and global buckets, and broader capsules must clear a
+higher applicability bar to surface.
+
+Stage two reranks the decrypted window. Every ranking constant lives in one
+`RankingPolicy`:
+
+- applicability `a = 0.35·task + 0.25·artifact + 0.20·ecosystem/tool +
+  0.10·phase + 0.10·environment`, where a silent context cannot penalize a
+  dimension and an untagged capsule scores half on a dimension the context
+  names;
+- per-evidence weight `w = W_scope · exp(−ln2 · age / H_scope) · a ·
+  W_lifecycle` with scope priors 1.00 / 0.85 / 0.65 / 0.55 / 0.35, half-lives
+  of 120 / 120 / 180 / 60 / 180 days, and lifecycle weights active 1,
+  challenged 0.35, otherwise 0;
+- a Beta(1 + ΣS, 1 + ΣF) posterior with an 80 % credible interval computed
+  from a regularized incomplete beta (no external numeric dependency) and a
+  Kish effective sample size `n_eff = (Σw)² / Σw²`;
+- guidance only when `n_eff ≥ 2.5`: `prefer` if the interval's lower bound is
+  ≥ 0.65, `avoid` if its upper bound is ≤ 0.35, `mixed` if the mean sits
+  between the thresholds, otherwise no label (the posterior stays visible);
+- equivalent capsules cluster by controlled identity before aggregation, and
+  the final order is `0.45·applicability + 0.25·guidance strength +
+  0.15·confidence + 0.10·recency + 0.05·scope prior`, plus a small bonus for
+  context-bearing capsules.
+
+The serialized brief carries no identifiers or timestamps and is trimmed
+from the bottom until it fits the token budget; the hard maximum is still
+enforced before storage is queried.
+
+## Preflight injection
+
+`RecallBroker` is a host-neutral port that returns a plain-text experience
+brief for a task context and token budget, or nothing at all when no lesson
+is relevant. `regurgitate preflight --project … --query …` exposes it for
+any host with a startup instruction channel. For Claude Code,
+`regurgitate preflight --agent claude` reads the `UserPromptSubmit` payload
+(only `cwd`, `hook_event_name`, and a transient `prompt` are deserialized),
+classifies the prompt ephemerally, and answers with `additionalContext`; an
+irrelevant prompt produces no output and therefore no context overhead. The
+Claude config printer and installer add that hook next to the two recording
+hooks. Preflight never fails a host prompt: a missing database or key simply
+yields an empty brief, and it never creates state. Codex and AoE do not yet
+expose a stable pre-task lifecycle hook, so they stay on the skill-driven
+(Tier B) path; the core is not distorted to fake automation those hosts
+cannot provide.
 
 ## Ingestion flow
 
@@ -153,16 +238,17 @@ transcript fallback—records into the same encrypted store.
 ## Agent recall integration
 
 The `skills/regurgitate-recall` package is a thin consumer of the public CLI.
-Its `SKILL.md` waits for task context, requests a bounded aggregate, and records
-one controlled semantic result after a meaningful milestone or rejected
-approach. It tells the agent to verify recalled observations and explicitly
-distinguishes strategy outcome from tool exit status. It does not depend on AoE,
-provider transcript formats, SQLite, or key management.
+Its `SKILL.md` recalls once for any non-trivial task before exploration,
+passing controlled metadata where the agent can infer it, and records or
+confirms one bounded experience capsule after a meaningful milestone or
+rejected approach. It tells the agent to verify recalled lessons and
+explicitly distinguishes procedure outcome from tool exit status. It does not
+depend on AoE, provider transcript formats, SQLite, or key management.
 
 An agent command sandbox may deny access to the operating-system credential
 store even when the user's desktop session has unlocked it. In that case the
 skill permits one retry through the host's standard per-command approval path,
-scoped to the exact `regurgitate recall` or `regurgitate learn` prefix. The binary cannot
+scoped to the exact `regurgitate recall` or `regurgitate experience record` prefix. The binary cannot
 and does not escape the sandbox itself, and the workflow never approves a shell
 wrapper or changes credentials, storage, filesystem, or network policy.
 
@@ -190,7 +276,7 @@ occupied `on_idle` or `on_error` slots and refuses to enable a table containing
 other dormant hooks. The Codex installer preserves existing matcher groups and
 refuses invalid hook structures or explicitly disabled lifecycle hooks. The
 Claude installer preserves existing JSON settings and hook groups while adding
-both terminal events. All installers re-read under the provider's adjacent
+both terminal events and the `UserPromptSubmit` preflight hook. All installers re-read under the provider's adjacent
 lock before applying.
 
 ## Privacy boundary
