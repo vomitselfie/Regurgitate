@@ -279,6 +279,20 @@ Claude installer preserves existing JSON settings and hook groups while adding
 both terminal events and the `UserPromptSubmit` preflight hook. All installers re-read under the provider's adjacent
 lock before applying.
 
+## Project identity
+
+A project is the repository, not the directory an agent happens to run
+from. The project resolver canonicalizes the supplied path, then walks up to
+the nearest `.git`: a subdirectory resolves to its checkout root, and a
+linked git worktree (whose `.git` is a file naming
+`<main>/.git/worktrees/<name>`) resolves to the main checkout. A path with no
+enclosing `.git` keeps its own identity, so scratch directories stay
+isolated rather than polluting a real project. Resolution never shells out
+or reads repository content, and the resolved path is only ever an input to
+the keyed lookup token and the encrypted project record. Forks and separate
+clones remain distinct projects; `workspace` and `ecosystem` scopes exist
+for lessons that should cross that line.
+
 ## Privacy boundary
 
 Raw records are short-lived adapter inputs. Prompts, responses, reasoning,
