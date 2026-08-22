@@ -239,11 +239,13 @@ text, although your shell may keep commands you type in its own history.
 
 Once the hook and skill are installed, there is usually nothing to manage.
 Hooks record tiny sanitized execution observations in the background. The
-agent recalls once before exploring a non-trivial task and records or
-confirms one bounded experience capsule after a meaningful milestone or
-failed approach. With Claude Code, the installed `UserPromptSubmit` hook
-injects a short brief automatically when a prior lesson is relevant and stays
-silent otherwise.
+agent recalls once before exploring a non-trivial task, confirms a recalled
+lesson by its `ref` when it applied it, and records one new bounded
+experience capsule after a meaningful milestone or failed approach. With
+Claude Code, the installed `UserPromptSubmit` hook injects a short brief
+automatically when a relevant lesson has confirmed evidence, shows at most
+two `unconfirmed` lessons while a project is still bootstrapping, and stays
+silent for unrelated prompts.
 
 Useful commands:
 
@@ -253,6 +255,7 @@ Useful commands:
 | `regurgitate recall --project "$PWD" --task data-import --query "csv importer"` | Shows ranked lessons relevant to this task |
 | `regurgitate recall --project "$PWD" --failures --task data-import` | Shows lessons with failed evidence for this task |
 | `regurgitate experience record --project "$PWD" --task data-import --situation "…" --lesson "…" --procedure per-subject-streaming --outcome success` | Records or confirms one experience capsule |
+| `regurgitate experience confirm --match <ref> --outcome success` | Confirms or refutes a recalled lesson by its `ref` |
 | `regurgitate experience list --project "$PWD"` | Lists capsule status and shape (never lesson text) |
 | `regurgitate experience challenge\|obsolete --project "$PWD" --match <selector>` | Marks a capsule challenged or obsolete |
 | `regurgitate experience supersede --project "$PWD" --old <sel> --new <sel>` | Replaces one capsule with another |
