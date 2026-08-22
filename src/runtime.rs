@@ -414,6 +414,26 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                 record_experience(project, input, data_home, &SystemKeyProvider::default())?;
             print_json(&report)
         }
+        ExperienceCommand::Confirm {
+            selector,
+            outcome,
+            failure_reason,
+            data_home,
+        } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let outcome = match Outcome::from(outcome) {
+                Outcome::Failure => SemanticOutcome::Failure,
+                _ => SemanticOutcome::Success,
+            };
+            let report = confirm_experience(
+                &selector,
+                outcome,
+                failure_reason,
+                data_home,
+                &SystemKeyProvider::default(),
+            )?;
+            print_json(&report)
+        }
         ExperienceCommand::List {
             project,
             limit,
@@ -519,6 +539,18 @@ fn record_experience(
     let key = key_provider.get_or_create()?;
     let store = EncryptedStore::open(&database, &key)?;
     ExperienceService::new(store).record(ProjectLocator::new(project), input)
+}
+
+fn confirm_experience(
+    selector: &str,
+    outcome: SemanticOutcome,
+    failure_reason: Option<crate::core::FailureReason>,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<ExperienceReport> {
+    let store = open_existing_history(&data_home, true, key_provider)?
+        .context("no Regurgitate history exists yet")?;
+    ExperienceService::new(store).confirm(selector, outcome, failure_reason)
 }
 
 fn list_experiences(
@@ -1048,7 +1080,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first.status, crate::application::ExperienceStatus::Recorded);
-        for _ in 0..5 {
+        // A single unconfirmed lesson bootstraps preflight with a ref the
+        // agent can confirm.
+        let bootstrap = preflight_brief(
+            ProjectLocator::new(project.clone()),
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            300,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(bootstrap.items, 1);
+        assert!(bootstrap.text.contains("[unconfirmed / project]"));
+        assert!(bootstrap.text.contains("experience confirm --match"));
+        let reference = bootstrap
+            .text
+            .split("ref ")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap()
+            .to_owned();
+        let confirmed = confirm_experience(
+            &reference,
+            SemanticOutcome::Success,
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(
+            confirmed.status,
+            crate::application::ExperienceStatus::Confirmed
+        );
+        assert_eq!(confirmed.evidence, 2);
+        for _ in 0..4 {
             let again = record_experience(
                 project.clone(),
                 kicad_input(lesson, SemanticOutcome::Success),

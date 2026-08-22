@@ -12,7 +12,7 @@ pub use experience::{
     CHALLENGE_RESOLUTION_EVIDENCE, CONTRADICTING_LESSON_SIMILARITY,
     EQUIVALENT_SITUATION_SIMILARITY, ExperienceInput, ExperienceReport, ExperienceService,
     ExperienceStatus, ExperienceStore, ExperienceSummary, MAX_DEDUP_CANDIDATES, ScopeKey,
-    TransitionReport, workspace_locator,
+    TransitionReport, selector_for, workspace_locator,
 };
 pub use forgetting::{ForgetReport, ForgetService, ForgetStatus, ProjectHistoryEraser};
 pub use health::{

@@ -234,6 +234,42 @@ impl ExperienceStore for EncryptedStore {
             .filter(|capsule| capsule.project_id == project_id)
             .collect())
     }
+
+    fn experiences_by_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>> {
+        self.experiences_with_id_prefix(prefix)
+    }
+}
+
+impl EncryptedStore {
+    fn experiences_with_id_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>> {
+        if prefix.len() < 8
+            || !prefix
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        {
+            bail!("a capsule selector is at least eight hexadecimal characters");
+        }
+        let mut stored = Vec::new();
+        {
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT {SELECT_COLUMNS} FROM experiences
+                 WHERE lower(hex(id)) LIKE ?1
+                 LIMIT 16"
+            ))?;
+            let rows = statement.query_map(
+                params![format!("{}%", prefix.to_ascii_lowercase())],
+                stored_experience_from_row,
+            )?;
+            for row in rows {
+                stored.push(row?);
+            }
+        }
+        let mut capsules = Vec::with_capacity(stored.len());
+        for row in stored {
+            capsules.push(self.decrypt_experience(row)?);
+        }
+        Ok(capsules)
+    }
 }
 
 impl crate::query::ExperienceSource for EncryptedStore {
@@ -325,6 +361,23 @@ mod tests {
                 .all(|capsule| capsule.project_id == Uuid::from_u128(7))
         );
         assert_eq!(store.experience_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn selector_prefix_lookup_finds_capsules_across_scopes() {
+        let store = EncryptedStore::open_in_memory(&MasterKey::from_bytes([56; 32])).unwrap();
+        let global = capsule(9, 7, MemoryScope::Global);
+        store.append_experience(&global).unwrap();
+        let selector = crate::application::selector_for(global.id);
+        let found = store.experiences_by_prefix(&selector).unwrap();
+        assert_eq!(found, vec![global]);
+        assert!(
+            store
+                .experiences_by_prefix("ffffffffffff")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(store.experiences_by_prefix("abc").is_err());
     }
 
     #[test]

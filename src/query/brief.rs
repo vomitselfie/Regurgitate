@@ -66,14 +66,28 @@ where
             ..RecallOptions::default()
         };
         let mut result = self.recall(project, options, context)?;
-        // Weak hints are for an agent that asked; they are not worth
-        // unsolicited context.
-        result
+        // Confirmed lessons are worth unsolicited context; unconfirmed ones
+        // are not, except to bootstrap: when nothing stronger exists, show at
+        // most two tagged as unconfirmed so the agent can confirm or refute
+        // them and evidence can start accumulating.
+        let has_confirmed = result
             .experiences
-            .retain(|item| item.strength != EvidenceStrength::Limited);
+            .iter()
+            .any(|item| item.strength != EvidenceStrength::Limited);
+        if has_confirmed {
+            result
+                .experiences
+                .retain(|item| item.strength != EvidenceStrength::Limited);
+        } else {
+            result.experiences.retain(|item| item.reference.is_some());
+            result.experiences.truncate(UNCONFIRMED_BOOTSTRAP_ITEMS);
+        }
         Ok(render_brief(&result, token_budget))
     }
 }
+
+/// Unconfirmed lessons shown by preflight when a project has nothing stronger.
+pub const UNCONFIRMED_BOOTSTRAP_ITEMS: usize = 2;
 
 const HEADER: &str =
     "Relevant prior practice from Regurgitate (historical evidence, not current truth):";
@@ -83,6 +97,10 @@ const HEADER: &str =
 /// a header with no items.
 pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBrief {
     let mut count = result.experiences.len();
+    let any_unconfirmed = result
+        .experiences
+        .iter()
+        .any(|item| item.strength == EvidenceStrength::Limited);
     loop {
         if count == 0 {
             return ExperienceBrief::empty();
@@ -90,7 +108,7 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
         let mut text = String::from(HEADER);
         for (index, item) in result.experiences.iter().take(count).enumerate() {
             let strength = match item.strength {
-                EvidenceStrength::Limited => "limited",
+                EvidenceStrength::Limited => "unconfirmed",
                 EvidenceStrength::Moderate => "moderate",
                 EvidenceStrength::Strong => "strong",
             };
@@ -105,7 +123,7 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
                 .clone()
                 .unwrap_or_else(|| format!("{} for {}", item.procedure, item.task_label()));
             text.push_str(&format!(
-                "\n{}. [{strength} / {}{}] {body} (posterior≈{:.2}; n_eff={:.1}; {}✓ {}✗{guidance})",
+                "\n{}. [{strength} / {}{}] {body} (posterior≈{:.2}; n_eff={:.1}; {}✓ {}✗{guidance}{})",
                 index + 1,
                 item.scope,
                 if item.challenged { ", challenged" } else { "" },
@@ -113,6 +131,10 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
                 item.effective_evidence,
                 item.successes,
                 item.failures,
+                item.reference
+                    .as_deref()
+                    .map(|reference| format!("; ref {reference}"))
+                    .unwrap_or_default(),
             ));
             if let Some(situation) = &item.situation {
                 text.push_str(&format!("\n   When: {situation}"));
@@ -123,6 +145,11 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
             if item.lesson.is_none() && item.legacy {
                 text.push_str("\n   (legacy aggregate without context)");
             }
+        }
+        if any_unconfirmed {
+            text.push_str(
+                "\nIf a lesson is applied, confirm or refute it: `regurgitate experience confirm --match <ref> --outcome success|failure`.",
+            );
         }
         let omitted = result.experiences.len() - count;
         if omitted > 0 {
@@ -171,6 +198,7 @@ mod tests {
 
     fn item(index: usize) -> ExperienceBriefItem {
         ExperienceBriefItem {
+            reference: Some(format!("{index:012x}")),
             scope: MemoryScope::Project,
             task: TaskKind::FeatureImplementation,
             procedure: "structured-patch + targeted-verification".into(),

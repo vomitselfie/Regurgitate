@@ -330,6 +330,9 @@ controlled_enum! {
         VerifyFull => "verify-full",
         VerifyNative => "verify-native",
         Rollback => "rollback",
+        Hypothesize => "hypothesize",
+        Classify => "classify",
+        Annotate => "annotate",
     }
 }
 

@@ -154,6 +154,10 @@ pub enum PracticeGuidance {
 /// small; identifiers and timestamps are deliberately absent.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExperienceBriefItem {
+    /// Opaque local selector for `experience confirm`; absent for legacy
+    /// aggregates, which have no stored capsule.
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     pub scope: MemoryScope,
     pub task: TaskKind,
     pub procedure: String,
@@ -633,6 +637,8 @@ fn rank(
                 };
             let representative = cluster.representative;
             let item = ExperienceBriefItem {
+                reference: (!legacy_errors.contains_key(&representative.id))
+                    .then(|| crate::application::selector_for(representative.id)),
                 scope: representative.scope,
                 task: representative.task,
                 procedure: representative.procedure.summary(),
@@ -936,6 +942,7 @@ mod tests {
         assert_eq!(result.experiences.len(), 1);
         let item = &result.experiences[0];
         assert!(item.legacy);
+        assert!(item.reference.is_none());
         assert_eq!(item.successes, 2);
         assert_eq!(item.failures, 1);
         assert_eq!(item.guidance, Some(PracticeGuidance::Mixed));

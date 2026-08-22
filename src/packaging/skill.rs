@@ -423,7 +423,7 @@ mod tests {
             "Replace the leading `regurgitate` in every command and approval prefix below with `'/plugin home/regurgitate'`; invoke it directly, never through a shell wrapper."
         ));
         assert!(rendered.contains("regurgitate recall"));
-        assert!(rendered.contains("regurgitate learn"));
+        assert!(rendered.contains("regurgitate experience confirm"));
         assert!(!SKILL_CONTENT.contains(command));
     }
 }

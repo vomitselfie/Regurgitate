@@ -154,10 +154,14 @@ any host with a startup instruction channel. For Claude Code,
 (only `cwd`, `hook_event_name`, and a transient `prompt` are deserialized),
 classifies the prompt ephemerally, and answers with `additionalContext`; an
 irrelevant prompt produces no output and therefore no context overhead.
-Preflight is stricter than `recall` on purpose: it injects only lessons with
-moderate or strong evidence (`n_eff ≥ 2.5`), so a single unconfirmed capsule
-is available to an agent that asks but is never pushed unsolicited into every
-session. A budget-trimmed brief ends with an "N more omitted" line. The
+Preflight is stricter than `recall` on purpose: once a project has lessons
+with moderate or strong evidence (`n_eff ≥ 2.5`) it injects only those. When
+nothing that strong exists yet it bootstraps with at most two capsules tagged
+`unconfirmed`, so evidence can start accumulating at all. Every recalled
+capsule carries an opaque `ref`; `experience confirm --match <ref>` appends
+one evidence entry to exactly that capsule in whatever scope it lives, which
+is the deterministic path from "shown" to "trusted". A budget-trimmed brief
+ends with an "N more omitted" line. The
 Claude config printer and installer add that hook next to the two recording
 hooks. Preflight never fails a host prompt: a missing database or key simply
 yields an empty brief, and it never creates state. Codex and AoE do not yet

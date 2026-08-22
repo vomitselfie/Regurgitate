@@ -417,6 +417,24 @@ pub(crate) enum ExperienceCommand {
         data_home: Option<PathBuf>,
     },
 
+    /// Confirm or refute a lesson shown by recall or preflight, by its `ref`.
+    Confirm {
+        /// Opaque `ref` from recall output or the preflight brief.
+        #[arg(long = "match")]
+        selector: String,
+
+        /// Whether the lesson held when applied.
+        #[arg(long, value_enum)]
+        outcome: LearnedOutcomeArg,
+
+        /// Semantic reason the lesson failed.
+        #[arg(long)]
+        failure_reason: Option<FailureReason>,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
     /// List capsule status and shape for this project; never lesson text.
     List {
         #[arg(long)]
@@ -730,6 +748,27 @@ mod tests {
         assert_eq!(ecosystem, Some(Ecosystem::Rust));
         assert_eq!(tool_family, Some(ToolFamily::Cargo));
 
+        let cli = Cli::try_parse_from([
+            "regurgitate",
+            "experience",
+            "confirm",
+            "--match",
+            "5aec242c06e5",
+            "--outcome",
+            "failure",
+            "--failure-reason",
+            "too-slow",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Experience {
+                command: ExperienceCommand::Confirm {
+                    failure_reason: Some(FailureReason::TooSlow),
+                    ..
+                }
+            }
+        ));
         assert!(Cli::try_parse_from(["regurgitate", "preflight"]).is_err());
         assert!(Cli::try_parse_from(["regurgitate", "preflight", "--agent", "claude"]).is_ok());
         let cli = Cli::try_parse_from(["regurgitate", "preflight", "--project", "/p"]).unwrap();

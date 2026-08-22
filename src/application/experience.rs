@@ -93,6 +93,27 @@ pub trait ExperienceStore {
     /// Capsules recorded from one project, for maintenance and selectors.
     fn project_experiences(&self, project_id: Uuid, limit: usize)
     -> Result<Vec<ExperienceCapsule>>;
+    /// Capsules whose opaque id starts with a lower-case hex prefix, in any
+    /// scope. Used to confirm a lesson an agent was shown by recall.
+    fn experiences_by_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>>;
+}
+
+/// Opaque local reference shown next to recalled lessons so an agent can
+/// confirm or refute exactly that capsule.
+pub fn selector_for(id: Uuid) -> String {
+    id.simple().to_string()[..12].to_owned()
+}
+
+fn normalize_selector(selector: &str) -> Result<String> {
+    let selector = selector.trim().to_ascii_lowercase().replace('-', "");
+    if selector.len() < 8
+        || !selector
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        bail!("a capsule selector is at least eight hexadecimal characters");
+    }
+    Ok(selector)
 }
 
 /// Resolves the workspace (parent directory) identity for a project.
@@ -271,6 +292,62 @@ where
         }
     }
 
+    /// Adds one evidence entry to a capsule an agent was shown by recall or
+    /// preflight, in whatever scope it lives. This is the deterministic
+    /// confirmation path; re-recording a paraphrase is the fallback.
+    pub fn confirm(
+        &self,
+        selector: &str,
+        outcome: SemanticOutcome,
+        failure_reason: Option<FailureReason>,
+    ) -> Result<ExperienceReport> {
+        self.confirm_at(selector, outcome, failure_reason, Utc::now())
+    }
+
+    pub fn confirm_at(
+        &self,
+        selector: &str,
+        outcome: SemanticOutcome,
+        failure_reason: Option<FailureReason>,
+        now: DateTime<Utc>,
+    ) -> Result<ExperienceReport> {
+        if failure_reason.is_some() && outcome != SemanticOutcome::Failure {
+            bail!("a failure reason requires a failure outcome");
+        }
+        let selector = normalize_selector(selector)?;
+        let mut matches = self.history.experiences_by_prefix(&selector)?;
+        let mut capsule = match matches.len() {
+            0 => bail!("no capsule matches the selector"),
+            1 => matches.remove(0),
+            _ => bail!("the selector is ambiguous; supply more characters"),
+        };
+        if matches!(
+            capsule.lifecycle,
+            MemoryLifecycle::Superseded | MemoryLifecycle::Obsolete
+        ) {
+            bail!("that capsule is retired; record the lesson afresh instead");
+        }
+        capsule.confirm(EvidenceEntry {
+            at: now,
+            outcome,
+            failure_reason,
+        });
+        if capsule.lifecycle == MemoryLifecycle::Challenged
+            && capsule.evidence.len() >= CHALLENGE_RESOLUTION_EVIDENCE
+        {
+            capsule.lifecycle = MemoryLifecycle::Active;
+        }
+        capsule.validate()?;
+        if !self.history.replace_experience(&capsule)? {
+            bail!("the capsule disappeared during confirmation");
+        }
+        Ok(ExperienceReport {
+            status: ExperienceStatus::Confirmed,
+            lifecycle: capsule.lifecycle,
+            evidence: capsule.evidence.len(),
+        })
+    }
+
     /// Marks one capsule with a new lifecycle. Selectors are opaque local id
     /// prefixes that only match capsules recorded from the given project.
     pub fn transition(
@@ -373,7 +450,7 @@ pub struct ExperienceSummary {
 impl From<&ExperienceCapsule> for ExperienceSummary {
     fn from(capsule: &ExperienceCapsule) -> Self {
         Self {
-            selector: capsule.id.simple().to_string()[..12].to_owned(),
+            selector: selector_for(capsule.id),
             scope: capsule.scope,
             task: capsule.task,
             procedure: capsule.procedure.summary(),
@@ -515,6 +592,16 @@ mod tests {
                 .iter()
                 .filter(|capsule| capsule.project_id == project_id)
                 .take(limit)
+                .cloned()
+                .collect())
+        }
+
+        fn experiences_by_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>> {
+            Ok(self
+                .capsules
+                .borrow()
+                .iter()
+                .filter(|capsule| capsule.id.simple().to_string().starts_with(prefix))
                 .cloned()
                 .collect())
         }
@@ -711,6 +798,52 @@ mod tests {
         assert!(
             service
                 .transition(&project(), "zz", MemoryLifecycle::Active)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn confirm_by_selector_adds_evidence_in_any_scope_and_refuses_retired_capsules() {
+        let store = Rc::new(MemoryStore::default());
+        let service = ExperienceService::new(Rc::clone(&store));
+        let mut global = input(
+            "Generated native artifact where parser acceptance is weaker than native checks.",
+            "Change one placement class at a time, then run native verification.",
+            SemanticOutcome::Success,
+        );
+        global.scope = MemoryScope::Global;
+        service.record(project(), global).unwrap();
+        let selector = selector_for(store.capsules.borrow()[0].id);
+
+        let report = service
+            .confirm(
+                &selector,
+                SemanticOutcome::Failure,
+                Some(FailureReason::TooSlow),
+            )
+            .unwrap();
+        assert_eq!(report.status, ExperienceStatus::Confirmed);
+        assert_eq!(report.evidence, 2);
+        assert_eq!(store.capsules.borrow()[0].failures(), 1);
+        assert!(
+            service
+                .confirm(
+                    &selector,
+                    SemanticOutcome::Success,
+                    Some(FailureReason::Other)
+                )
+                .is_err()
+        );
+        assert!(
+            service
+                .confirm("zz", SemanticOutcome::Success, None)
+                .is_err()
+        );
+
+        store.capsules.borrow_mut()[0].lifecycle = MemoryLifecycle::Obsolete;
+        assert!(
+            service
+                .confirm(&selector, SemanticOutcome::Success, None)
                 .is_err()
         );
     }
