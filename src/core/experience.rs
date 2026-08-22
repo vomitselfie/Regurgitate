@@ -77,6 +77,12 @@ pub type Caveat = BoundedText<CAVEAT_MAX_CHARS>;
 
 macro_rules! controlled_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $label:literal),+ $(,)? }) => {
+        controlled_enum!($(#[$meta])* $name { $($variant => $label),+ } aliases {});
+    };
+    (
+        $(#[$meta:meta])* $name:ident { $($variant:ident => $label:literal),+ $(,)? }
+        aliases { $($alias:literal => $target:ident),* $(,)? }
+    ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(rename_all = "snake_case")]
@@ -96,6 +102,7 @@ macro_rules! controlled_enum {
             fn from_str(value: &str) -> Result<Self> {
                 let normalized = value.trim().to_ascii_lowercase().replace('_', "-");
                 $(if normalized == $label { return Ok(Self::$variant); })+
+                $(if normalized == $alias { return Ok(Self::$target); })*
                 bail!(
                     "unknown {} {:?}; expected one of: {}",
                     stringify!($name),
@@ -191,6 +198,10 @@ controlled_enum! {
         Kicad => "kicad",
         Playwright => "playwright",
         Other => "other",
+    }
+    aliases {
+        "generic" => Other,
+        "none" => Other,
     }
 }
 
@@ -847,6 +858,14 @@ mod tests {
             );
         }
         assert!(!Procedure::from_strategy(Strategy::Other).is_empty());
+    }
+
+    #[test]
+    fn tool_family_forgives_the_ecosystem_catch_all_spelling() {
+        assert_eq!("generic".parse::<ToolFamily>().unwrap(), ToolFamily::Other);
+        assert_eq!("Generic".parse::<ToolFamily>().unwrap(), ToolFamily::Other);
+        assert!("generic".parse::<Phase>().is_err());
+        assert_eq!(ToolFamily::Other.label(), "other");
     }
 
     #[test]

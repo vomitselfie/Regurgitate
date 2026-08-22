@@ -403,8 +403,9 @@ pub(crate) enum ExperienceCommand {
         #[arg(long)]
         tool_family: Option<ToolFamily>,
 
-        /// Risk shapes: destructive, expensive, flaky, version-sensitive, sandbox-sensitive.
-        #[arg(long = "risk")]
+        /// Risk shapes, comma-separated or repeated: destructive, expensive, flaky,
+        /// version-sensitive, sandbox-sensitive.
+        #[arg(long = "risk", value_delimiter = ',')]
         risks: Vec<RiskShape>,
 
         /// Major version of the tool family the lesson was observed on.
@@ -647,9 +648,7 @@ mod tests {
             "--tool-family",
             "kicad",
             "--risk",
-            "version-sensitive",
-            "--risk",
-            "expensive",
+            "version-sensitive,expensive",
             "--tool-major",
             "10",
         ])
