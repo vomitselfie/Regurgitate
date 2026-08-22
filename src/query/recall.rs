@@ -106,13 +106,21 @@ impl<'a> EphemeralTaskContext<'a> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RecallResult {
     pub experiences: Vec<ExperienceBriefItem>,
+    /// Matching lessons dropped by the result limit or the token budget.
+    /// Re-query with a larger budget, a smaller scope, or `--failures`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub omitted: usize,
     pub hook_summary: HookSummary,
     pub approximate_tokens: usize,
 }
 
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 impl RecallResult {
     pub fn empty() -> Self {
-        budgeted_result(Vec::new(), HookSummary::default(), DEFAULT_TOKEN_BUDGET)
+        budgeted_result(Vec::new(), 0, HookSummary::default(), DEFAULT_TOKEN_BUDGET)
     }
 }
 
@@ -214,6 +222,7 @@ where
         let Some(project_id) = self.history.find_project(locator)? else {
             return Ok(budgeted_result(
                 Vec::new(),
+                0,
                 HookSummary::default(),
                 options.token_budget,
             ));
@@ -273,7 +282,7 @@ where
         }
 
         // Stage 2: contextual reranking over the decrypted window.
-        let experiences = rank(
+        let (experiences, beyond_limit) = rank(
             &self.policy,
             &matcher,
             options,
@@ -283,6 +292,7 @@ where
         );
         Ok(budgeted_result(
             experiences,
+            beyond_limit,
             hook_summary,
             options.token_budget,
         ))
@@ -503,7 +513,7 @@ fn rank(
     candidates: Vec<ExperienceCapsule>,
     legacy_errors: &LegacyErrors,
     now: DateTime<Utc>,
-) -> Vec<ExperienceBriefItem> {
+) -> (Vec<ExperienceBriefItem>, usize) {
     let mut clusters: BTreeMap<ExperienceIdentity, Cluster> = BTreeMap::new();
     let mut seen = std::collections::HashSet::new();
     for capsule in candidates {
@@ -660,11 +670,13 @@ fn rank(
             .then_with(|| right.2.cmp(&left.2))
             .then_with(|| left.3.cmp(&right.3))
     });
-    ranked
+    let beyond_limit = ranked.len().saturating_sub(options.limit);
+    let items = ranked
         .into_iter()
         .take(options.limit)
         .map(|(_, _, _, _, item)| item)
-        .collect()
+        .collect();
+    (items, beyond_limit)
 }
 
 fn most_common<T: Copy + Ord>(counts: &BTreeMap<T, usize>) -> Option<T> {
@@ -707,12 +719,14 @@ fn round(value: f64, scale: f64) -> f64 {
 
 fn budgeted_result(
     mut experiences: Vec<ExperienceBriefItem>,
+    mut omitted: usize,
     hook_summary: HookSummary,
     token_budget: usize,
 ) -> RecallResult {
     loop {
         let mut result = RecallResult {
             experiences,
+            omitted,
             hook_summary,
             approximate_tokens: 0,
         };
@@ -728,6 +742,7 @@ fn budgeted_result(
         }
         experiences = result.experiences;
         experiences.pop();
+        omitted += 1;
     }
 }
 
@@ -1289,6 +1304,12 @@ mod tests {
         );
         assert!(result.experiences.len() <= MAX_RECALL_LIMIT);
         assert!(result.approximate_tokens <= MAX_TOKEN_BUDGET);
+        assert_eq!(result.experiences.len() + result.omitted, 30);
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("\"omitted\"")
+        );
         let tight = recall(
             &history,
             RecallOptions {
@@ -1298,6 +1319,7 @@ mod tests {
             EphemeralTaskContext::from_query(Some("debug SUPER_SECRET_TASK_TOKEN")),
         );
         assert!(tight.approximate_tokens <= 120);
+        assert_eq!(tight.experiences.len() + tight.omitted, 30);
         assert!(
             !serde_json::to_string(&tight)
                 .unwrap()

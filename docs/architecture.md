@@ -153,7 +153,11 @@ any host with a startup instruction channel. For Claude Code,
 `regurgitate preflight --agent claude` reads the `UserPromptSubmit` payload
 (only `cwd`, `hook_event_name`, and a transient `prompt` are deserialized),
 classifies the prompt ephemerally, and answers with `additionalContext`; an
-irrelevant prompt produces no output and therefore no context overhead. The
+irrelevant prompt produces no output and therefore no context overhead.
+Preflight is stricter than `recall` on purpose: it injects only lessons with
+moderate or strong evidence (`n_eff ≥ 2.5`), so a single unconfirmed capsule
+is available to an agent that asks but is never pushed unsolicited into every
+session. A budget-trimmed brief ends with an "N more omitted" line. The
 Claude config printer and installer add that hook next to the two recording
 hooks. Preflight never fails a host prompt: a missing database or key simply
 yields an empty brief, and it never creates state. Codex and AoE do not yet
@@ -327,12 +331,14 @@ separate key-derived project token in SQLite so the storage adapter can select
 a project without putting its UUID or path in plaintext. The decrypted project
 UUID is verified before an event enters aggregation.
 
-Recall retrieves learned practices and hook executions through separate bounded
-queries, so high-volume telemetry cannot evict useful practice from the
-candidate window. `observations` groups only learned practices by controlled
-task, capability, operation, and strategy. It reports semantic outcome counts
-and, when supported by repetition, confidence plus deterministic `prefer`,
-`avoid`, or `mixed` guidance. `--failures` filters only these semantic outcomes.
+Recall retrieves capsules, legacy practice rows, and hook executions through
+separate bounded queries, so high-volume telemetry cannot evict useful
+lessons from the candidate window. `experiences` lists ranked lessons (see
+"Recall flow") with their posterior, interval, effective evidence, and, when
+the evidence supports it, `prefer`, `avoid`, or `mixed` guidance.
+`--failures` keeps only capsules with failed evidence. When the result limit
+or the token budget drops matching lessons, `omitted` reports how many, so a
+caller can re-query with a larger budget or a narrower context.
 
 Provider-reported execution counts appear under the separate `hook_summary`
 key and never participate in guidance. They describe a bounded recent sample
@@ -342,10 +348,10 @@ absent from the result.
 
 Optional task text is ephemeral input to a deterministic classifier. It reduces
 the query to controlled task, capability, and operation hints, then drops the
-normalized text. A supplied query filters observations to matching controlled
-tasks; a query with no recognized task yields no practice observations rather
-than generic telemetry. The query is neither stored nor returned.
-After ranking and the observation-count limit, the result is serialized and
+normalized text. A supplied query filters lessons to matching controlled
+tasks; a query with no recognized task yields no lessons rather than generic
+telemetry. The query is neither stored nor returned.
+After ranking and the result limit, the result is serialized and
 trimmed from lowest priority until its conservative four-bytes-per-token
 estimate fits the requested budget. The output records that estimate for later
 evaluation. Budgets above 1,000 tokens are rejected before storage is queried.

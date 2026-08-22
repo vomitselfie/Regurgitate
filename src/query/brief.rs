@@ -14,6 +14,8 @@ use super::{
 pub struct ExperienceBrief {
     pub text: String,
     pub items: usize,
+    /// Eligible lessons that did not fit the budget.
+    pub omitted: usize,
     pub approximate_tokens: usize,
 }
 
@@ -22,6 +24,7 @@ impl ExperienceBrief {
         Self {
             text: String::new(),
             items: 0,
+            omitted: 0,
             approximate_tokens: 0,
         }
     }
@@ -29,7 +32,10 @@ impl ExperienceBrief {
 
 /// Host-neutral preflight port. Adapters call it at the earliest safe point
 /// where a task context is known; the result is small enough to inject
-/// before substantial reasoning.
+/// before substantial reasoning. Unlike `recall`, it only carries lessons
+/// with moderate or strong evidence (`n_eff >= min_effective_evidence`):
+/// unsolicited context must earn its place, and one unconfirmed capsule
+/// must not be pushed into every session.
 pub trait RecallBroker {
     fn brief(
         &self,
@@ -118,11 +124,19 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
                 text.push_str("\n   (legacy aggregate without context)");
             }
         }
+        let omitted = result.experiences.len() - count;
+        if omitted > 0 {
+            text.push_str(&format!(
+                "\n({omitted} more relevant lesson{} omitted for budget; `regurgitate recall` lists them)",
+                if omitted == 1 { "" } else { "s" }
+            ));
+        }
         let approximate_tokens = (text.len() + 1).div_ceil(4);
         if approximate_tokens <= token_budget {
             return ExperienceBrief {
                 text,
                 items: count,
+                omitted,
                 approximate_tokens,
             };
         }
@@ -185,12 +199,15 @@ mod tests {
     fn renders_numbered_lines_within_budget_and_stays_silent_when_empty() {
         let result = RecallResult {
             experiences: (0..5).map(item).collect(),
+            omitted: 0,
             hook_summary: HookSummary::default(),
             approximate_tokens: 0,
         };
         let brief = render_brief(&result, 120);
         assert!(brief.items < 5);
         assert!(brief.items >= 1);
+        assert_eq!(brief.items + brief.omitted, 5);
+        assert!(brief.text.contains("omitted for budget"));
         assert!(brief.approximate_tokens <= 120);
         assert!(brief.text.starts_with(HEADER));
         assert!(brief.text.contains("1. [strong / project] Lesson number 0"));
@@ -303,6 +320,7 @@ mod tests {
         legacy.legacy = true;
         let result = RecallResult {
             experiences: vec![legacy],
+            omitted: 0,
             hook_summary: HookSummary::default(),
             approximate_tokens: 0,
         };

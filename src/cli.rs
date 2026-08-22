@@ -232,7 +232,7 @@ pub(crate) enum Command {
         #[arg(long)]
         project: PathBuf,
 
-        /// Restrict observations to one controlled operation.
+        /// Restrict lessons to procedures with one canonical operation.
         #[arg(long)]
         operation: Option<OperationArg>,
 
@@ -240,7 +240,7 @@ pub(crate) enum Command {
         #[arg(long)]
         failures: bool,
 
-        /// Maximum aggregate observations to return (hard maximum: 20).
+        /// Maximum lessons to return (hard maximum: 20); dropped ones are counted in `omitted`.
         #[arg(long, default_value_t = crate::query::DEFAULT_RECALL_LIMIT)]
         limit: usize,
 
@@ -284,6 +284,9 @@ pub(crate) enum Command {
     },
 
     /// Emit a plain-text experience brief for host preflight injection.
+    /// Unlike `recall`, only lessons with moderate or strong evidence are
+    /// included; a prompt with no recognizable task produces no output.
+    #[command(verbatim_doc_comment)]
     Preflight {
         /// Local project directory; read from the hook payload with --agent.
         #[arg(long, required_unless_present = "agent")]
