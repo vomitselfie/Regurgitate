@@ -9,7 +9,7 @@ mod retention;
 
 pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
 pub use experience::{
-    CHALLENGE_RESOLUTION_EVIDENCE, CONTRADICTING_LESSON_SIMILARITY,
+    CHALLENGE_RESOLUTION_EVIDENCE, CONTRADICTING_LESSON_SIMILARITY, ConfirmationReference,
     EQUIVALENT_SITUATION_SIMILARITY, ExperienceInput, ExperienceReport, ExperienceService,
     ExperienceStatus, ExperienceStore, ExperienceSummary, MAX_DEDUP_CANDIDATES, ScopeKey,
     TransitionReport, selector_for, workspace_locator,

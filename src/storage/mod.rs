@@ -1,3 +1,4 @@
+mod confirmation;
 mod crypto;
 mod cursor;
 mod experience;

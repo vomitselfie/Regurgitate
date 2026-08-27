@@ -23,6 +23,7 @@ pub(super) enum PrivateRecordKind {
     Cursor = 2,
     EventProject = 3,
     ExperienceScope = 4,
+    ConfirmationReference = 5,
 }
 
 pub(super) struct SealedPrivateRecord {

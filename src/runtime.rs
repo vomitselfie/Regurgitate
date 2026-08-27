@@ -1100,6 +1100,7 @@ mod tests {
             .and_then(|rest| rest.split(')').next())
             .unwrap()
             .to_owned();
+        assert!(reference.starts_with("r1_"));
         let confirmed = confirm_experience(
             &reference,
             SemanticOutcome::Success,
@@ -1113,6 +1114,15 @@ mod tests {
             crate::application::ExperienceStatus::Confirmed
         );
         assert_eq!(confirmed.evidence, 2);
+        let duplicate = confirm_experience(
+            &reference,
+            SemanticOutcome::Failure,
+            Some(crate::core::FailureReason::VerificationFailed),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(duplicate.evidence, 2);
         for _ in 0..4 {
             let again = record_experience(
                 project.clone(),

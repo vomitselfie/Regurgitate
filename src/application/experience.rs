@@ -96,6 +96,21 @@ pub trait ExperienceStore {
     /// Capsules whose opaque id starts with a lower-case hex prefix, in any
     /// scope. Used to confirm a lesson an agent was shown by recall.
     fn experiences_by_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>>;
+
+    /// Resolves an authenticated agent-facing reference. Human maintenance
+    /// selectors return `None` and continue through the legacy prefix path.
+    fn resolve_confirmation_reference(
+        &self,
+        _reference: &str,
+    ) -> Result<Option<ConfirmationReference>> {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfirmationReference {
+    pub capsule_id: Uuid,
+    pub receipt_digest: [u8; 32],
 }
 
 /// Opaque local reference shown next to recalled lessons so an agent can
@@ -306,7 +321,12 @@ where
         if failure_reason.is_some() && outcome != SemanticOutcome::Failure {
             bail!("a failure reason requires a failure outcome");
         }
-        let selector = normalize_selector(selector)?;
+        let resolved = self.history.resolve_confirmation_reference(selector)?;
+        let receipt_digest = resolved.map(|reference| reference.receipt_digest);
+        let selector = match resolved {
+            Some(reference) => reference.capsule_id.simple().to_string(),
+            None => normalize_selector(selector)?,
+        };
         let mut matches = self.history.experiences_by_prefix(&selector)?;
         let mut capsule = match matches.len() {
             0 => bail!("no capsule matches the selector"),
@@ -319,19 +339,30 @@ where
         ) {
             bail!("that capsule is retired; record the lesson afresh instead");
         }
-        capsule.confirm_with_recovery(
-            EvidenceEntry::agent_reported(
-                now,
-                outcome,
-                failure_reason,
-                EnvironmentFingerprint {
-                    tool_family: capsule.applicability.tool_family,
-                    major_version: None,
-                    host_class: HostClass::current(),
-                },
-            ),
-            CHALLENGE_RESOLUTION_EVIDENCE,
+        if receipt_digest.is_some_and(|digest| {
+            capsule
+                .evidence
+                .iter()
+                .any(|entry| entry.receipt_digest == Some(digest))
+        }) {
+            return Ok(ExperienceReport {
+                status: ExperienceStatus::Confirmed,
+                lifecycle: capsule.lifecycle,
+                evidence: capsule.evidence.len(),
+            });
+        }
+        let mut entry = EvidenceEntry::agent_reported(
+            now,
+            outcome,
+            failure_reason,
+            EnvironmentFingerprint {
+                tool_family: capsule.applicability.tool_family,
+                major_version: None,
+                host_class: HostClass::current(),
+            },
         );
+        entry.receipt_digest = receipt_digest;
+        capsule.confirm_with_recovery(entry, CHALLENGE_RESOLUTION_EVIDENCE);
         capsule.validate()?;
         if !self.history.replace_experience(&capsule)? {
             bail!("the capsule disappeared during confirmation");

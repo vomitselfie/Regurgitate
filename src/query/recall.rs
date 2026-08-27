@@ -43,6 +43,12 @@ pub trait ProjectEventSource {
 /// Read-only candidate access for one scope bucket.
 pub trait ExperienceSource {
     fn scoped_experiences(&self, scope: ScopeKey, limit: usize) -> Result<Vec<ExperienceCapsule>>;
+
+    /// Creates an authenticated, stateless reference when the backing store
+    /// supports it. In-memory and compatibility sources use a human selector.
+    fn confirmation_reference(&self, capsule_id: Uuid) -> Result<String> {
+        Ok(crate::application::selector_for(capsule_id))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +291,16 @@ where
             );
         }
 
+        let references: HashMap<Uuid, String> = candidates
+            .iter()
+            .filter(|capsule| !legacy_errors.contains_key(&capsule.id))
+            .map(|capsule| {
+                self.history
+                    .confirmation_reference(capsule.id)
+                    .map(|reference| (capsule.id, reference))
+            })
+            .collect::<Result<_>>()?;
+
         // Stage 2: contextual reranking over the decrypted window.
         let (experiences, beyond_limit) = rank(
             &self.policy,
@@ -292,6 +308,7 @@ where
             options,
             candidates,
             &legacy_errors,
+            &references,
             now,
         );
         Ok(budgeted_result(
@@ -522,6 +539,7 @@ fn rank(
     options: RecallOptions,
     candidates: Vec<ExperienceCapsule>,
     legacy_errors: &LegacyErrors,
+    references: &HashMap<Uuid, String>,
     now: DateTime<Utc>,
 ) -> (Vec<ExperienceBriefItem>, usize) {
     let mut clusters: BTreeMap<ExperienceIdentity, Cluster> = BTreeMap::new();
@@ -643,8 +661,7 @@ fn rank(
                 };
             let representative = cluster.representative;
             let item = ExperienceBriefItem {
-                reference: (!legacy_errors.contains_key(&representative.id))
-                    .then(|| crate::application::selector_for(representative.id)),
+                reference: references.get(&representative.id).cloned(),
                 scope: representative.scope,
                 task: representative.task,
                 procedure: representative.procedure.summary(),

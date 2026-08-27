@@ -238,6 +238,13 @@ impl ExperienceStore for EncryptedStore {
     fn experiences_by_prefix(&self, prefix: &str) -> Result<Vec<ExperienceCapsule>> {
         self.experiences_with_id_prefix(prefix)
     }
+
+    fn resolve_confirmation_reference(
+        &self,
+        reference: &str,
+    ) -> Result<Option<crate::application::ConfirmationReference>> {
+        EncryptedStore::resolve_confirmation_reference(self, reference)
+    }
 }
 
 impl EncryptedStore {
@@ -275,6 +282,10 @@ impl EncryptedStore {
 impl crate::query::ExperienceSource for EncryptedStore {
     fn scoped_experiences(&self, scope: ScopeKey, limit: usize) -> Result<Vec<ExperienceCapsule>> {
         ExperienceStore::scoped_experiences(self, scope, limit)
+    }
+
+    fn confirmation_reference(&self, capsule_id: Uuid) -> Result<String> {
+        self.issue_confirmation_reference(capsule_id)
     }
 }
 
