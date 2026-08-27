@@ -343,11 +343,12 @@ fn materialize_legacy(
             Outcome::Unknown => continue,
         };
         let entry = groups.entry(Key(task, strategy)).or_default();
-        entry.0.push(EvidenceEntry {
-            at: event.timestamp,
+        entry.0.push(EvidenceEntry::agent_reported(
+            event.timestamp,
             outcome,
-            failure_reason: None,
-        });
+            None,
+            Default::default(),
+        ));
         if let Some(error) = event.error_class {
             *entry.1.entry(error).or_default() += 1;
         }
@@ -373,7 +374,6 @@ fn materialize_legacy(
                 caveat: None,
                 procedure: Procedure::from_strategy(strategy),
                 applicability: Default::default(),
-                environment: Default::default(),
                 lifecycle: MemoryLifecycle::Active,
                 evidence,
                 created_at,
@@ -441,24 +441,29 @@ impl<'c> ContextMatcher<'c> {
             self.intent.ecosystems().iter().copied(),
             capsule.applicability.ecosystem,
         );
+        let evidence_tool = capsule
+            .evidence
+            .iter()
+            .find_map(|entry| entry.environment.tool_family);
         let tool = match_term(
             self.context.tool_family,
             self.intent.tool_families().iter().copied(),
-            capsule
-                .applicability
-                .tool_family
-                .or(capsule.environment.tool_family),
+            capsule.applicability.tool_family.or(evidence_tool),
         );
         let phase = match_term(
             self.context.phase,
             self.intent.phases().iter().copied(),
             capsule.applicability.phase,
         );
-        let environment = match (capsule.environment.host_class, self.host) {
-            (Some(recorded), Some(current)) if recorded == current => 1.0,
-            (Some(_), Some(_)) => 0.25,
-            _ => 0.75,
-        };
+        let environment = capsule
+            .evidence
+            .iter()
+            .map(|entry| match (entry.environment.host_class, self.host) {
+                (Some(recorded), Some(current)) if recorded == current => 1.0_f64,
+                (Some(_), Some(_)) => 0.25,
+                _ => 0.75,
+            })
+            .fold(0.0_f64, f64::max);
         let score = policy.applicability_task * task
             + policy.applicability_artifact * artifact
             + policy.applicability_ecosystem * (0.5 * ecosystem + 0.5 * tool)
@@ -893,15 +898,17 @@ mod tests {
                 ecosystem: Some(Ecosystem::Kicad),
                 ..ApplicabilityTags::default()
             },
-            environment: EnvironmentFingerprint::default(),
             lifecycle: MemoryLifecycle::Active,
             evidence: outcomes
                 .iter()
                 .enumerate()
-                .map(|(index, outcome)| EvidenceEntry {
-                    at: at + chrono::Duration::minutes(index as i64),
-                    outcome: *outcome,
-                    failure_reason: None,
+                .map(|(index, outcome)| {
+                    EvidenceEntry::agent_reported(
+                        at + chrono::Duration::minutes(index as i64),
+                        *outcome,
+                        None,
+                        EnvironmentFingerprint::default(),
+                    )
                 })
                 .collect(),
             created_at: at,
@@ -1045,11 +1052,12 @@ mod tests {
         stale.created_at -= chrono::Duration::days(720);
         stale.last_confirmed_at -= chrono::Duration::days(720);
         for offset in 0..3 {
-            stale.confirm(EvidenceEntry {
-                at: now() - chrono::Duration::hours(offset),
-                outcome: SemanticOutcome::Failure,
-                failure_reason: Some(FailureReason::VersionMismatch),
-            });
+            stale.confirm(EvidenceEntry::agent_reported(
+                now() - chrono::Duration::hours(offset),
+                SemanticOutcome::Failure,
+                Some(FailureReason::VersionMismatch),
+                Default::default(),
+            ));
         }
         history.capsules.push(stale);
         let result = recall(

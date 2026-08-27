@@ -214,15 +214,12 @@ where
             }
             _ => None,
         };
-        let entry = EvidenceEntry {
-            at: now,
-            outcome: input.outcome,
-            failure_reason: input.failure_reason,
-        };
         let mut environment = input.environment;
         if environment.host_class.is_none() {
             environment.host_class = HostClass::current();
         }
+        let entry =
+            EvidenceEntry::agent_reported(now, input.outcome, input.failure_reason, environment);
         let mut candidate = ExperienceCapsule {
             id: Uuid::new_v4(),
             project_id,
@@ -234,7 +231,6 @@ where
             caveat: input.caveat,
             procedure: input.procedure,
             applicability: input.applicability,
-            environment,
             lifecycle: MemoryLifecycle::Active,
             evidence: vec![entry],
             created_at: now,
@@ -327,11 +323,16 @@ where
         ) {
             bail!("that capsule is retired; record the lesson afresh instead");
         }
-        capsule.confirm(EvidenceEntry {
-            at: now,
+        capsule.confirm(EvidenceEntry::agent_reported(
+            now,
             outcome,
             failure_reason,
-        });
+            EnvironmentFingerprint {
+                tool_family: capsule.applicability.tool_family,
+                major_version: None,
+                host_class: HostClass::current(),
+            },
+        ));
         if capsule.lifecycle == MemoryLifecycle::Challenged
             && capsule.evidence.len() >= CHALLENGE_RESOLUTION_EVIDENCE
         {
@@ -679,7 +680,7 @@ mod tests {
             capsules[0].last_confirmed_at,
             now + chrono::Duration::hours(1)
         );
-        assert!(capsules[0].environment.host_class.is_some());
+        assert!(capsules[0].evidence[0].environment.host_class.is_some());
     }
 
     #[test]

@@ -13,11 +13,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::{
-    Capability, Operation, Strategy, TaskKind,
+    AgentKind, Capability, Operation, Strategy, TaskKind,
     admission::{AdmissionRejection, admit_text},
 };
 
-pub const EXPERIENCE_SCHEMA_VERSION: u32 = 3;
+pub const EXPERIENCE_SCHEMA_VERSION: u32 = 4;
 pub const SITUATION_MAX_CHARS: usize = 240;
 pub const LESSON_MAX_CHARS: usize = 320;
 pub const CAVEAT_MAX_CHARS: usize = 160;
@@ -274,6 +274,54 @@ controlled_enum! {
     SemanticOutcome {
         Success => "success",
         Failure => "failure",
+    }
+}
+
+controlled_enum! {
+    /// The actor or trusted integration that supplied an evidence claim.
+    EvidenceSource {
+        AgentJudgment => "agent-judgment",
+        HostObservation => "host-observation",
+        HumanConfirmation => "human-confirmation",
+    }
+}
+
+impl Default for EvidenceSource {
+    fn default() -> Self {
+        Self::AgentJudgment
+    }
+}
+
+controlled_enum! {
+    /// Bounded verification claim associated with one observation.
+    EvidenceVerification {
+        None => "none",
+        Targeted => "targeted",
+        Full => "full",
+        Native => "native",
+    }
+}
+
+impl Default for EvidenceVerification {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+controlled_enum! {
+    /// Trust boundary for a verification claim. Agent-supplied evidence is
+    /// always self-reported; only trusted host and human entry points may
+    /// create stronger attestations.
+    EvidenceAttestation {
+        SelfReported => "self-reported",
+        HostAttested => "host-attested",
+        HumanAttested => "human-attested",
+    }
+}
+
+impl Default for EvidenceAttestation {
+    fn default() -> Self {
+        Self::SelfReported
     }
 }
 
@@ -592,6 +640,46 @@ pub struct EvidenceEntry {
     pub outcome: SemanticOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<FailureReason>,
+    #[serde(default)]
+    pub source: EvidenceSource,
+    #[serde(default)]
+    pub verification: EvidenceVerification,
+    #[serde(default)]
+    pub attestation: EvidenceAttestation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentKind>,
+    #[serde(default)]
+    pub environment: EnvironmentFingerprint,
+    /// Digest of a confirmation receipt. It is encrypted with the capsule and
+    /// exists only to make one recalled reference idempotent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_digest: Option<[u8; 32]>,
+    /// Opaque grouping token for observations that may share one underlying
+    /// run. Absence is treated conservatively by the evidence policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<[u8; 32]>,
+}
+
+impl EvidenceEntry {
+    pub fn agent_reported(
+        at: DateTime<Utc>,
+        outcome: SemanticOutcome,
+        failure_reason: Option<FailureReason>,
+        environment: EnvironmentFingerprint,
+    ) -> Self {
+        Self {
+            at,
+            outcome,
+            failure_reason,
+            source: EvidenceSource::AgentJudgment,
+            verification: EvidenceVerification::None,
+            attestation: EvidenceAttestation::SelfReported,
+            agent: None,
+            environment,
+            receipt_digest: None,
+            cohort: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -616,8 +704,6 @@ pub struct ExperienceCapsule {
     pub procedure: Procedure,
     #[serde(default)]
     pub applicability: ApplicabilityTags,
-    #[serde(default)]
-    pub environment: EnvironmentFingerprint,
     pub lifecycle: MemoryLifecycle,
     pub evidence: Vec<EvidenceEntry>,
     pub created_at: DateTime<Utc>,
@@ -673,6 +759,27 @@ impl ExperienceCapsule {
         }
         if self.evidence.len() > MAX_EVIDENCE_ENTRIES {
             bail!("a capsule may retain at most {MAX_EVIDENCE_ENTRIES} evidence entries");
+        }
+        for entry in &self.evidence {
+            if entry.failure_reason.is_some() && entry.outcome != SemanticOutcome::Failure {
+                bail!("an evidence failure reason requires a failure outcome");
+            }
+            let valid_attestation = matches!(
+                (entry.source, entry.attestation),
+                (
+                    EvidenceSource::AgentJudgment,
+                    EvidenceAttestation::SelfReported
+                ) | (
+                    EvidenceSource::HostObservation,
+                    EvidenceAttestation::HostAttested
+                ) | (
+                    EvidenceSource::HumanConfirmation,
+                    EvidenceAttestation::HumanAttested
+                )
+            );
+            if !valid_attestation {
+                bail!("evidence source and attestation do not share a trust boundary");
+            }
         }
         if self.lesson.is_none() && self.situation.is_some() {
             bail!("a situation without a lesson is not a usable capsule");
@@ -797,17 +904,17 @@ mod tests {
                 ecosystem: Some(Ecosystem::Kicad),
                 ..ApplicabilityTags::default()
             },
-            environment: EnvironmentFingerprint {
-                tool_family: Some(ToolFamily::Kicad),
-                major_version: Some(10),
-                host_class: Some(HostClass::Linux),
-            },
             lifecycle: MemoryLifecycle::Active,
-            evidence: vec![EvidenceEntry {
+            evidence: vec![EvidenceEntry::agent_reported(
                 at,
-                outcome: SemanticOutcome::Success,
-                failure_reason: None,
-            }],
+                SemanticOutcome::Success,
+                None,
+                EnvironmentFingerprint {
+                    tool_family: Some(ToolFamily::Kicad),
+                    major_version: Some(10),
+                    host_class: Some(HostClass::Linux),
+                },
+            )],
             created_at: at,
             last_confirmed_at: at,
             schema_version: EXPERIENCE_SCHEMA_VERSION,
@@ -934,11 +1041,12 @@ mod tests {
         let mut capsule = capsule();
         let base = capsule.created_at;
         for offset in 1..=(MAX_EVIDENCE_ENTRIES as i64 + 10) {
-            capsule.confirm(EvidenceEntry {
-                at: base + chrono::Duration::minutes(offset),
-                outcome: SemanticOutcome::Failure,
-                failure_reason: Some(FailureReason::VerificationFailed),
-            });
+            capsule.confirm(EvidenceEntry::agent_reported(
+                base + chrono::Duration::minutes(offset),
+                SemanticOutcome::Failure,
+                Some(FailureReason::VerificationFailed),
+                Default::default(),
+            ));
         }
         assert_eq!(capsule.evidence.len(), MAX_EVIDENCE_ENTRIES);
         capsule.validate().unwrap();

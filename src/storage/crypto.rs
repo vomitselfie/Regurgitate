@@ -185,8 +185,7 @@ impl ExperienceCipher {
         capsule: &crate::core::ExperienceCapsule,
     ) -> Result<SealedEvent> {
         let mut plaintext = Zeroizing::new(Vec::new());
-        ciborium::into_writer(capsule, &mut *plaintext)
-            .map_err(|error| anyhow!("could not serialize experience as CBOR: {error}"))?;
+        super::experience_codec::encode(capsule, &mut plaintext)?;
         let nonce = XNonce::generate();
         let ciphertext = self
             .cipher
@@ -231,11 +230,10 @@ impl ExperienceCipher {
             )
             .map_err(|_| anyhow!("experience authentication failed"))?;
         let plaintext = Zeroizing::new(plaintext);
-        let capsule: crate::core::ExperienceCapsule =
-            ciborium::from_reader(plaintext.as_slice())
-                .map_err(|error| anyhow!("could not deserialize encrypted experience: {error}"))?;
+        let decoded = super::experience_codec::decode(envelope.schema_version, &plaintext)?;
+        let capsule = decoded.capsule;
         if capsule.id != envelope.id
-            || capsule.schema_version != envelope.schema_version
+            || decoded.source_schema_version != envelope.schema_version
             || capsule.created_at.timestamp_millis() != envelope.created_at_ms
             || capsule.last_confirmed_at.timestamp_millis() > envelope.updated_at_ms
         {

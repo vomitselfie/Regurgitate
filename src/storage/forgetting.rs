@@ -202,13 +202,13 @@ mod tests {
                     ..Procedure::default()
                 },
                 applicability: ApplicabilityTags::default(),
-                environment: EnvironmentFingerprint::default(),
                 lifecycle: MemoryLifecycle::Active,
-                evidence: vec![EvidenceEntry {
+                evidence: vec![EvidenceEntry::agent_reported(
                     at,
-                    outcome: SemanticOutcome::Success,
-                    failure_reason: None,
-                }],
+                    SemanticOutcome::Success,
+                    None,
+                    EnvironmentFingerprint::default(),
+                )],
                 created_at: at,
                 last_confirmed_at: at,
                 schema_version: EXPERIENCE_SCHEMA_VERSION,

@@ -1,6 +1,7 @@
 mod crypto;
 mod cursor;
 mod experience;
+mod experience_codec;
 mod forgetting;
 mod health;
 mod keyring;

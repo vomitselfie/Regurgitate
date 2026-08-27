@@ -323,13 +323,13 @@ mod tests {
                 ecosystem: Some(Ecosystem::Kicad),
                 ..ApplicabilityTags::default()
             },
-            environment: EnvironmentFingerprint::default(),
             lifecycle: MemoryLifecycle::Active,
-            evidence: vec![EvidenceEntry {
+            evidence: vec![EvidenceEntry::agent_reported(
                 at,
-                outcome: SemanticOutcome::Success,
-                failure_reason: None,
-            }],
+                SemanticOutcome::Success,
+                None,
+                EnvironmentFingerprint::default(),
+            )],
             created_at: at,
             last_confirmed_at: at,
             schema_version: EXPERIENCE_SCHEMA_VERSION,
@@ -385,11 +385,12 @@ mod tests {
         let store = EncryptedStore::open_in_memory(&MasterKey::from_bytes([52; 32])).unwrap();
         let mut capsule = capsule(1, 7, MemoryScope::Project);
         store.append_experience(&capsule).unwrap();
-        capsule.confirm(EvidenceEntry {
-            at: capsule.created_at + chrono::Duration::days(1),
-            outcome: SemanticOutcome::Failure,
-            failure_reason: None,
-        });
+        capsule.confirm(EvidenceEntry::agent_reported(
+            capsule.created_at + chrono::Duration::days(1),
+            SemanticOutcome::Failure,
+            None,
+            Default::default(),
+        ));
         assert!(store.replace_experience(&capsule).unwrap());
         let stored = store
             .scoped_experiences(ScopeKey::Project(Uuid::from_u128(7)), 10)
