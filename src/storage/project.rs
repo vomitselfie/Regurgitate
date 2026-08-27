@@ -184,7 +184,11 @@ fn repository_root(canonical: &Path) -> Option<std::path::PathBuf> {
             continue;
         };
         if metadata.is_dir() {
-            return Some(directory.to_path_buf());
+            if valid_git_directory(&marker) {
+                return Some(directory.to_path_buf());
+            }
+            current = directory.parent();
+            continue;
         }
         if metadata.is_file() {
             return Some(
@@ -221,11 +225,21 @@ fn main_checkout_from_gitdir_file(marker: &Path) -> Option<std::path::PathBuf> {
     if dot_git.file_name()?.to_str()? != ".git" {
         return None;
     }
+    if !valid_git_directory(dot_git) {
+        return None;
+    }
     let main = dot_git.parent()?;
     fs::metadata(main)
         .ok()?
         .is_dir()
         .then(|| main.to_path_buf())
+}
+
+/// Empty placeholder `.git` directories appear in some sandboxes and must not
+/// collapse every child scratch directory into one repository identity. An
+/// initialized non-bare checkout always carries a regular `HEAD` file.
+fn valid_git_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path.join("HEAD")).is_ok_and(|metadata| metadata.is_file())
 }
 
 #[cfg(test)]
@@ -241,6 +255,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let main = temp.path().join("repo");
         fs::create_dir_all(main.join(".git/worktrees/feature")).unwrap();
+        fs::write(main.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
         fs::create_dir_all(main.join("crates/inner/src")).unwrap();
         let worktree = temp.path().join("repo-feature");
         fs::create_dir_all(worktree.join("src")).unwrap();
@@ -284,6 +299,24 @@ mod tests {
             })
             .unwrap();
         assert_eq!(mappings, 2);
+    }
+
+    #[test]
+    fn empty_ancestor_git_markers_do_not_capture_scratch_directories() {
+        let temp = tempdir().unwrap();
+        fs::create_dir(temp.path().join(".git")).unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+
+        assert_eq!(repository_root(&fs::canonicalize(&first).unwrap()), None);
+        assert_eq!(repository_root(&fs::canonicalize(&second).unwrap()), None);
+
+        let store = EncryptedStore::open_in_memory(&MasterKey::from_bytes([35; 32])).unwrap();
+        let first_id = store.resolve_project(&ProjectLocator::new(first)).unwrap();
+        let second_id = store.resolve_project(&ProjectLocator::new(second)).unwrap();
+        assert_ne!(first_id, second_id);
     }
 
     #[test]
