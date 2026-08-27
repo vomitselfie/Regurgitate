@@ -809,6 +809,12 @@ impl ExperienceCapsule {
         self.lesson.is_some()
     }
 
+    /// Broader-scope recall requires both the condition and the conclusion;
+    /// a contextless tally is meaningful only inside its originating project.
+    pub fn context_complete(&self) -> bool {
+        self.situation.is_some() && self.lesson.is_some()
+    }
+
     pub fn identity(&self) -> ExperienceIdentity {
         ExperienceIdentity {
             task: self.task,

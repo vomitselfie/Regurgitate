@@ -77,6 +77,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             artifact,
             ecosystem,
             tool_family,
+            tool_major,
+            risks,
             token_budget,
             agent,
             data_home,
@@ -90,6 +92,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                 artifact,
                 ecosystem,
                 tool_family,
+                tool_major,
+                risks: &risks,
             };
             match agent {
                 Some(PreflightAgentArg::Claude) => {
@@ -257,6 +261,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             artifact,
             ecosystem,
             tool_family,
+            tool_major,
+            risks,
             token_budget,
             data_home,
         } => {
@@ -277,6 +283,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                     artifact,
                     ecosystem,
                     tool_family,
+                    tool_major,
+                    risks: &risks,
                 },
                 data_home,
                 &SystemKeyProvider::default(),

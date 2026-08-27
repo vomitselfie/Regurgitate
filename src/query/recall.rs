@@ -10,7 +10,7 @@ use crate::{
     core::{
         ArtifactKind, EXPERIENCE_SCHEMA_VERSION, Ecosystem, ErrorClass, EvidenceEntry,
         EvidenceKind, ExperienceCapsule, ExperienceIdentity, FailureReason, HistoryEvent,
-        HostClass, MemoryLifecycle, MemoryScope, Operation, Outcome, Phase, Procedure,
+        HostClass, MemoryLifecycle, MemoryScope, Operation, Outcome, Phase, Procedure, RiskShape,
         SemanticOutcome, TaskKind, ToolFamily,
     },
 };
@@ -97,6 +97,8 @@ pub struct EphemeralTaskContext<'a> {
     pub artifact: Option<ArtifactKind>,
     pub ecosystem: Option<Ecosystem>,
     pub tool_family: Option<ToolFamily>,
+    pub tool_major: Option<u16>,
+    pub risks: &'a [RiskShape],
 }
 
 impl<'a> EphemeralTaskContext<'a> {
@@ -111,6 +113,10 @@ impl<'a> EphemeralTaskContext<'a> {
     pub fn has_task_hints(&self) -> bool {
         self.query
             .is_some_and(|query| TaskIntent::classify(query).has_task_hints())
+    }
+
+    fn risk_sensitive(&self) -> bool {
+        !self.risks.is_empty()
     }
 }
 
@@ -314,6 +320,7 @@ where
             candidates,
             &legacy_errors,
             &references,
+            context.risk_sensitive(),
             now,
         );
         Ok(budgeted_result(
@@ -454,6 +461,9 @@ impl<'c> ContextMatcher<'c> {
         if self.task_filter_active() && task == 0.0 {
             return None;
         }
+        if capsule.scope != MemoryScope::Project && !capsule.context_complete() {
+            return None;
+        }
         let artifact = match_term(
             self.context.artifact,
             self.intent.artifacts().iter().copied(),
@@ -487,11 +497,26 @@ impl<'c> ContextMatcher<'c> {
                 _ => 0.75,
             })
             .fold(0.0_f64, f64::max);
-        let score = policy.applicability_task * task
+        let risk = if self.context.risks.is_empty() {
+            1.0
+        } else if capsule.applicability.risk_shapes.is_empty() {
+            0.55
+        } else if self
+            .context
+            .risks
+            .iter()
+            .any(|risk| capsule.applicability.risk_shapes.contains(risk))
+        {
+            1.0
+        } else {
+            0.1
+        };
+        let score = (policy.applicability_task * task
             + policy.applicability_artifact * artifact
             + policy.applicability_ecosystem * (0.5 * ecosystem + 0.5 * tool)
             + policy.applicability_phase * phase
-            + policy.applicability_environment * environment;
+            + policy.applicability_environment * environment)
+            * risk;
         if score < policy.min_applicability {
             return None;
         }
@@ -499,6 +524,18 @@ impl<'c> ContextMatcher<'c> {
             return None;
         }
         Some(score)
+    }
+
+    fn major_compatibility(&self, entry: &EvidenceEntry) -> f64 {
+        let Some(wanted) = self.context.tool_major else {
+            return 1.0;
+        };
+        match entry.environment.major_version {
+            Some(recorded) if recorded == wanted => 1.0,
+            Some(_) if self.context.risks.contains(&RiskShape::VersionSensitive) => 0.1,
+            Some(_) => 0.5,
+            None => 0.65,
+        }
     }
 }
 
@@ -545,6 +582,7 @@ fn rank(
     candidates: Vec<ExperienceCapsule>,
     legacy_errors: &LegacyErrors,
     references: &HashMap<Uuid, String>,
+    reserve_failure: bool,
     now: DateTime<Utc>,
 ) -> (Vec<ExperienceBriefItem>, usize) {
     let mut clusters: BTreeMap<ExperienceIdentity, Cluster> = BTreeMap::new();
@@ -582,7 +620,8 @@ fn rank(
                     base_weight: scope_weight
                         * policy.age_weight(capsule.scope, age_days)
                         * applicability
-                        * lifecycle_weight,
+                        * lifecycle_weight
+                        * matcher.major_compatibility(entry),
                     evidence: *entry,
                 }
             })
@@ -709,6 +748,14 @@ fn rank(
             .then_with(|| right.2.cmp(&left.2))
             .then_with(|| left.3.cmp(&right.3))
     });
+    if reserve_failure
+        && let Some(index) = ranked.iter().position(|entry| {
+            let item = &entry.4;
+            item.failures > 0 || item.challenged
+        })
+    {
+        ranked.swap(0, index);
+    }
     let beyond_limit = ranked.len().saturating_sub(options.limit);
     let items = ranked
         .into_iter()
@@ -1039,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn two_successes_cannot_become_strong_guidance_but_eight_can() {
+    fn two_successes_cannot_become_strong_guidance_but_nine_can() {
         let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
         history.capsules.push(capsule(
             1,
@@ -1054,7 +1101,7 @@ mod tests {
         assert_eq!(weak.experiences[0].guidance, None);
         assert_eq!(weak.experiences[0].strength, EvidenceStrength::Limited);
 
-        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 9]);
         let strong = recall(
             &history,
             RecallOptions::default(),
@@ -1067,7 +1114,7 @@ mod tests {
         assert_eq!(strong.experiences[0].strength, EvidenceStrength::Strong);
         assert!(strong.experiences[0].effective_evidence >= 6.0);
 
-        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Failure; 8]);
+        history.capsules[0] = capsule(1, MemoryScope::Project, &[SemanticOutcome::Failure; 9]);
         let avoid = recall(
             &history,
             RecallOptions::default(),
@@ -1092,9 +1139,103 @@ mod tests {
         );
         let item = &result.experiences[0];
         assert_eq!(item.successes, 10);
-        assert_eq!(item.effective_evidence, 1.0);
+        assert!(item.effective_evidence <= 0.8);
+        assert!(item.effective_evidence >= 0.6);
         assert_eq!(item.strength, EvidenceStrength::Limited);
         assert_eq!(item.guidance, None);
+    }
+
+    #[test]
+    fn version_sensitive_context_prefers_matching_major_evidence() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut matching = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 4]);
+        matching
+            .applicability
+            .risk_shapes
+            .insert(RiskShape::VersionSensitive);
+        for entry in &mut matching.evidence {
+            entry.environment.major_version = Some(10);
+        }
+        let mut mismatched = capsule(2, MemoryScope::Project, &[SemanticOutcome::Success; 4]);
+        mismatched.procedure.verification = Some(VerificationMode::Targeted);
+        mismatched
+            .applicability
+            .risk_shapes
+            .insert(RiskShape::VersionSensitive);
+        for entry in &mut mismatched.evidence {
+            entry.environment.major_version = Some(9);
+        }
+        history.capsules.extend([mismatched, matching]);
+
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                tool_major: Some(10),
+                risks: &[RiskShape::VersionSensitive],
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert!(
+            result.experiences[0]
+                .procedure
+                .contains("native-verification")
+        );
+    }
+
+    #[test]
+    fn risky_recall_reserves_the_best_failure_before_the_limit() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut success = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        success
+            .applicability
+            .risk_shapes
+            .insert(RiskShape::Destructive);
+        let mut failure = capsule(2, MemoryScope::Project, &[SemanticOutcome::Failure]);
+        failure.procedure.verification = Some(VerificationMode::Targeted);
+        failure
+            .applicability
+            .risk_shapes
+            .insert(RiskShape::Destructive);
+        history.capsules.extend([success, failure]);
+
+        let ordinary = recall(
+            &history,
+            RecallOptions {
+                limit: 1,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::default(),
+        );
+        assert_eq!(ordinary.experiences[0].failures, 0);
+
+        let risky = recall(
+            &history,
+            RecallOptions {
+                limit: 1,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext {
+                risks: &[RiskShape::Destructive],
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert_eq!(risky.experiences[0].failures, 1);
+    }
+
+    #[test]
+    fn broader_scope_requires_situation_and_lesson_context() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut global = capsule(1, MemoryScope::Global, &[SemanticOutcome::Success; 4]);
+        global.situation = None;
+        history.capsules.push(global);
+
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        assert!(result.experiences.is_empty());
     }
 
     #[test]

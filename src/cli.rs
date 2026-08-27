@@ -268,6 +268,14 @@ pub(crate) enum Command {
         #[arg(long)]
         tool_family: Option<ToolFamily>,
 
+        /// Major version of the active tool family.
+        #[arg(long)]
+        tool_major: Option<u16>,
+
+        /// Current risk shapes, comma-separated or repeated.
+        #[arg(long = "risk", value_delimiter = ',')]
+        risks: Vec<RiskShape>,
+
         /// Approximate maximum JSON output tokens (hard maximum: 1000).
         #[arg(long, default_value_t = crate::query::DEFAULT_TOKEN_BUDGET)]
         token_budget: usize,
@@ -315,6 +323,14 @@ pub(crate) enum Command {
         /// Explicit tool family.
         #[arg(long)]
         tool_family: Option<ToolFamily>,
+
+        /// Major version of the active tool family.
+        #[arg(long)]
+        tool_major: Option<u16>,
+
+        /// Current risk shapes, comma-separated or repeated.
+        #[arg(long = "risk", value_delimiter = ',')]
+        risks: Vec<RiskShape>,
 
         /// Approximate maximum brief tokens (hard maximum: 1000).
         #[arg(long, default_value_t = crate::query::DEFAULT_PREFLIGHT_TOKEN_BUDGET)]
@@ -733,12 +749,18 @@ mod tests {
             "rust",
             "--tool-family",
             "cargo",
+            "--tool-major",
+            "1",
+            "--risk",
+            "version-sensitive,flaky",
         ])
         .unwrap();
         let Command::Recall {
             task,
             ecosystem,
             tool_family,
+            tool_major,
+            risks,
             ..
         } = cli.command
         else {
@@ -747,6 +769,8 @@ mod tests {
         assert_eq!(task, Some(TaskKindArg::Testing));
         assert_eq!(ecosystem, Some(Ecosystem::Rust));
         assert_eq!(tool_family, Some(ToolFamily::Cargo));
+        assert_eq!(tool_major, Some(1));
+        assert_eq!(risks, vec![RiskShape::VersionSensitive, RiskShape::Flaky]);
 
         let cli = Cli::try_parse_from([
             "regurgitate",

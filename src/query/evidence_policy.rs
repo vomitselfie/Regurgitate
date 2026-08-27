@@ -74,13 +74,17 @@ pub(crate) fn summarize(observations: &[WeightedObservation]) -> EvidenceSummary
 
     let sum: f64 = group_weights.iter().sum();
     let squares: f64 = group_weights.iter().map(|weight| weight * weight).sum();
+    let kish = if squares > 0.0 {
+        sum * sum / squares
+    } else {
+        0.0
+    };
     EvidenceSummary {
         weighted_outcomes,
-        effective_evidence: if squares > 0.0 {
-            sum * sum / squares
-        } else {
-            0.0
-        },
+        // Absolute evidence mass matters as well as diversity: many tiny,
+        // stale, incompatible, or self-reported observations cannot receive a
+        // strong label solely because their relative weights are equal.
+        effective_evidence: kish.min(sum),
     }
 }
 
@@ -126,7 +130,7 @@ mod tests {
             .map(|_| observation(20, Some([7; 32])))
             .collect::<Vec<_>>();
         let summary = summarize(&observations);
-        assert!((summary.effective_evidence - 1.0).abs() < 1e-9);
+        assert!((summary.effective_evidence - 0.75).abs() < 1e-9);
         assert!(
             (summary
                 .weighted_outcomes
@@ -144,13 +148,13 @@ mod tests {
         let explicit = (0..8)
             .map(|index| observation(20, Some([index; 32])))
             .collect::<Vec<_>>();
-        assert!((summarize(&explicit).effective_evidence - 8.0).abs() < 1e-9);
+        assert!((summarize(&explicit).effective_evidence - 6.0).abs() < 1e-9);
 
         let inferred = vec![
             observation(20, None),
             observation(20, None),
             observation(21, None),
         ];
-        assert!((summarize(&inferred).effective_evidence - 2.0).abs() < 1e-9);
+        assert!((summarize(&inferred).effective_evidence - 1.5).abs() < 1e-9);
     }
 }
