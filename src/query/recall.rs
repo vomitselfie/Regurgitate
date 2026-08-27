@@ -122,12 +122,16 @@ impl<'a> EphemeralTaskContext<'a> {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RecallResult {
+    pub status: RecallStatus,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub experiences: Vec<ExperienceBriefItem>,
     /// Matching lessons dropped by the result limit or the token budget.
     /// Re-query with a larger budget, a smaller scope, or `--failures`.
     #[serde(skip_serializing_if = "is_zero")]
     pub omitted: usize,
+    #[serde(skip_serializing_if = "HookSummary::is_empty")]
     pub hook_summary: HookSummary,
+    #[serde(skip_serializing_if = "is_zero")]
     pub approximate_tokens: usize,
 }
 
@@ -139,6 +143,26 @@ impl RecallResult {
     pub fn empty() -> Self {
         budgeted_result(Vec::new(), 0, HookSummary::default(), DEFAULT_TOKEN_BUDGET)
     }
+
+    /// Controlled best-effort result. Backend details remain available through
+    /// explicit diagnostics and never enter ordinary agent context.
+    pub fn unavailable() -> Self {
+        Self {
+            status: RecallStatus::Unavailable,
+            experiences: Vec::new(),
+            omitted: 0,
+            hook_summary: HookSummary::default(),
+            approximate_tokens: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecallStatus {
+    Matches,
+    NoMatches,
+    Unavailable,
 }
 
 /// A bounded diagnostic sample of provider-reported tool execution outcomes.
@@ -149,6 +173,12 @@ pub struct HookSummary {
     pub reported_successes: usize,
     pub reported_failures: usize,
     pub unknown: usize,
+}
+
+impl HookSummary {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -817,11 +847,19 @@ fn budgeted_result(
 ) -> RecallResult {
     loop {
         let mut result = RecallResult {
+            status: if experiences.is_empty() {
+                RecallStatus::NoMatches
+            } else {
+                RecallStatus::Matches
+            },
             experiences,
             omitted,
             hook_summary,
             approximate_tokens: 0,
         };
+        if result.experiences.is_empty() {
+            return result;
+        }
         loop {
             let estimate = estimate_tokens(&result);
             if estimate == result.approximate_tokens {
@@ -839,7 +877,7 @@ fn budgeted_result(
 }
 
 pub(super) fn estimate_tokens(value: &impl Serialize) -> usize {
-    let bytes = serde_json::to_vec_pretty(value)
+    let bytes = serde_json::to_vec(value)
         .expect("fixed-schema recall output must remain serializable")
         .len()
         + 1; // CLI newline
@@ -1541,6 +1579,18 @@ mod tests {
             !serde_json::to_string(&tight)
                 .unwrap()
                 .contains("SUPER_SECRET_TASK_TOKEN")
+        );
+    }
+
+    #[test]
+    fn empty_and_unavailable_results_have_minimal_stable_statuses() {
+        assert_eq!(
+            serde_json::to_string(&RecallResult::empty()).unwrap(),
+            r#"{"status":"no_matches"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&RecallResult::unavailable()).unwrap(),
+            r#"{"status":"unavailable"}"#
         );
     }
 

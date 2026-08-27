@@ -226,6 +226,7 @@ mod tests {
     #[test]
     fn renders_numbered_lines_within_budget_and_stays_silent_when_empty() {
         let result = RecallResult {
+            status: crate::query::RecallStatus::Matches,
             experiences: (0..5).map(item).collect(),
             omitted: 0,
             hook_summary: HookSummary::default(),
@@ -348,6 +349,7 @@ mod tests {
         legacy.caveat = None;
         legacy.legacy = true;
         let result = RecallResult {
+            status: crate::query::RecallStatus::Matches,
             experiences: vec![legacy],
             omitted: 0,
             hook_summary: HookSummary::default(),

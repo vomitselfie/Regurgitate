@@ -280,6 +280,10 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = crate::query::DEFAULT_TOKEN_BUDGET)]
         token_budget: usize,
 
+        /// Reduce unavailable credentials or history to a non-blocking JSON status.
+        #[arg(long)]
+        best_effort: bool,
+
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]
         data_home: Option<PathBuf>,
@@ -753,6 +757,7 @@ mod tests {
             "1",
             "--risk",
             "version-sensitive,flaky",
+            "--best-effort",
         ])
         .unwrap();
         let Command::Recall {
@@ -761,6 +766,7 @@ mod tests {
             tool_family,
             tool_major,
             risks,
+            best_effort,
             ..
         } = cli.command
         else {
@@ -771,6 +777,7 @@ mod tests {
         assert_eq!(tool_family, Some(ToolFamily::Cargo));
         assert_eq!(tool_major, Some(1));
         assert_eq!(risks, vec![RiskShape::VersionSensitive, RiskShape::Flaky]);
+        assert!(best_effort);
 
         let cli = Cli::try_parse_from([
             "regurgitate",

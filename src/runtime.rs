@@ -264,18 +264,21 @@ pub fn execute(cli: Cli) -> Result<()> {
             tool_major,
             risks,
             token_budget,
+            best_effort,
             data_home,
         } => {
             let query = query.map(Zeroizing::new);
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let result = recall_project(
+            let options = RecallOptions {
+                operation: operation.map(Into::into),
+                failures_only: failures,
+                limit,
+                token_budget,
+            };
+            options.validate()?;
+            let recalled = recall_project(
                 project,
-                RecallOptions {
-                    operation: operation.map(Into::into),
-                    failures_only: failures,
-                    limit,
-                    token_budget,
-                },
+                options,
                 EphemeralTaskContext {
                     query: query.as_ref().map(|value| value.as_str()),
                     task: task.map(Into::into),
@@ -288,8 +291,13 @@ pub fn execute(cli: Cli) -> Result<()> {
                 },
                 data_home,
                 &SystemKeyProvider::default(),
-            )?;
-            print_json(&result)
+            );
+            let result = match recalled {
+                Ok(result) => result,
+                Err(_) if best_effort => RecallResult::unavailable(),
+                Err(error) => return Err(error),
+            };
+            print_compact_json(&result)
         }
     }
 }
@@ -420,7 +428,7 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
             };
             let report =
                 record_experience(project, input, data_home, &SystemKeyProvider::default())?;
-            print_json(&report)
+            print_compact_json(&report)
         }
         ExperienceCommand::Confirm {
             selector,
@@ -440,7 +448,7 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                 data_home,
                 &SystemKeyProvider::default(),
             )?;
-            print_json(&report)
+            print_compact_json(&report)
         }
         ExperienceCommand::List {
             project,
@@ -697,6 +705,12 @@ fn recall_project(
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     serde_json::to_writer_pretty(io::stdout().lock(), value)?;
+    println!();
+    Ok(())
+}
+
+fn print_compact_json(value: &impl serde::Serialize) -> Result<()> {
+    serde_json::to_writer(io::stdout().lock(), value)?;
     println!();
     Ok(())
 }
