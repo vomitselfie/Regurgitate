@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use serde::Serialize;
+
 /// Minimum number of words for a lesson-like sentence. A one-word "lesson"
 /// is either useless or an identifier.
 const MIN_WORDS: usize = 3;
@@ -87,7 +89,8 @@ const TRANSCRIPT_PHRASES: &[&str] = &[
     "as requested",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AdmissionRejection {
     Empty,
     TooShort,
@@ -99,6 +102,7 @@ pub enum AdmissionRejection {
     CommandOrCodeLike,
     SecretLike,
     OpaqueToken,
+    NotSpecific,
 }
 
 impl fmt::Display for AdmissionRejection {
@@ -114,9 +118,103 @@ impl fmt::Display for AdmissionRejection {
             Self::CommandOrCodeLike => "text resembles a command, code, or structured payload",
             Self::SecretLike => "text resembles credential material",
             Self::OpaqueToken => "text contains an opaque identifier-like token",
+            Self::NotSpecific => "text is not specific enough to be reusable",
         };
         formatter.write_str(reason)
     }
+}
+
+/// Rejects generic process advice after structural admission. This check is
+/// deliberately applied only to newly authored situations and lessons, not
+/// during stored-payload deserialization, so compatibility remains stable.
+pub fn admit_specific_text(text: &str) -> Result<(), AdmissionRejection> {
+    const GENERIC_WORDS: &[&str] = &[
+        "a",
+        "after",
+        "always",
+        "an",
+        "and",
+        "are",
+        "artifact",
+        "as",
+        "be",
+        "been",
+        "before",
+        "bounded",
+        "can",
+        "carefully",
+        "change",
+        "changes",
+        "check",
+        "code",
+        "correctly",
+        "do",
+        "exists",
+        "for",
+        "from",
+        "generated",
+        "had",
+        "has",
+        "have",
+        "in",
+        "into",
+        "is",
+        "it",
+        "lesson",
+        "make",
+        "must",
+        "never",
+        "not",
+        "of",
+        "on",
+        "only",
+        "or",
+        "procedure",
+        "process",
+        "properly",
+        "read",
+        "relying",
+        "result",
+        "results",
+        "run",
+        "should",
+        "situation",
+        "specific",
+        "task",
+        "test",
+        "testing",
+        "tests",
+        "that",
+        "the",
+        "thing",
+        "this",
+        "to",
+        "use",
+        "verification",
+        "verified",
+        "verify",
+        "was",
+        "were",
+        "when",
+        "where",
+        "while",
+        "will",
+        "with",
+        "without",
+        "work",
+        "working",
+        "write",
+    ];
+    let informative: std::collections::BTreeSet<_> = text
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| word.len() >= 3)
+        .map(str::to_ascii_lowercase)
+        .filter(|word| !GENERIC_WORDS.contains(&word.as_str()))
+        .collect();
+    if informative.len() < 2 {
+        return Err(AdmissionRejection::NotSpecific);
+    }
+    Ok(())
 }
 
 impl std::error::Error for AdmissionRejection {}
@@ -411,6 +509,22 @@ mod tests {
         assert_eq!(
             admit_text("first line\nsecond line of a transcript", 320),
             Err(AdmissionRejection::ControlCharacter)
+        );
+    }
+
+    #[test]
+    fn separates_structural_validity_from_reusable_specificity() {
+        let generic = "Always write tests before changing code.";
+        assert_eq!(admit_text(generic, 320), Ok(()));
+        assert_eq!(
+            admit_specific_text(generic),
+            Err(AdmissionRejection::NotSpecific)
+        );
+        assert_eq!(
+            admit_specific_text(
+                "Decode legacy payloads in memory and defer persistence until mutation."
+            ),
+            Ok(())
         );
     }
 }

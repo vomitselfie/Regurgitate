@@ -18,9 +18,9 @@ use crate::{
     cli::{Cli, Command, ExperienceCommand, HookAgentArg, PreflightAgentArg},
     context::infer_project_defaults,
     core::{
-        AgentKind, ApplicabilityTags, Caveat, DebugEvent, EnvironmentFingerprint, Lesson,
-        MemoryLifecycle, MemoryScope, Outcome, Procedure, SemanticOutcome, Situation, Strategy,
-        TaskKind,
+        AdmissionRejection, AgentKind, ApplicabilityTags, Caveat, DebugEvent,
+        EnvironmentFingerprint, Lesson, MemoryLifecycle, MemoryScope, Outcome, Procedure,
+        SemanticOutcome, Situation, Strategy, TaskKind, admit_specific_text,
     },
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
@@ -420,15 +420,36 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
             if let Some(steps) = steps {
                 procedure.steps = Procedure::parse_steps(&steps)?;
             }
+            let situation = match Situation::new(&situation) {
+                Ok(value) => value,
+                Err(reason) => {
+                    return print_experience_rejection(AdmissionField::Situation, reason);
+                }
+            };
+            let lesson = match Lesson::new(&lesson) {
+                Ok(value) => value,
+                Err(reason) => return print_experience_rejection(AdmissionField::Lesson, reason),
+            };
+            let caveat = match caveat
+                .as_ref()
+                .map(|text| Caveat::new(text.as_str()))
+                .transpose()
+            {
+                Ok(value) => value,
+                Err(reason) => return print_experience_rejection(AdmissionField::Caveat, reason),
+            };
+            if let Err(reason) = admit_specific_text(situation.as_str()) {
+                return print_experience_rejection(AdmissionField::Situation, reason);
+            }
+            if let Err(reason) = admit_specific_text(lesson.as_str()) {
+                return print_experience_rejection(AdmissionField::Lesson, reason);
+            }
             let input = ExperienceInput {
                 scope,
                 task: task.into(),
-                situation: Some(Situation::new(&situation).context("situation rejected")?),
-                lesson: Some(Lesson::new(&lesson).context("lesson rejected")?),
-                caveat: caveat
-                    .as_deref()
-                    .map(|text| Caveat::new(text).context("caveat rejected"))
-                    .transpose()?,
+                situation: Some(situation),
+                lesson: Some(lesson),
+                caveat,
                 procedure,
                 outcome: match Outcome::from(outcome) {
                     Outcome::Failure => SemanticOutcome::Failure,
@@ -529,6 +550,29 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
             print_json(&report)
         }
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AdmissionField {
+    Situation,
+    Lesson,
+    Caveat,
+}
+
+#[derive(serde::Serialize)]
+struct ExperienceRejection {
+    status: &'static str,
+    field: AdmissionField,
+    reason: AdmissionRejection,
+}
+
+fn print_experience_rejection(field: AdmissionField, reason: AdmissionRejection) -> Result<()> {
+    print_compact_json(&ExperienceRejection {
+        status: "rejected",
+        field,
+        reason,
+    })
 }
 
 /// Compatibility shorthand: one controlled strategy becomes a text-free
@@ -782,6 +826,19 @@ mod tests {
     }
 
     #[test]
+    fn experience_rejections_are_compact_and_controlled() {
+        let report = ExperienceRejection {
+            status: "rejected",
+            field: AdmissionField::Lesson,
+            reason: AdmissionRejection::NotSpecific,
+        };
+        assert_eq!(
+            serde_json::to_string(&report).unwrap(),
+            r#"{"status":"rejected","field":"lesson","reason":"not_specific"}"#
+        );
+    }
+
+    #[test]
     fn ingestion_is_encrypted_and_idempotent_without_a_live_keyring() {
         let temp = tempdir().unwrap();
         let config_dir = temp.path().join("aoe");
@@ -1027,7 +1084,7 @@ mod tests {
         fs::create_dir(&project).unwrap();
         let data_home = temp.path().join("data");
 
-        for _ in 0..2 {
+        for index in 0..2 {
             let report = learn_practice(
                 project.clone(),
                 TaskKind::Configuration,
@@ -1037,11 +1094,14 @@ mod tests {
                 &FixedKeyProvider,
             )
             .unwrap();
-            assert!(matches!(
+            assert_eq!(
                 report.status,
-                crate::application::ExperienceStatus::Recorded
-                    | crate::application::ExperienceStatus::Confirmed
-            ));
+                if index == 0 {
+                    crate::application::ExperienceStatus::Recorded
+                } else {
+                    crate::application::ExperienceStatus::Duplicate
+                }
+            );
         }
 
         let database_path = data_home.join("regurgitate/history.db");
@@ -1058,7 +1118,7 @@ mod tests {
         assert_eq!(result.experiences.len(), 1);
         assert_eq!(result.experiences[0].task, TaskKind::Configuration);
         assert_eq!(result.experiences[0].procedure, "atomic-write");
-        assert_eq!(result.experiences[0].successes, 2);
+        assert_eq!(result.experiences[0].successes, 1);
         assert_eq!(result.experiences[0].guidance, None);
         assert!(!result.experiences[0].legacy);
         assert_eq!(fs::read(&database_path).unwrap(), before_recall);
@@ -1177,13 +1237,13 @@ mod tests {
             .unwrap();
             assert_eq!(
                 again.status,
-                crate::application::ExperienceStatus::Confirmed
+                crate::application::ExperienceStatus::Duplicate
             );
         }
         let listing =
             list_experiences(project.clone(), 10, data_home.clone(), &FixedKeyProvider).unwrap();
         assert_eq!(listing.len(), 1);
-        assert_eq!(listing[0].successes, 6);
+        assert_eq!(listing[0].successes, 2);
         let listing_json = serde_json::to_string(&listing).unwrap();
         assert!(!listing_json.contains("SENTINEL"));
 
@@ -1204,7 +1264,7 @@ mod tests {
         assert_eq!(result.experiences.len(), 1);
         let item = &result.experiences[0];
         assert_eq!(item.lesson.as_deref(), Some(lesson));
-        assert_eq!(item.successes, 6);
+        assert_eq!(item.successes, 2);
         assert_eq!(item.guidance, None);
         assert_eq!(item.strength, crate::query::EvidenceStrength::Limited);
         assert!(!item.legacy);

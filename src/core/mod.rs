@@ -3,7 +3,7 @@ mod event;
 mod experience;
 mod normalize;
 
-pub use admission::{AdmissionRejection, admit_text};
+pub use admission::{AdmissionRejection, admit_specific_text, admit_text};
 pub use event::{
     AgentKind, CURRENT_SCHEMA_VERSION, Capability, DebugEvent, ErrorClass, EvidenceKind,
     HistoryEvent, Operation, Outcome, Strategy, TaskKind,

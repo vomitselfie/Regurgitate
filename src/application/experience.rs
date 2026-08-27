@@ -147,6 +147,7 @@ pub fn workspace_locator(project: &ProjectLocator) -> Option<ProjectLocator> {
 pub enum ExperienceStatus {
     Recorded,
     Confirmed,
+    Duplicate,
     Challenged,
 }
 
@@ -263,6 +264,25 @@ where
             .scoped_experiences(scope, MAX_DEDUP_CANDIDATES)?;
         match find_equivalent(&candidate, &existing) {
             Some(Equivalence::Same(mut matched)) => {
+                if same_conservative_cohort(&matched, &entry) {
+                    if matched.caveat.is_none() && candidate.caveat.is_some() {
+                        matched.caveat = candidate.caveat.take();
+                        matched.validate()?;
+                        if !self.history.replace_experience(&matched)? {
+                            bail!("the equivalent capsule disappeared during caveat update");
+                        }
+                        return Ok(ExperienceReport {
+                            status: ExperienceStatus::Confirmed,
+                            lifecycle: matched.lifecycle,
+                            evidence: matched.evidence.len(),
+                        });
+                    }
+                    return Ok(ExperienceReport {
+                        status: ExperienceStatus::Duplicate,
+                        lifecycle: matched.lifecycle,
+                        evidence: matched.evidence.len(),
+                    });
+                }
                 matched.confirm_with_recovery(entry, CHALLENGE_RESOLUTION_EVIDENCE);
                 if matched.caveat.is_none() {
                     matched.caveat = candidate.caveat.take();
@@ -453,6 +473,22 @@ where
             _ => bail!("the selector is ambiguous; supply more characters"),
         }
     }
+}
+
+fn same_conservative_cohort(capsule: &ExperienceCapsule, candidate: &EvidenceEntry) -> bool {
+    candidate.receipt_digest.is_none()
+        && capsule.evidence.iter().any(|existing| {
+            existing.receipt_digest.is_none()
+                && existing.at.date_naive() == candidate.at.date_naive()
+                && existing.outcome == candidate.outcome
+                && existing.failure_reason == candidate.failure_reason
+                && existing.source == candidate.source
+                && existing.verification == candidate.verification
+                && existing.attestation == candidate.attestation
+                && existing.agent == candidate.agent
+                && existing.environment == candidate.environment
+                && existing.cohort == candidate.cohort
+        })
 }
 
 fn evidence_verification(procedure: &Procedure) -> EvidenceVerification {
@@ -724,6 +760,33 @@ mod tests {
                 .iter()
                 .all(|entry| entry.verification == EvidenceVerification::Native)
         );
+    }
+
+    #[test]
+    fn equivalent_same_cohort_reports_are_idempotent() {
+        let store = Rc::new(MemoryStore::default());
+        let service = ExperienceService::new(Rc::clone(&store));
+        let now = Utc.timestamp_millis_opt(1_776_254_400_000).unwrap();
+        let make_input = || {
+            input(
+                "Generated native artifact where parser acceptance is weaker than native checks.",
+                "Change one placement class at a time, then run native verification.",
+                SemanticOutcome::Success,
+            )
+        };
+
+        service.record_at(project(), make_input(), now).unwrap();
+        let duplicate = service
+            .record_at(project(), make_input(), now + chrono::Duration::hours(1))
+            .unwrap();
+        assert_eq!(duplicate.status, ExperienceStatus::Duplicate);
+        assert_eq!(duplicate.evidence, 1);
+
+        let independent = service
+            .record_at(project(), make_input(), now + chrono::Duration::days(1))
+            .unwrap();
+        assert_eq!(independent.status, ExperienceStatus::Confirmed);
+        assert_eq!(independent.evidence, 2);
     }
 
     #[test]
