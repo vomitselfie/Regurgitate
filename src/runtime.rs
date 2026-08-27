@@ -1161,7 +1161,8 @@ mod tests {
         let item = &result.experiences[0];
         assert_eq!(item.lesson.as_deref(), Some(lesson));
         assert_eq!(item.successes, 6);
-        assert_eq!(item.guidance, Some(crate::query::PracticeGuidance::Prefer));
+        assert_eq!(item.guidance, None);
+        assert_eq!(item.strength, crate::query::EvidenceStrength::Limited);
         assert!(!item.legacy);
 
         let brief = preflight_brief(

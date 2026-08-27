@@ -791,7 +791,7 @@ mod tests {
                     &original,
                     SemanticOutcome::Success,
                     None,
-                    now + chrono::Duration::hours(1) + chrono::Duration::minutes(offset),
+                    now + chrono::Duration::days(offset),
                 )
                 .unwrap();
             assert_eq!(report.lifecycle, MemoryLifecycle::Challenged);
@@ -801,7 +801,7 @@ mod tests {
                 &original,
                 SemanticOutcome::Failure,
                 Some(FailureReason::VerificationFailed),
-                now + chrono::Duration::hours(2),
+                now + chrono::Duration::days(3),
             )
             .unwrap();
         assert_eq!(reset.lifecycle, MemoryLifecycle::Challenged);
@@ -811,7 +811,7 @@ mod tests {
                     &original,
                     SemanticOutcome::Success,
                     None,
-                    now + chrono::Duration::hours(2) + chrono::Duration::minutes(offset),
+                    now + chrono::Duration::days(3 + offset),
                 )
                 .unwrap();
             assert_eq!(report.lifecycle, MemoryLifecycle::Challenged);
@@ -821,7 +821,7 @@ mod tests {
                 &original,
                 SemanticOutcome::Success,
                 None,
-                now + chrono::Duration::hours(3),
+                now + chrono::Duration::days(6),
             )
             .unwrap();
         assert_eq!(recovered.lifecycle, MemoryLifecycle::Active);

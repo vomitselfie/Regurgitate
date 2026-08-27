@@ -335,8 +335,9 @@ mod tests {
                 220,
             )
             .unwrap();
-        assert_eq!(brief.items, 1);
-        assert!(brief.text.contains("targeted-verification for testing"));
+        // Legacy observations have neither receipts nor independent cohort
+        // provenance, so repetition alone cannot earn unsolicited injection.
+        assert_eq!(brief, ExperienceBrief::empty());
     }
 
     #[test]

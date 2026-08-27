@@ -15,7 +15,12 @@ use crate::{
     },
 };
 
-use super::{RankingPolicy, policy::Posterior, task::TaskIntent};
+use super::{
+    RankingPolicy,
+    evidence_policy::{WeightedObservation, summarize},
+    policy::Posterior,
+    task::TaskIntent,
+};
 
 pub const DEFAULT_RECALL_LIMIT: usize = 10;
 pub const MAX_RECALL_LIMIT: usize = 20;
@@ -521,7 +526,7 @@ fn match_term<T: Copy + PartialEq>(
 struct Cluster {
     representative: ExperienceCapsule,
     representative_rank: (u8, f64, DateTime<Utc>),
-    weights: Vec<(f64, bool)>,
+    observations: Vec<WeightedObservation>,
     successes: usize,
     failures: usize,
     best_applicability: f64,
@@ -568,18 +573,18 @@ fn rank(
         };
         let scope_weight = policy.scope_weight(capsule.scope);
         let lifecycle_weight = policy.lifecycle_weight(capsule.lifecycle);
-        let weights: Vec<(f64, bool)> = capsule
+        let observations: Vec<WeightedObservation> = capsule
             .evidence
             .iter()
             .map(|entry| {
                 let age_days = (now - entry.at).num_seconds() as f64 / 86_400.0;
-                (
-                    scope_weight
+                WeightedObservation {
+                    base_weight: scope_weight
                         * policy.age_weight(capsule.scope, age_days)
                         * applicability
                         * lifecycle_weight,
-                    entry.outcome == SemanticOutcome::Success,
-                )
+                    evidence: *entry,
+                }
             })
             .collect();
         let legacy = legacy_errors.contains_key(&capsule.id);
@@ -592,7 +597,7 @@ fn rank(
         let cluster = clusters.entry(identity).or_insert_with(|| Cluster {
             representative: capsule.clone(),
             representative_rank,
-            weights: Vec::new(),
+            observations: Vec::new(),
             successes: 0,
             failures: 0,
             best_applicability: 0.0,
@@ -607,7 +612,7 @@ fn rank(
             cluster.representative = capsule.clone();
             cluster.representative_rank = representative_rank;
         }
-        cluster.weights.extend(weights);
+        cluster.observations.extend(observations);
         cluster.successes += capsule.successes();
         cluster.failures += capsule.failures();
         cluster.best_applicability = cluster.best_applicability.max(applicability);
@@ -636,7 +641,12 @@ fn rank(
     )> = clusters
         .into_iter()
         .map(|(identity, cluster)| {
-            let posterior = Posterior::from_weighted(policy, &cluster.weights);
+            let evidence = summarize(&cluster.observations);
+            let posterior = Posterior::from_weighted_with_effective_evidence(
+                policy,
+                &evidence.weighted_outcomes,
+                Some(evidence.effective_evidence),
+            );
             let guidance = guidance(policy, &posterior);
             let strength = strength(policy, &posterior);
             let guidance_strength = match guidance {
@@ -922,12 +932,17 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, outcome)| {
-                    EvidenceEntry::agent_reported(
+                    let mut evidence = EvidenceEntry::agent_reported(
                         at + chrono::Duration::minutes(index as i64),
                         *outcome,
                         None,
                         EnvironmentFingerprint::default(),
-                    )
+                    );
+                    let mut cohort = [0_u8; 32];
+                    cohort[0] = id as u8;
+                    cohort[1] = index as u8;
+                    evidence.cohort = Some(cohort);
+                    evidence
                 })
                 .collect(),
             created_at: at,
@@ -971,8 +986,8 @@ mod tests {
         assert!(item.reference.is_none());
         assert_eq!(item.successes, 2);
         assert_eq!(item.failures, 1);
-        assert_eq!(item.guidance, Some(PracticeGuidance::Mixed));
-        assert_eq!(item.strength, EvidenceStrength::Moderate);
+        assert_eq!(item.guidance, None);
+        assert_eq!(item.strength, EvidenceStrength::Limited);
         assert!(item.lesson.is_none());
         let encoded = serde_json::to_string(&result).unwrap();
         for forbidden in [
@@ -1059,6 +1074,27 @@ mod tests {
             EphemeralTaskContext::default(),
         );
         assert_eq!(avoid.experiences[0].guidance, Some(PracticeGuidance::Avoid));
+    }
+
+    #[test]
+    fn repeated_evidence_from_one_cohort_stays_limited() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut correlated = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 10]);
+        for entry in &mut correlated.evidence {
+            entry.cohort = Some([9; 32]);
+        }
+        history.capsules.push(correlated);
+
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::default(),
+        );
+        let item = &result.experiences[0];
+        assert_eq!(item.successes, 10);
+        assert_eq!(item.effective_evidence, 1.0);
+        assert_eq!(item.strength, EvidenceStrength::Limited);
+        assert_eq!(item.guidance, None);
     }
 
     #[test]

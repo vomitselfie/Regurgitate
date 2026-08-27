@@ -874,18 +874,26 @@ impl ExperienceCapsule {
             // challenge bookkeeping existed.
             self.challenge(self.last_confirmed_at);
         }
-        let supports = self.challenge.is_some_and(|state| {
-            entry.at > state.challenged_at && entry.outcome == state.supporting_outcome
-        });
+        let state = self.challenge.expect("challenge state initialized");
+        let supports = entry.at > state.challenged_at && entry.outcome == state.supporting_outcome;
+        let independent = supports
+            && !self.evidence.iter().any(|existing| {
+                existing.at > state.challenged_at
+                    && existing.outcome == state.supporting_outcome
+                    && same_evidence_cohort(existing, &entry)
+            });
         self.confirm(entry);
         let state = self
             .challenge
             .as_mut()
             .expect("challenge state initialized");
-        state.recovery_evidence = if supports {
+        state.recovery_evidence = if independent {
             state.recovery_evidence.saturating_add(1)
-        } else {
+        } else if !supports {
+            state.challenged_at = entry.at;
             0
+        } else {
+            state.recovery_evidence
         };
         if usize::from(state.recovery_evidence) >= required {
             self.lifecycle = MemoryLifecycle::Active;
@@ -919,6 +927,22 @@ impl ExperienceCapsule {
             tokens.extend(tokenize(text));
         }
         tokens
+    }
+}
+
+/// Explicit cohorts dominate. Unattributed agent observations are grouped by
+/// UTC day and controlled provenance/environment, preventing rapid repeated
+/// confirmations from masquerading as independent challenge recovery.
+fn same_evidence_cohort(left: &EvidenceEntry, right: &EvidenceEntry) -> bool {
+    match (left.cohort, right.cohort) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => {
+            left.at.timestamp().div_euclid(86_400) == right.at.timestamp().div_euclid(86_400)
+                && left.source == right.source
+                && left.agent == right.agent
+                && left.environment == right.environment
+        }
+        _ => false,
     }
 }
 

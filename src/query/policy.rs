@@ -146,6 +146,14 @@ pub struct Posterior {
 impl Posterior {
     /// `weights` pairs each evidence weight with whether it was a success.
     pub fn from_weighted(policy: &RankingPolicy, weights: &[(f64, bool)]) -> Self {
+        Self::from_weighted_with_effective_evidence(policy, weights, None)
+    }
+
+    pub(crate) fn from_weighted_with_effective_evidence(
+        policy: &RankingPolicy,
+        weights: &[(f64, bool)],
+        effective_evidence: Option<f64>,
+    ) -> Self {
         let mut successes = 0.0;
         let mut failures = 0.0;
         let mut sum = 0.0;
@@ -169,11 +177,13 @@ impl Posterior {
             mean: alpha / (alpha + beta),
             lower: beta_quantile(tail, alpha, beta),
             upper: beta_quantile(1.0 - tail, alpha, beta),
-            effective_evidence: if sum_squares > 0.0 {
-                sum * sum / sum_squares
-            } else {
-                0.0
-            },
+            effective_evidence: effective_evidence.unwrap_or_else(|| {
+                if sum_squares > 0.0 {
+                    sum * sum / sum_squares
+                } else {
+                    0.0
+                }
+            }),
             weighted_successes: successes,
             weighted_failures: failures,
         }
