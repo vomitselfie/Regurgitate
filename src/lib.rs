@@ -3,6 +3,7 @@ pub mod aoe_plugin;
 pub mod application;
 pub mod bench;
 pub mod cli;
+mod context;
 pub mod core;
 pub mod packaging;
 mod paths;

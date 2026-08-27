@@ -2,7 +2,13 @@ use std::collections::BTreeSet;
 
 use zeroize::Zeroizing;
 
-use crate::core::{ArtifactKind, Capability, Ecosystem, Operation, Phase, TaskKind, ToolFamily};
+use crate::core::{
+    ArtifactKind, Capability, Ecosystem, Operation, Phase, RiskShape, TaskKind, ToolFamily,
+};
+
+pub(crate) fn infer_risks(text: &str) -> BTreeSet<RiskShape> {
+    TaskIntent::classify(text).risks
+}
 
 /// Controlled, content-free task hints derived from an ephemeral query.
 /// The source query is never retained in this value.
@@ -15,6 +21,7 @@ pub(super) struct TaskIntent {
     tool_families: BTreeSet<ToolFamily>,
     phases: BTreeSet<Phase>,
     artifacts: BTreeSet<ArtifactKind>,
+    risks: BTreeSet<RiskShape>,
 }
 
 impl TaskIntent {
@@ -22,6 +29,24 @@ impl TaskIntent {
         let normalized = Zeroizing::new(query.to_ascii_lowercase());
         let mut intent = Self::default();
         for token in normalized.split(|character: char| !character.is_ascii_alphanumeric()) {
+            match token {
+                "delete" | "deletion" | "remove" | "overwrite" | "prune" | "reset" => {
+                    intent.risks.insert(RiskShape::Destructive);
+                }
+                "version" | "upgrade" | "migration" | "compatibility" | "schema" => {
+                    intent.risks.insert(RiskShape::VersionSensitive);
+                }
+                "sandbox" | "apparmor" | "permission" | "keyring" => {
+                    intent.risks.insert(RiskShape::SandboxSensitive);
+                }
+                "flaky" | "race" | "nondeterministic" | "intermittent" => {
+                    intent.risks.insert(RiskShape::Flaky);
+                }
+                "expensive" | "large" | "benchmark" | "exhaustive" => {
+                    intent.risks.insert(RiskShape::Expensive);
+                }
+                _ => {}
+            }
             match token {
                 "test" | "tests" | "testing" | "pytest" | "unittest" => {
                     intent.capabilities.insert(Capability::Test);
@@ -316,6 +341,10 @@ impl TaskIntent {
         &self.artifacts
     }
 
+    pub fn risks(&self) -> &BTreeSet<RiskShape> {
+        &self.risks
+    }
+
     pub fn matches_task(&self, task: TaskKind) -> bool {
         self.tasks.contains(&task)
     }
@@ -376,6 +405,23 @@ mod tests {
         assert!(intent.artifacts().contains(&ArtifactKind::GeneratedSource));
         assert!(intent.phases().contains(&Phase::Diagnose));
         assert!(TaskIntent::classify("zzz").ecosystems().is_empty());
+    }
+
+    #[test]
+    fn infers_only_controlled_risk_shapes() {
+        let intent = TaskIntent::classify(
+            "prune a version migration inside the sandbox after an intermittent benchmark",
+        );
+        assert!(intent.risks().contains(&RiskShape::Destructive));
+        assert!(intent.risks().contains(&RiskShape::VersionSensitive));
+        assert!(intent.risks().contains(&RiskShape::SandboxSensitive));
+        assert!(intent.risks().contains(&RiskShape::Flaky));
+        assert!(intent.risks().contains(&RiskShape::Expensive));
+        assert!(
+            TaskIntent::classify("ordinary feature work")
+                .risks()
+                .is_empty()
+        );
     }
 
     #[test]

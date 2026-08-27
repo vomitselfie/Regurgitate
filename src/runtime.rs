@@ -16,6 +16,7 @@ use crate::{
         SessionEventSource, TransitionReport, ValidatedRetentionPolicy,
     },
     cli::{Cli, Command, ExperienceCommand, HookAgentArg, PreflightAgentArg},
+    context::infer_project_defaults,
     core::{
         AgentKind, ApplicabilityTags, Caveat, DebugEvent, EnvironmentFingerprint, Lesson,
         MemoryLifecycle, MemoryScope, Outcome, Procedure, SemanticOutcome, Situation, Strategy,
@@ -29,7 +30,7 @@ use crate::{
     paths::default_data_home,
     query::{
         EphemeralTaskContext, ExperienceBrief, RecallBroker, RecallOptions, RecallResult,
-        RecallService,
+        RecallService, infer_risks,
     },
     storage::{
         EncryptedStore, ExistingMasterKeyProvider, HistoryDatabaseProbe, MasterKeyProvider,
@@ -94,12 +95,15 @@ pub fn execute(cli: Cli) -> Result<()> {
                 tool_family,
                 tool_major,
                 risks: &risks,
+                project_defaults: Default::default(),
             };
             match agent {
                 Some(PreflightAgentArg::Claude) => {
                     let request = claude::normalize_prompt_submit(io::stdin().lock())?;
+                    let project_defaults = infer_project_defaults(request.project.as_path());
                     let context = EphemeralTaskContext {
                         query: Some(request.prompt.as_str()),
+                        project_defaults,
                         ..metadata
                     };
                     let brief = preflight_brief(
@@ -116,8 +120,10 @@ pub fn execute(cli: Cli) -> Result<()> {
                 }
                 None => {
                     let project = project.context("--project is required without --agent")?;
+                    let project_defaults = infer_project_defaults(&project);
                     let context = EphemeralTaskContext {
                         query: query.as_ref().map(|value| value.as_str()),
+                        project_defaults,
                         ..metadata
                     };
                     let brief = preflight_brief(
@@ -269,6 +275,7 @@ pub fn execute(cli: Cli) -> Result<()> {
         } => {
             let query = query.map(Zeroizing::new);
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let project_defaults = infer_project_defaults(&project);
             let options = RecallOptions {
                 operation: operation.map(Into::into),
                 failures_only: failures,
@@ -288,6 +295,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     tool_family,
                     tool_major,
                     risks: &risks,
+                    project_defaults,
                 },
                 data_home,
                 &SystemKeyProvider::default(),
@@ -391,9 +399,23 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
             data_home,
         } => {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let project_defaults = infer_project_defaults(&project);
+            let artifact = artifact.or(project_defaults.artifact);
+            let ecosystem = ecosystem.or(project_defaults.ecosystem);
+            let tool_family = tool_family.or(project_defaults.tool_family);
             let situation = Zeroizing::new(situation);
             let lesson = Zeroizing::new(lesson);
             let caveat = caveat.map(Zeroizing::new);
+            let risk_shapes = if risks.is_empty() {
+                let mut inferred = infer_risks(&situation);
+                inferred.extend(infer_risks(&lesson));
+                if let Some(caveat) = &caveat {
+                    inferred.extend(infer_risks(caveat));
+                }
+                inferred
+            } else {
+                risks.into_iter().collect()
+            };
             let mut procedure = Procedure::parse_dimensions(&procedure)?;
             if let Some(steps) = steps {
                 procedure.steps = Procedure::parse_steps(&steps)?;
@@ -418,7 +440,7 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                     phase,
                     ecosystem,
                     tool_family,
-                    risk_shapes: risks.into_iter().collect(),
+                    risk_shapes,
                 },
                 environment: EnvironmentFingerprint {
                     tool_family,

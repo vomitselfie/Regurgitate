@@ -43,7 +43,7 @@ pub(crate) enum Command {
     /// Record one verified outcome for a controlled procedural strategy.
     Learn {
         /// Local project directory used only for encrypted identity lookup.
-        #[arg(long)]
+        #[arg(long, default_value = ".")]
         project: PathBuf,
 
         /// Controlled task category in which the strategy was evaluated.
@@ -229,7 +229,7 @@ pub(crate) enum Command {
     /// Return task-matched learned practice plus a separate hook summary.
     Recall {
         /// Local project directory used only for encrypted identity lookup.
-        #[arg(long)]
+        #[arg(long, default_value = ".")]
         project: PathBuf,
 
         /// Restrict lessons to procedures with one canonical operation.
@@ -362,7 +362,7 @@ pub(crate) enum ExperienceCommand {
     /// Record one experience capsule, or confirm an equivalent active one.
     Record {
         /// Local project directory used only for encrypted identity lookup.
-        #[arg(long)]
+        #[arg(long, default_value = ".")]
         project: PathBuf,
 
         /// Relevance scope: project, workspace, ecosystem, machine, global.
@@ -778,6 +778,36 @@ mod tests {
         assert_eq!(tool_major, Some(1));
         assert_eq!(risks, vec![RiskShape::VersionSensitive, RiskShape::Flaky]);
         assert!(best_effort);
+
+        let defaulted = Cli::try_parse_from(["regurgitate", "recall"]).unwrap();
+        let Command::Recall { project, .. } = defaulted.command else {
+            panic!("expected recall");
+        };
+        assert_eq!(project, PathBuf::from("."));
+
+        let defaulted_record = Cli::try_parse_from([
+            "regurgitate",
+            "experience",
+            "record",
+            "--task",
+            "testing",
+            "--situation",
+            "A bounded specific situation exists for this verification procedure.",
+            "--lesson",
+            "Run targeted verification before relying on the generated artifact.",
+            "--procedure",
+            "targeted-verification",
+            "--outcome",
+            "success",
+        ])
+        .unwrap();
+        let Command::Experience {
+            command: ExperienceCommand::Record { project, .. },
+        } = defaulted_record.command
+        else {
+            panic!("expected experience record");
+        };
+        assert_eq!(project, PathBuf::from("."));
 
         let cli = Cli::try_parse_from([
             "regurgitate",

@@ -99,6 +99,7 @@ pub struct EphemeralTaskContext<'a> {
     pub tool_family: Option<ToolFamily>,
     pub tool_major: Option<u16>,
     pub risks: &'a [RiskShape],
+    pub project_defaults: ProjectDefaults,
 }
 
 impl<'a> EphemeralTaskContext<'a> {
@@ -117,7 +118,19 @@ impl<'a> EphemeralTaskContext<'a> {
 
     fn risk_sensitive(&self) -> bool {
         !self.risks.is_empty()
+            || self
+                .query
+                .is_some_and(|query| !TaskIntent::classify(query).risks().is_empty())
     }
+}
+
+/// Low-cardinality defaults inferred from allowlisted project markers. Query
+/// hints and explicit flags always outrank these values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectDefaults {
+    pub artifact: Option<ArtifactKind>,
+    pub ecosystem: Option<Ecosystem>,
+    pub tool_family: Option<ToolFamily>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -474,7 +487,14 @@ impl<'c> ContextMatcher<'c> {
         if let Some(ecosystem) = self.context.ecosystem {
             return vec![ecosystem];
         }
-        self.intent.ecosystems().iter().copied().collect()
+        if !self.intent.ecosystems().is_empty() {
+            return self.intent.ecosystems().iter().copied().collect();
+        }
+        self.context
+            .project_defaults
+            .ecosystem
+            .into_iter()
+            .collect()
     }
 
     fn task_filter_active(&self) -> bool {
@@ -499,11 +519,13 @@ impl<'c> ContextMatcher<'c> {
         let artifact = match_term(
             self.context.artifact,
             self.intent.artifacts().iter().copied(),
+            self.context.project_defaults.artifact,
             capsule.applicability.artifact_kind,
         );
         let ecosystem = match_term(
             self.context.ecosystem,
             self.intent.ecosystems().iter().copied(),
+            self.context.project_defaults.ecosystem,
             capsule.applicability.ecosystem,
         );
         let evidence_tool = capsule
@@ -513,11 +535,13 @@ impl<'c> ContextMatcher<'c> {
         let tool = match_term(
             self.context.tool_family,
             self.intent.tool_families().iter().copied(),
+            self.context.project_defaults.tool_family,
             capsule.applicability.tool_family.or(evidence_tool),
         );
         let phase = match_term(
             self.context.phase,
             self.intent.phases().iter().copied(),
+            None,
             capsule.applicability.phase,
         );
         let environment = capsule
@@ -529,13 +553,16 @@ impl<'c> ContextMatcher<'c> {
                 _ => 0.75,
             })
             .fold(0.0_f64, f64::max);
-        let risk = if self.context.risks.is_empty() {
+        let risks: Vec<_> = if self.context.risks.is_empty() {
+            self.intent.risks().iter().copied().collect()
+        } else {
+            self.context.risks.to_vec()
+        };
+        let risk = if risks.is_empty() {
             1.0
         } else if capsule.applicability.risk_shapes.is_empty() {
             0.55
-        } else if self
-            .context
-            .risks
+        } else if risks
             .iter()
             .any(|risk| capsule.applicability.risk_shapes.contains(risk))
         {
@@ -564,7 +591,12 @@ impl<'c> ContextMatcher<'c> {
         };
         match entry.environment.major_version {
             Some(recorded) if recorded == wanted => 1.0,
-            Some(_) if self.context.risks.contains(&RiskShape::VersionSensitive) => 0.1,
+            Some(_)
+                if self.context.risks.contains(&RiskShape::VersionSensitive)
+                    || self.intent.risks().contains(&RiskShape::VersionSensitive) =>
+            {
+                0.1
+            }
             Some(_) => 0.5,
             None => 0.65,
         }
@@ -577,11 +609,15 @@ impl<'c> ContextMatcher<'c> {
 fn match_term<T: Copy + PartialEq>(
     explicit: Option<T>,
     inferred: impl Iterator<Item = T>,
+    project_default: Option<T>,
     recorded: Option<T>,
 ) -> f64 {
     let mut hints: Vec<T> = explicit.into_iter().collect();
     if hints.is_empty() {
         hints.extend(inferred);
+    }
+    if hints.is_empty() {
+        hints.extend(project_default);
     }
     if hints.is_empty() {
         return 1.0;
@@ -1265,6 +1301,92 @@ mod tests {
             },
         );
         assert_eq!(risky.experiences[0].failures, 1);
+
+        let inferred_risk = recall(
+            &history,
+            RecallOptions {
+                limit: 1,
+                ..RecallOptions::default()
+            },
+            EphemeralTaskContext::from_query(Some("delete records safely")),
+        );
+        assert_eq!(inferred_risk.experiences[0].failures, 1);
+    }
+
+    #[test]
+    fn query_and_explicit_context_outrank_project_defaults() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut rust = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 3]);
+        rust.applicability.ecosystem = Some(Ecosystem::Rust);
+        rust.applicability.tool_family = Some(ToolFamily::Cargo);
+        rust.lesson = Some(
+            Lesson::new("Use the Cargo-specific verification path for Rust source changes.")
+                .unwrap(),
+        );
+        let mut python = capsule(2, MemoryScope::Project, &[SemanticOutcome::Success; 3]);
+        python.applicability.ecosystem = Some(Ecosystem::Python);
+        python.applicability.tool_family = Some(ToolFamily::Pytest);
+        python.lesson = Some(
+            Lesson::new("Use the Pytest-specific verification path for Python source changes.")
+                .unwrap(),
+        );
+        history.capsules.extend([python, rust]);
+
+        let defaults = ProjectDefaults {
+            artifact: Some(ArtifactKind::Source),
+            ecosystem: Some(Ecosystem::Rust),
+            tool_family: Some(ToolFamily::Cargo),
+        };
+        let defaulted = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                project_defaults: defaults,
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert!(
+            defaulted.experiences[0]
+                .lesson
+                .as_deref()
+                .unwrap()
+                .contains("Cargo")
+        );
+
+        let queried = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                query: Some("debug a python pytest failure"),
+                project_defaults: defaults,
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert!(
+            queried.experiences[0]
+                .lesson
+                .as_deref()
+                .unwrap()
+                .contains("Pytest")
+        );
+
+        let explicit = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                ecosystem: Some(Ecosystem::Python),
+                tool_family: Some(ToolFamily::Pytest),
+                project_defaults: defaults,
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert!(
+            explicit.experiences[0]
+                .lesson
+                .as_deref()
+                .unwrap()
+                .contains("Pytest")
+        );
     }
 
     #[test]
