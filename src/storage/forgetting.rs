@@ -203,6 +203,7 @@ mod tests {
                 },
                 applicability: ApplicabilityTags::default(),
                 lifecycle: MemoryLifecycle::Active,
+                challenge: None,
                 evidence: vec![EvidenceEntry::agent_reported(
                     at,
                     SemanticOutcome::Success,

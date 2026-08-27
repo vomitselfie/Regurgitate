@@ -375,6 +375,7 @@ fn materialize_legacy(
                 procedure: Procedure::from_strategy(strategy),
                 applicability: Default::default(),
                 lifecycle: MemoryLifecycle::Active,
+                challenge: None,
                 evidence,
                 created_at,
                 last_confirmed_at,
@@ -899,6 +900,7 @@ mod tests {
                 ..ApplicabilityTags::default()
             },
             lifecycle: MemoryLifecycle::Active,
+            challenge: None,
             evidence: outcomes
                 .iter()
                 .enumerate()

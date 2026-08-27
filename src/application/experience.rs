@@ -232,6 +232,7 @@ where
             procedure: input.procedure,
             applicability: input.applicability,
             lifecycle: MemoryLifecycle::Active,
+            challenge: None,
             evidence: vec![entry],
             created_at: now,
             last_confirmed_at: now,
@@ -245,14 +246,9 @@ where
             .scoped_experiences(scope, MAX_DEDUP_CANDIDATES)?;
         match find_equivalent(&candidate, &existing) {
             Some(Equivalence::Same(mut matched)) => {
-                matched.confirm(entry);
+                matched.confirm_with_recovery(entry, CHALLENGE_RESOLUTION_EVIDENCE);
                 if matched.caveat.is_none() {
                     matched.caveat = candidate.caveat.take();
-                }
-                if matched.lifecycle == MemoryLifecycle::Challenged
-                    && matched.evidence.len() >= CHALLENGE_RESOLUTION_EVIDENCE
-                {
-                    matched.lifecycle = MemoryLifecycle::Active;
                 }
                 matched.validate()?;
                 if !self.history.replace_experience(&matched)? {
@@ -265,8 +261,8 @@ where
                 })
             }
             Some(Equivalence::Contradiction(mut matched)) => {
-                matched.lifecycle = MemoryLifecycle::Challenged;
-                candidate.lifecycle = MemoryLifecycle::Challenged;
+                matched.challenge(now);
+                candidate.challenge(now);
                 self.history.replace_experience(&matched)?;
                 self.history.append_experience(&candidate)?;
                 Ok(ExperienceReport {
@@ -323,21 +319,19 @@ where
         ) {
             bail!("that capsule is retired; record the lesson afresh instead");
         }
-        capsule.confirm(EvidenceEntry::agent_reported(
-            now,
-            outcome,
-            failure_reason,
-            EnvironmentFingerprint {
-                tool_family: capsule.applicability.tool_family,
-                major_version: None,
-                host_class: HostClass::current(),
-            },
-        ));
-        if capsule.lifecycle == MemoryLifecycle::Challenged
-            && capsule.evidence.len() >= CHALLENGE_RESOLUTION_EVIDENCE
-        {
-            capsule.lifecycle = MemoryLifecycle::Active;
-        }
+        capsule.confirm_with_recovery(
+            EvidenceEntry::agent_reported(
+                now,
+                outcome,
+                failure_reason,
+                EnvironmentFingerprint {
+                    tool_family: capsule.applicability.tool_family,
+                    major_version: None,
+                    host_class: HostClass::current(),
+                },
+            ),
+            CHALLENGE_RESOLUTION_EVIDENCE,
+        );
         capsule.validate()?;
         if !self.history.replace_experience(&capsule)? {
             bail!("the capsule disappeared during confirmation");
@@ -360,7 +354,7 @@ where
         let project_id = self.history.resolve_project(project)?;
         let mut capsule = self.select(project_id, selector)?;
         let previous = capsule.lifecycle;
-        capsule.lifecycle = lifecycle;
+        capsule.set_lifecycle(lifecycle, Utc::now());
         capsule.validate()?;
         self.history.replace_experience(&capsule)?;
         Ok(TransitionReport {
@@ -383,8 +377,8 @@ where
             bail!("a capsule cannot supersede itself");
         }
         let previous = old.lifecycle;
-        old.lifecycle = MemoryLifecycle::Superseded;
-        new.lifecycle = MemoryLifecycle::Active;
+        old.set_lifecycle(MemoryLifecycle::Superseded, Utc::now());
+        new.set_lifecycle(MemoryLifecycle::Active, Utc::now());
         self.history.replace_experience(&old)?;
         self.history.replace_experience(&new)?;
         Ok(TransitionReport {
@@ -719,6 +713,87 @@ mod tests {
                 .iter()
                 .all(|capsule| capsule.lifecycle == MemoryLifecycle::Challenged)
         );
+    }
+
+    #[test]
+    fn challenge_recovery_counts_only_supporting_post_challenge_evidence() {
+        let store = Rc::new(MemoryStore::default());
+        let service = ExperienceService::new(Rc::clone(&store));
+        let now = Utc::now();
+        service
+            .record_at(
+                project(),
+                input(
+                    "Generated native artifact where parser acceptance is weaker than native checks.",
+                    "Change one placement class at a time, then run native verification.",
+                    SemanticOutcome::Success,
+                ),
+                now,
+            )
+            .unwrap();
+        let original = selector_for(store.capsules.borrow()[0].id);
+        for offset in 1..=5 {
+            service
+                .confirm_at(
+                    &original,
+                    SemanticOutcome::Success,
+                    None,
+                    now + chrono::Duration::minutes(offset),
+                )
+                .unwrap();
+        }
+        service
+            .record_at(
+                project(),
+                input(
+                    "Generated native artifact where parser acceptance is weaker than native checks.",
+                    "Regenerate every placement class together and rely on serialization.",
+                    SemanticOutcome::Failure,
+                ),
+                now + chrono::Duration::hours(1),
+            )
+            .unwrap();
+
+        for offset in 1..=2 {
+            let report = service
+                .confirm_at(
+                    &original,
+                    SemanticOutcome::Success,
+                    None,
+                    now + chrono::Duration::hours(1) + chrono::Duration::minutes(offset),
+                )
+                .unwrap();
+            assert_eq!(report.lifecycle, MemoryLifecycle::Challenged);
+        }
+        let reset = service
+            .confirm_at(
+                &original,
+                SemanticOutcome::Failure,
+                Some(FailureReason::VerificationFailed),
+                now + chrono::Duration::hours(2),
+            )
+            .unwrap();
+        assert_eq!(reset.lifecycle, MemoryLifecycle::Challenged);
+        for offset in 1..=2 {
+            let report = service
+                .confirm_at(
+                    &original,
+                    SemanticOutcome::Success,
+                    None,
+                    now + chrono::Duration::hours(2) + chrono::Duration::minutes(offset),
+                )
+                .unwrap();
+            assert_eq!(report.lifecycle, MemoryLifecycle::Challenged);
+        }
+        let recovered = service
+            .confirm_at(
+                &original,
+                SemanticOutcome::Success,
+                None,
+                now + chrono::Duration::hours(3),
+            )
+            .unwrap();
+        assert_eq!(recovered.lifecycle, MemoryLifecycle::Active);
     }
 
     #[test]

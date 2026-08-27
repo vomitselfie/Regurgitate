@@ -89,7 +89,7 @@ struct ExperienceCapsuleV3 {
 
 impl ExperienceCapsuleV3 {
     fn upgrade(self) -> ExperienceCapsule {
-        ExperienceCapsule {
+        let mut capsule = ExperienceCapsule {
             id: self.id,
             project_id: self.project_id,
             scope: self.scope,
@@ -101,6 +101,7 @@ impl ExperienceCapsuleV3 {
             procedure: self.procedure,
             applicability: self.applicability,
             lifecycle: self.lifecycle,
+            challenge: None,
             evidence: self
                 .evidence
                 .into_iter()
@@ -116,7 +117,11 @@ impl ExperienceCapsuleV3 {
             created_at: self.created_at,
             last_confirmed_at: self.last_confirmed_at,
             schema_version: EXPERIENCE_SCHEMA_VERSION,
+        };
+        if capsule.lifecycle == MemoryLifecycle::Challenged {
+            capsule.challenge(capsule.last_confirmed_at);
         }
+        capsule
     }
 }
 

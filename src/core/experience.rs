@@ -270,6 +270,16 @@ controlled_enum! {
     }
 }
 
+/// Recovery bookkeeping for a challenged capsule. Evidence recorded before
+/// `challenged_at` is never eligible to reactivate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChallengeState {
+    pub challenged_at: DateTime<Utc>,
+    pub supporting_outcome: SemanticOutcome,
+    pub recovery_evidence: u8,
+}
+
 controlled_enum! {
     SemanticOutcome {
         Success => "success",
@@ -705,6 +715,8 @@ pub struct ExperienceCapsule {
     #[serde(default)]
     pub applicability: ApplicabilityTags,
     pub lifecycle: MemoryLifecycle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<ChallengeState>,
     pub evidence: Vec<EvidenceEntry>,
     pub created_at: DateTime<Utc>,
     pub last_confirmed_at: DateTime<Utc>,
@@ -787,6 +799,9 @@ impl ExperienceCapsule {
         if self.last_confirmed_at < self.created_at {
             bail!("capsule confirmation cannot precede its creation");
         }
+        if self.lifecycle != MemoryLifecycle::Challenged && self.challenge.is_some() {
+            bail!("only a challenged capsule may retain challenge recovery state");
+        }
         Ok(())
     }
 
@@ -818,6 +833,64 @@ impl ExperienceCapsule {
 
     pub fn failures(&self) -> usize {
         self.evidence.len() - self.successes()
+    }
+
+    fn dominant_outcome(&self) -> SemanticOutcome {
+        if self.successes() >= self.failures() {
+            SemanticOutcome::Success
+        } else {
+            SemanticOutcome::Failure
+        }
+    }
+
+    pub fn challenge(&mut self, at: DateTime<Utc>) {
+        self.lifecycle = MemoryLifecycle::Challenged;
+        self.challenge = Some(ChallengeState {
+            challenged_at: at,
+            supporting_outcome: self.dominant_outcome(),
+            recovery_evidence: 0,
+        });
+    }
+
+    pub fn set_lifecycle(&mut self, lifecycle: MemoryLifecycle, at: DateTime<Utc>) {
+        if lifecycle == MemoryLifecycle::Challenged {
+            self.challenge(at);
+        } else {
+            self.lifecycle = lifecycle;
+            self.challenge = None;
+        }
+    }
+
+    /// Adds evidence and advances a challenge only when the new observation
+    /// supports the capsule's pre-challenge outcome. Opposing evidence resets
+    /// progress instead of accidentally helping reactivation.
+    pub fn confirm_with_recovery(&mut self, entry: EvidenceEntry, required: usize) {
+        if self.lifecycle != MemoryLifecycle::Challenged {
+            self.confirm(entry);
+            return;
+        }
+        if self.challenge.is_none() {
+            // Compatibility for early v4 payloads written before explicit
+            // challenge bookkeeping existed.
+            self.challenge(self.last_confirmed_at);
+        }
+        let supports = self.challenge.is_some_and(|state| {
+            entry.at > state.challenged_at && entry.outcome == state.supporting_outcome
+        });
+        self.confirm(entry);
+        let state = self
+            .challenge
+            .as_mut()
+            .expect("challenge state initialized");
+        state.recovery_evidence = if supports {
+            state.recovery_evidence.saturating_add(1)
+        } else {
+            0
+        };
+        if usize::from(state.recovery_evidence) >= required {
+            self.lifecycle = MemoryLifecycle::Active;
+            self.challenge = None;
+        }
     }
 
     /// Appends one evidence entry, dropping the oldest when the bound is hit.
@@ -905,6 +978,7 @@ mod tests {
                 ..ApplicabilityTags::default()
             },
             lifecycle: MemoryLifecycle::Active,
+            challenge: None,
             evidence: vec![EvidenceEntry::agent_reported(
                 at,
                 SemanticOutcome::Success,

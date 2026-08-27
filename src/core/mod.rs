@@ -9,7 +9,7 @@ pub use event::{
     HistoryEvent, Operation, Outcome, Strategy, TaskKind,
 };
 pub use experience::{
-    ApplicabilityTags, ArtifactKind, BoundedText, CAVEAT_MAX_CHARS, Caveat,
+    ApplicabilityTags, ArtifactKind, BoundedText, CAVEAT_MAX_CHARS, Caveat, ChallengeState,
     EXPERIENCE_SCHEMA_VERSION, Ecosystem, EnvironmentFingerprint, EvidenceAttestation,
     EvidenceEntry, EvidenceSource, EvidenceVerification, ExecutionMode, ExperienceCapsule,
     ExperienceIdentity, FailureReason, HostClass, IntegrationMode, LESSON_MAX_CHARS, Lesson,
