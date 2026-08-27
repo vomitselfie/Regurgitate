@@ -171,4 +171,57 @@ mod tests {
         assert_eq!(decoded.capsule.schema_version, EXPERIENCE_SCHEMA_VERSION);
         assert_eq!(decoded.capsule.evidence[0].environment, legacy.environment);
     }
+
+    #[test]
+    fn encrypted_v3_envelope_opens_as_v4_without_changing_envelope_version() {
+        use crate::storage::{
+            MasterKey,
+            crypto::{ENVELOPE_VERSION, ExperienceCipher, ExperienceEnvelope},
+        };
+
+        let at = Utc.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap();
+        let legacy = ExperienceCapsuleV3 {
+            id: Uuid::from_u128(11),
+            project_id: Uuid::from_u128(12),
+            scope: MemoryScope::Project,
+            scope_id: Some(Uuid::from_u128(12)),
+            task: TaskKind::Testing,
+            situation: None,
+            lesson: None,
+            caveat: None,
+            procedure: Procedure::from_strategy(Strategy::TargetedVerification),
+            applicability: Default::default(),
+            environment: EnvironmentFingerprint::default(),
+            lifecycle: MemoryLifecycle::Active,
+            evidence: vec![EvidenceEntryV3 {
+                at,
+                outcome: SemanticOutcome::Success,
+                failure_reason: None,
+            }],
+            created_at: at,
+            last_confirmed_at: at,
+            schema_version: EXPERIENCE_SCHEMA_V3,
+        };
+        let mut plaintext = Vec::new();
+        ciborium::into_writer(&legacy, &mut plaintext).unwrap();
+        let envelope = ExperienceEnvelope {
+            id: legacy.id,
+            scope_token: [1; 32],
+            origin_token: [2; 32],
+            created_at_ms: at.timestamp_millis(),
+            updated_at_ms: at.timestamp_millis(),
+            schema_version: EXPERIENCE_SCHEMA_V3,
+            envelope_version: ENVELOPE_VERSION,
+        };
+        let cipher = ExperienceCipher::new(&MasterKey::from_bytes([92; 32])).unwrap();
+        let sealed = cipher
+            .seal_fixture_plaintext(&envelope, &plaintext)
+            .unwrap();
+
+        let upgraded = cipher
+            .open(&envelope, &sealed.nonce, &sealed.ciphertext)
+            .unwrap();
+        assert_eq!(upgraded.schema_version, EXPERIENCE_SCHEMA_VERSION);
+        assert_eq!(envelope.envelope_version, ENVELOPE_VERSION);
+    }
 }

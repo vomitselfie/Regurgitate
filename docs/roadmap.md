@@ -28,6 +28,22 @@ Still open: populating the baseline benchmark numbers, running the paired
 suite as the release gate, and automatic preflight for hosts that expose a
 stable pre-task hook.
 
+## v0.9 direction: evidence provenance
+
+Schema v4 is implemented as a backward-compatible vertical upgrade:
+
+- dual-read v3/v4 encrypted codec with lazy write-v4 migration;
+- environment, controlled provenance, verification, attestation, receipt, and
+  optional cohort recorded per evidence entry;
+- authenticated single-use recall receipts with encrypted replay detection;
+- cohort-capped posterior evidence and conservative unattributed-day grouping;
+- post-challenge independent recovery evidence; and
+- risk/tool-major matching, broader-scope context completeness, and retained
+  negative evidence for risky recalls.
+
+Active agent ownership, leases, and messaging remain a separate future
+ephemeral coordination concern rather than durable experience memory.
+
 ## Working now
 
 - AoE-managed Codex session discovery and strict normalization;

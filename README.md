@@ -254,8 +254,9 @@ Useful commands:
 | `regurgitate status` | Checks the key store and encrypted history |
 | `regurgitate recall --project "$PWD" --task data-import --query "csv importer"` | Shows ranked lessons relevant to this task |
 | `regurgitate recall --project "$PWD" --failures --task data-import` | Shows lessons with failed evidence for this task |
+| `regurgitate recall --project "$PWD" --risk version-sensitive --tool-family cargo --tool-major 1` | Uses controlled risk and tool-version context |
 | `regurgitate experience record --project "$PWD" --task data-import --situation "…" --lesson "…" --procedure per-subject-streaming --outcome success` | Records or confirms one experience capsule |
-| `regurgitate experience confirm --match <ref> --outcome success` | Confirms or refutes a recalled lesson by its `ref` |
+| `regurgitate experience confirm --match <ref> --outcome success` | Confirms or refutes one authenticated receipt; replay is idempotent |
 | `regurgitate experience list --project "$PWD"` | Lists capsule status and shape (never lesson text) |
 | `regurgitate experience challenge\|obsolete --project "$PWD" --match <selector>` | Marks a capsule challenged or obsolete |
 | `regurgitate experience supersede --project "$PWD" --old <sel> --new <sel>` | Replaces one capsule with another |

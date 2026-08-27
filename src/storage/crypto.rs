@@ -241,4 +241,29 @@ impl ExperienceCipher {
         }
         Ok(capsule)
     }
+
+    #[cfg(test)]
+    pub(super) fn seal_fixture_plaintext(
+        &self,
+        envelope: &ExperienceEnvelope,
+        plaintext: &[u8],
+    ) -> Result<SealedEvent> {
+        let nonce = XNonce::generate();
+        let ciphertext = self
+            .cipher
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: plaintext,
+                    aad: &envelope.associated_data(),
+                },
+            )
+            .map_err(|_| anyhow!("could not encrypt experience fixture"))?;
+        let mut nonce_bytes = [0_u8; NONCE_BYTES];
+        nonce_bytes.copy_from_slice(&nonce);
+        Ok(SealedEvent {
+            nonce: nonce_bytes,
+            ciphertext,
+        })
+    }
 }

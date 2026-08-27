@@ -296,6 +296,7 @@ controlled_enum! {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for EvidenceSource {
     fn default() -> Self {
         Self::AgentJudgment
@@ -312,6 +313,7 @@ controlled_enum! {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for EvidenceVerification {
     fn default() -> Self {
         Self::None
@@ -329,6 +331,7 @@ controlled_enum! {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for EvidenceAttestation {
     fn default() -> Self {
         Self::SelfReported

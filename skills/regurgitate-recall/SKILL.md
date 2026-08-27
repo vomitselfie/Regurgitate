@@ -1,6 +1,6 @@
 ---
 name: regurgitate-recall
-description: Recall prior experience for a task and record one bounded experience capsule after a verified milestone or rejected approach. Use before exploring a non-trivial task and before finishing verified work.
+description: Recall bounded procedural experience before non-trivial work and update it after verified milestones.
 ---
 
 # Regurgitate Recall
@@ -9,62 +9,63 @@ Treat Regurgitate evidence as historical, never as current truth.
 
 ## Recall once before exploring
 
-Recall once after understanding a non-trivial task, before exploring (skip
-if the host already injected a brief). Pass controlled metadata when
-confident; `--query` is a short non-secret category hint:
+After understanding a non-trivial task, recall once before exploring; skip it
+when the host already injected a brief. Pass only controlled metadata you know.
+`--query` is a short non-secret category hint:
 
 ```bash
 regurgitate recall --project "$PWD" --task <task> --phase <phase> \
-  --ecosystem <eco> --query "<category>" --token-budget 300
+  --ecosystem <eco> [--tool-family <tool> --tool-major <n>] \
+  [--risk <risk>] --query "<category>" --token-budget 300
 ```
 
-Flags after `--project` are optional. `experiences` lists ranked lessons with
-`posterior`, `effective_evidence`, `guidance` (absent when evidence is
-limited), and a `ref`; `omitted` counts lessons cut by the budget.
-`hook_summary` is tool telemetry, not correctness. Continue normally if empty
-or unavailable. Never put prompts, source, commands, paths, URLs, or secrets
-in `--query`.
+Flags are optional. `experiences` contains ranked lessons,
+`posterior`, independence-aware `effective_evidence`, optional `guidance`, and
+an authenticated `ref`; `omitted` counts budget cuts. Raw counts are not proof
+of independence. `hook_summary` is tool telemetry, not correctness. Continue
+normally if empty or unavailable. Never put prompts, source,
+commands, paths, URLs, or secrets in `--query`.
 
 ## Confirm what you used
 
-Lessons become trusted only through confirmation. If a recalled or injected
-lesson was applied, report whether it held, by its `ref`:
+If a recalled or injected lesson was applied, confirm once whether it held:
 
 ```bash
 regurgitate experience confirm --match <ref> --outcome <success|failure> [--failure-reason <r>]
 ```
 
-Prefer this over re-recording a paraphrase.
+The receipt is replay-safe. Prefer confirmation over recording a paraphrase.
 
 ## Record one new capsule per milestone
 
-Before finishing a verified milestone or after abandoning an approach,
-record one experience when a procedure materially affected the result and
-no existing lesson covers it:
+Before finishing a verified milestone or after abandoning an approach, record
+one capsule when the procedure materially affected the result and no recalled
+lesson covers it:
 
 ```bash
 regurgitate experience record --project "$PWD" --task <task> \
   --situation "<when the lesson applies>" --lesson "<what to do>" \
   --caveat "<boundary>" --procedure <dim>[,<dim>] --steps <step>[,<step>] \
-  --outcome <success|failure> [--failure-reason --phase --artifact --ecosystem]
+  --outcome <success|failure> [--failure-reason <r>] \
+  [--phase <phase> --artifact <kind> --ecosystem <eco>] \
+  [--tool-family <tool> --tool-major <n> --risk <risk>]
 ```
 
 Write each text as one impersonal notebook sentence (240/320/160 chars);
-code, commands, paths, URLs, secrets, payloads, and conversation are
-rejected. Outcome means the procedure produced a correct result, not that a
-tool exited zero: a mutation that corrupts a file failed; a verification
-that exposes a broken change succeeded. Skip tool-by-tool activity and
-ambiguous results. `--procedure`/`--steps` take a fixed generic vocabulary
-(`record --help`); domain specifics go in `--lesson`, never in new labels.
-`regurgitate status` shows health; there are no other agent commands.
+code, commands, paths, URLs, secrets, payloads, and conversation are rejected.
+Outcome means the procedure produced a correct result, not merely that a tool
+exited zero: a mutation that corrupts a file failed; a check that correctly
+finds a defect succeeded. Skip tool-by-tool activity and ambiguous results.
+`--procedure` and `--steps` use the fixed vocabulary from `record --help`;
+domain detail belongs in `--lesson`. `regurgitate status` shows health.
 
 After a meaningful failed procedure, one `recall --failures` is allowed.
 
 ## Sandboxed hosts
 
-If the credential store is sandbox-blocked, retry once with approval scoped
-to the exact `regurgitate recall` or `regurgitate experience` prefix; never
-a shell wrapper, broader access, or credential changes.
+If the credential store is sandbox-blocked, retry once with approval scoped to
+the exact `regurgitate recall` or `regurgitate experience` prefix; never use a
+shell wrapper, broader access, or credential changes.
 
 ## Preserve the boundary
 

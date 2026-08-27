@@ -318,9 +318,11 @@ where
             &matcher,
             options,
             candidates,
-            &legacy_errors,
-            &references,
-            context.risk_sensitive(),
+            RankProjection {
+                legacy_errors: &legacy_errors,
+                references: &references,
+                reserve_failure: context.risk_sensitive(),
+            },
             now,
         );
         Ok(budgeted_result(
@@ -575,14 +577,18 @@ struct Cluster {
     errors: BTreeMap<ErrorClass, usize>,
 }
 
+struct RankProjection<'a> {
+    legacy_errors: &'a LegacyErrors,
+    references: &'a HashMap<Uuid, String>,
+    reserve_failure: bool,
+}
+
 fn rank(
     policy: &RankingPolicy,
     matcher: &ContextMatcher<'_>,
     options: RecallOptions,
     candidates: Vec<ExperienceCapsule>,
-    legacy_errors: &LegacyErrors,
-    references: &HashMap<Uuid, String>,
-    reserve_failure: bool,
+    projection: RankProjection<'_>,
     now: DateTime<Utc>,
 ) -> (Vec<ExperienceBriefItem>, usize) {
     let mut clusters: BTreeMap<ExperienceIdentity, Cluster> = BTreeMap::new();
@@ -626,7 +632,7 @@ fn rank(
                 }
             })
             .collect();
-        let legacy = legacy_errors.contains_key(&capsule.id);
+        let legacy = projection.legacy_errors.contains_key(&capsule.id);
         let representative_rank = (
             u8::from(capsule.has_text()),
             scope_weight * applicability,
@@ -664,7 +670,7 @@ fn rank(
                 *cluster.failure_reasons.entry(reason).or_default() += 1;
             }
         }
-        if let Some(errors) = legacy_errors.get(&capsule.id) {
+        if let Some(errors) = projection.legacy_errors.get(&capsule.id) {
             for (error, count) in errors {
                 *cluster.errors.entry(*error).or_default() += count;
             }
@@ -710,7 +716,7 @@ fn rank(
                 };
             let representative = cluster.representative;
             let item = ExperienceBriefItem {
-                reference: references.get(&representative.id).cloned(),
+                reference: projection.references.get(&representative.id).cloned(),
                 scope: representative.scope,
                 task: representative.task,
                 procedure: representative.procedure.summary(),
@@ -748,7 +754,7 @@ fn rank(
             .then_with(|| right.2.cmp(&left.2))
             .then_with(|| left.3.cmp(&right.3))
     });
-    if reserve_failure
+    if projection.reserve_failure
         && let Some(index) = ranked.iter().position(|entry| {
             let item = &entry.4;
             item.failures > 0 || item.challenged

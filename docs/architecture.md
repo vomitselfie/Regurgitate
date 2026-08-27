@@ -54,7 +54,7 @@ success. `print-claude-config` still emits a fragment for manual use, while
 The installer preserves unrelated settings and personal hook groups, and
 refuses malformed, disabled, or matcher-restricted Regurgitate configurations.
 
-## Experience flow (schema v3)
+## Experience flow (schema v4)
 
 Provider hooks report execution status, not whether an approach produced a
 correct result. `regurgitate experience record` supplies that semantic
@@ -62,9 +62,11 @@ boundary as an **experience capsule**: a controlled task, a compositional
 `Procedure` (mutation / verification / execution / research / integration
 dimensions plus up to six ordered steps), a semantic `success` or `failure`
 with an optional controlled `FailureReason`, controlled applicability tags
-(artifact kind, phase, ecosystem, tool family, risk shapes), a minimal
-environment fingerprint (tool family, major version, host class), a
-lifecycle state, and a bounded evidence log.
+(artifact kind, phase, ecosystem, tool family, risk shapes), a lifecycle
+state, and a bounded evidence log. Each evidence entry carries its own minimal
+environment fingerprint (tool family, major version, host class), controlled
+source/verification/attestation, and optional opaque cohort and confirmation
+receipt digest.
 
 The only natural language in the vault is three deliberately authored
 sentences: `situation` (≤ 240 chars), `lesson` (≤ 320), and `caveat`
@@ -80,7 +82,11 @@ opaque id, an HMAC scope token, an HMAC origin (project) token, two
 timestamps, and version numbers; everything else is inside an
 XChaCha20-Poly1305 envelope whose associated data binds those columns, so a
 row cannot be moved between scopes, origins, or times. Storage never gains a
-semantic plaintext column.
+semantic plaintext column. The versioned encrypted codec reads schema v3 and
+v4 but writes only v4. It upgrades v3 environments onto their evidence entries
+in memory; read-only recall never rewrites a row, while its next real mutation
+lazily re-encrypts the same identity as v4. The encryption envelope remains
+version 1.
 
 Before inserting, the experience service loads a bounded window from the
 target scope, decrypts it in memory, and looks for a capsule with the same
@@ -88,8 +94,10 @@ controlled identity (task + procedure + applicability) whose situation text
 is equivalent by ephemeral token similarity. An equivalent capsule is
 **confirmed** (evidence appended, `last_confirmed_at` advanced) instead of
 duplicated. An equivalent situation with a dissimilar lesson marks both
-capsules **challenged**; `experience supersede` resolves such conflicts
-explicitly, and `obsolete` retires a lesson. Superseded and obsolete capsules
+capsules **challenged**. Recovery requires three distinct supporting
+post-challenge cohorts; opposing evidence resets progress. `experience
+supersede` resolves such conflicts explicitly, and `obsolete` retires a lesson.
+Superseded and obsolete capsules
 never enter normal recall; challenged ones surface flagged and down-weighted.
 No similarity vectors or decrypted working sets are retained after the call.
 
@@ -111,7 +119,7 @@ their last confirmation alongside old events.
 
 Recall is two-stage and read-only. Stage one normalizes the task
 ephemerally—explicit controlled metadata (`--task`, `--phase`, `--artifact`,
-`--ecosystem`, `--tool-family`) outranks keyword inference from `--query`,
+`--ecosystem`, `--tool-family`, `--tool-major`, `--risk`) outranks keyword inference from `--query`,
 and the query text is zeroized—then loads a bounded candidate window from
 the project scope (capsules plus legacy rows). Only if fewer than a handful of
 applicable active project capsules exist does it expand outward to workspace,
@@ -126,12 +134,14 @@ Stage two reranks the decrypted window. Every ranking constant lives in one
   dimension and an untagged capsule scores half on a dimension the context
   names;
 - per-evidence weight `w = W_scope · exp(−ln2 · age / H_scope) · a ·
-  W_lifecycle` with scope priors 1.00 / 0.85 / 0.65 / 0.55 / 0.35, half-lives
+  W_lifecycle · W_version · W_provenance` with scope priors 1.00 / 0.85 / 0.65 / 0.55 / 0.35, half-lives
   of 120 / 120 / 180 / 60 / 180 days, and lifecycle weights active 1,
   challenged 0.35, otherwise 0;
+- explicit cohorts are capped at their strongest observation; unattributed
+  evidence is grouped by UTC day plus controlled provenance and environment;
 - a Beta(1 + ΣS, 1 + ΣF) posterior with an 80 % credible interval computed
-  from a regularized incomplete beta (no external numeric dependency) and a
-  Kish effective sample size `n_eff = (Σw)² / Σw²`;
+  from a regularized incomplete beta (no external numeric dependency), with
+  effective evidence bounded by cohort-level Kish size and absolute mass;
 - guidance only when `n_eff ≥ 2.5`: `prefer` if the interval's lower bound is
   ≥ 0.65, `avoid` if its upper bound is ≤ 0.35, `mixed` if the mean sits
   between the thresholds, otherwise no label (the posterior stays visible);
@@ -140,7 +150,9 @@ Stage two reranks the decrypted window. Every ranking constant lives in one
   0.15·confidence + 0.10·recency + 0.05·scope prior`, plus a small bonus for
   context-bearing capsules.
 
-The serialized brief carries no identifiers or timestamps and is trimmed
+Broader scopes require situation and lesson context. Risk-sensitive requests
+move their best applicable failed or challenged lesson ahead of trimming. The
+serialized brief carries no identifiers or timestamps and is trimmed
 from the bottom until it fits the token budget; the hard maximum is still
 enforced before storage is queried.
 
@@ -158,9 +170,10 @@ Preflight is stricter than `recall` on purpose: once a project has lessons
 with moderate or strong evidence (`n_eff ≥ 2.5`) it injects only those. When
 nothing that strong exists yet it bootstraps with at most two capsules tagged
 `unconfirmed`, so evidence can start accumulating at all. Every recalled
-capsule carries an opaque `ref`; `experience confirm --match <ref>` appends
-one evidence entry to exactly that capsule in whatever scope it lives, which
-is the deterministic path from "shown" to "trusted". A budget-trimmed brief
+capsule carries an authenticated, stateless `ref`; `experience confirm
+--match <ref>` appends one evidence entry to exactly that capsule in whatever
+scope it lives. Replaying one receipt is idempotent, and issuing it leaves the
+read-only database untouched. A budget-trimmed brief
 ends with an "N more omitted" line. The
 Claude config printer and installer add that hook next to the two recording
 hooks. Preflight never fails a host prompt: a missing database or key simply

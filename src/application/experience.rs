@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use crate::core::{
     ApplicabilityTags, Caveat, EXPERIENCE_SCHEMA_VERSION, Ecosystem, EnvironmentFingerprint,
-    EvidenceEntry, ExperienceCapsule, FailureReason, HostClass, Lesson, MemoryLifecycle,
-    MemoryScope, Procedure, SemanticOutcome, Situation, TaskKind, jaccard,
+    EvidenceEntry, EvidenceVerification, ExperienceCapsule, FailureReason, HostClass, Lesson,
+    MemoryLifecycle, MemoryScope, Procedure, SemanticOutcome, Situation, TaskKind,
+    VerificationMode, jaccard,
 };
 
 use super::{ProjectLocator, ProjectResolver};
@@ -233,8 +234,9 @@ where
         if environment.host_class.is_none() {
             environment.host_class = HostClass::current();
         }
-        let entry =
+        let mut entry =
             EvidenceEntry::agent_reported(now, input.outcome, input.failure_reason, environment);
+        entry.verification = evidence_verification(&input.procedure);
         let mut candidate = ExperienceCapsule {
             id: Uuid::new_v4(),
             project_id,
@@ -361,6 +363,7 @@ where
                 host_class: HostClass::current(),
             },
         );
+        entry.verification = evidence_verification(&capsule.procedure);
         entry.receipt_digest = receipt_digest;
         capsule.confirm_with_recovery(entry, CHALLENGE_RESOLUTION_EVIDENCE);
         capsule.validate()?;
@@ -449,6 +452,15 @@ where
             1 => Ok(matches.remove(0)),
             _ => bail!("the selector is ambiguous; supply more characters"),
         }
+    }
+}
+
+fn evidence_verification(procedure: &Procedure) -> EvidenceVerification {
+    match procedure.verification {
+        Some(VerificationMode::Targeted) => EvidenceVerification::Targeted,
+        Some(VerificationMode::Full) => EvidenceVerification::Full,
+        Some(VerificationMode::Native) => EvidenceVerification::Native,
+        None => EvidenceVerification::None,
     }
 }
 
@@ -706,6 +718,12 @@ mod tests {
             now + chrono::Duration::hours(1)
         );
         assert!(capsules[0].evidence[0].environment.host_class.is_some());
+        assert!(
+            capsules[0]
+                .evidence
+                .iter()
+                .all(|entry| entry.verification == EvidenceVerification::Native)
+        );
     }
 
     #[test]
