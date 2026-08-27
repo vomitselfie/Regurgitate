@@ -44,6 +44,20 @@ Schema v4 is implemented as a backward-compatible vertical upgrade:
 Active agent ownership, leases, and messaging remain a separate future
 ephemeral coordination concern rather than durable experience memory.
 
+## v0.10 direction: almost-invisible memory
+
+The [v0.10 plan](v0.10-invisible-memory-plan.md) optimizes the agent-facing
+experience around high precision and low ceremony:
+
+- selective, non-blocking skill policy with no mandatory end-of-task record;
+- compact `matches`, `no_matches`, and `unavailable` recall statuses;
+- controlled project-marker and ephemeral risk inference beneath explicit
+  flags and query hints;
+- field-specific specificity rejection and same-cohort duplicate no-ops;
+- read-only aggregate authenticated-confirmation metrics; and
+- initialized Git-marker validation so sandbox placeholders cannot merge
+  unrelated scratch projects.
+
 ## Working now
 
 - AoE-managed Codex session discovery and strict normalization;

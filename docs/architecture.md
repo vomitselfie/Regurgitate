@@ -119,8 +119,10 @@ their last confirmation alongside old events.
 
 Recall is two-stage and read-only. Stage one normalizes the task
 ephemerally—explicit controlled metadata (`--task`, `--phase`, `--artifact`,
-`--ecosystem`, `--tool-family`, `--tool-major`, `--risk`) outranks keyword inference from `--query`,
-and the query text is zeroized—then loads a bounded candidate window from
+`--ecosystem`, `--tool-family`, `--tool-major`, `--risk`) outranks keyword
+inference from `--query`, which outranks controlled project defaults inferred
+from allowlisted marker presence. Query text is zeroized. Detection never
+reads marker or source contents and never invokes a project tool. Recall then loads a bounded candidate window from
 the project scope (capsules plus legacy rows). Only if fewer than a handful of
 applicable active project capsules exist does it expand outward to workspace,
 ecosystem, machine, and global buckets, and broader capsules must clear a
@@ -259,11 +261,11 @@ transcript fallback—records into the same encrypted store.
 ## Agent recall integration
 
 The `skills/regurgitate-recall` package is a thin consumer of the public CLI.
-Its `SKILL.md` recalls once for any non-trivial task before exploration,
-passing controlled metadata where the agent can infer it, and records or
-confirms one bounded experience capsule after a meaningful milestone or
-rejected approach. It tells the agent to verify recalled lessons and
-explicitly distinguishes procedure outcome from tool exit status. It does not
+Its `SKILL.md` recalls once only when prior experience could materially change
+non-trivial work, confirms a lesson only when it influenced the result, and
+records at most one capsule only for a novel reusable verified lesson. Simple
+questions, mechanical edits, formatting, injected briefs, `no_matches`, and
+`unavailable` results cause no additional memory workflow. It does not
 depend on AoE, provider transcript formats, SQLite, or key management.
 
 An agent command sandbox may deny access to the operating-system credential
@@ -304,7 +306,7 @@ lock before applying.
 
 A project is the repository, not the directory an agent happens to run
 from. The project resolver canonicalizes the supplied path, then walks up to
-the nearest `.git`: a subdirectory resolves to its checkout root, and a
+the nearest initialized `.git` directory (identified by its regular `HEAD`): a subdirectory resolves to its checkout root, and a
 linked git worktree (whose `.git` is a file naming
 `<main>/.git/worktrees/<name>`) resolves to the main checkout. A path with no
 enclosing `.git` keeps its own identity, so scratch directories stay
@@ -350,7 +352,8 @@ UUID is verified before an event enters aggregation.
 
 Recall retrieves capsules, legacy practice rows, and hook executions through
 separate bounded queries, so high-volume telemetry cannot evict useful
-lessons from the candidate window. `experiences` lists ranked lessons (see
+lessons from the candidate window. `status` is `matches`, `no_matches`, or
+`unavailable`; the latter two reduce to one compact object. `experiences` lists ranked lessons (see
 "Recall flow") with their posterior, interval, effective evidence, and, when
 the evidence supports it, `prefer`, `avoid`, or `mixed` guidance.
 `--failures` keeps only capsules with failed evidence. When the result limit
@@ -375,12 +378,12 @@ evaluation. Budgets above 1,000 tokens are rejected before storage is queried.
 
 The agent-facing instruction bundle is part of the same context boundary. A
 regression test keeps the embedded `SKILL.md` at or below 3,000 bytes. The
-current bundle, including semantic-learning and sandbox guidance, is 2,837
+current bundle, including semantic-learning and sandbox guidance, is 2,779
 bytes, down from the initial 4,819. Using the CLI's conservative
-four-bytes-per-token estimate, that is approximately 710 tokens instead of
-1,205. Together with the default 300-token recall budget, the
-Regurgitate-controlled ceiling for an activated default recall is roughly 1,010
-tokens instead of 1,805, a 44% reduction. Successful recording hooks remain
+four-bytes-per-token estimate, that is approximately 695 tokens instead of
+1,205. Together with the skill's 240-token recall budget, the
+Regurgitate-controlled ceiling for an activated recall is roughly 935 tokens
+instead of 1,805, a 48% reduction. Successful recording hooks remain
 silent and therefore add no Regurgitate output to agent context. AoE-rendered skills
 also include one instruction containing the local worker path, whose length is
 host-dependent. These figures describe the tracked skill and Regurgitate-owned
@@ -401,6 +404,12 @@ The application service reduces probe results to `ready`, `not_configured`, or
 `unavailable` component states and an overall status. Backend errors are not
 included in the report, so keyring messages, database paths, and damaged bytes
 cannot reach CLI JSON.
+
+`experience metrics` is a separate read-only aggregate projection over one
+project's encrypted capsules. It reports lifecycle totals, evidence count, and
+successful or failed authenticated confirmations without lesson text or IDs.
+Recall hit-rate and latency remain explicit paired-benchmark measurements;
+recall itself writes no telemetry.
 
 Optional hook readiness follows the same reduction. The runtime inspects only
 AoE, Codex, and Claude config paths explicitly supplied to `status`. AoE and

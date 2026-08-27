@@ -1,4 +1,4 @@
 interface:
   display_name: "Regurgitate Recall"
-  short_description: "Recall prior experience and record one bounded lesson"
-  default_prompt: "Use $regurgitate-recall to retrieve relevant prior experience before exploring and to record one bounded experience capsule after verified work or a rejected approach."
+  short_description: "Selectively recall and curate procedural experience"
+  default_prompt: "Use $regurgitate-recall only when prior experience could materially change non-trivial work, confirm lessons that were applied, and record at most one novel verified lesson."
