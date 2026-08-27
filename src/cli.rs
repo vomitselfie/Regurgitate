@@ -385,7 +385,8 @@ pub(crate) enum ExperienceCommand {
         #[arg(long)]
         caveat: Option<String>,
 
-        /// Comma-separated generic procedure dimensions (domain detail goes in --lesson).
+        /// Comma-separated generic procedure dimensions; choose at most one value from each
+        /// labeled dimension (domain detail goes in --lesson).
         /// Mutation: structured-patch, direct-text-mutation, incremental-native-regeneration,
         /// bulk-change. Verification: targeted-verification, full-verification,
         /// native-verification. Execution: preview-then-apply, atomic-write, native-tool.
@@ -407,20 +408,23 @@ pub(crate) enum ExperienceCommand {
         #[arg(long)]
         failure_reason: Option<FailureReason>,
 
-        /// Applicability phase.
-        #[arg(long)]
+        /// Applicability phase: diagnose, mutate, verify, release, research, integration.
+        #[arg(long, verbatim_doc_comment)]
         phase: Option<Phase>,
 
-        /// Applicability artifact kind.
-        #[arg(long)]
+        /// Applicability artifact kind: source, generated-source, native-cad, config, dataset,
+        /// binary, docs.
+        #[arg(long, verbatim_doc_comment)]
         artifact: Option<ArtifactKind>,
 
         /// Applicability ecosystem (required for --scope ecosystem).
         #[arg(long)]
         ecosystem: Option<Ecosystem>,
 
-        /// Applicability and environment tool family.
-        #[arg(long)]
+        /// Applicability and environment tool family: cargo, pytest, npm, pnpm, yarn, jest,
+        /// make, cmake, gcc, clang, nvcc, git, docker, kubectl, terraform, kicad, playwright,
+        /// other.
+        #[arg(long, verbatim_doc_comment)]
         tool_family: Option<ToolFamily>,
 
         /// Risk shapes, comma-separated or repeated: destructive, expensive, flaky,
@@ -747,6 +751,28 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn experience_record_help_exposes_controlled_vocabularies_and_dimension_rule() {
+        let error = match Cli::try_parse_from(["regurgitate", "experience", "record", "--help"]) {
+            Ok(_) => panic!("help should exit through clap's display-help error"),
+            Err(error) => error,
+        };
+        let help = error.to_string();
+
+        for expected in [
+            "choose at most one value from each",
+            "diagnose, mutate, verify, release, research, integration",
+            "source, generated-source, native-cad, config, dataset",
+            "cargo, pytest, npm, pnpm, yarn, jest",
+            "kubectl, terraform, kicad, playwright",
+        ] {
+            assert!(
+                help.contains(expected),
+                "missing {expected:?} from help:\n{help}"
+            );
+        }
     }
 
     #[test]
