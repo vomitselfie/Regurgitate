@@ -25,6 +25,9 @@ pub const EQUIVALENT_SITUATION_SIMILARITY: f64 = 0.6;
 pub const CONTRADICTING_LESSON_SIMILARITY: f64 = 0.35;
 /// Evidence entries a challenged capsule needs before it is active again.
 pub const CHALLENGE_RESOLUTION_EVIDENCE: usize = 3;
+/// Aggregate diagnostics stay bounded even when a long-lived store contains
+/// more capsules. The report marks truncation rather than enumerating forever.
+pub const MAX_METRICS_CAPSULES: usize = 10_000;
 
 /// Which retrieval bucket a capsule lives in. Storage derives an HMAC token
 /// from this value; the plaintext never reaches the database.
@@ -452,6 +455,23 @@ where
             .collect())
     }
 
+    /// Read-only aggregate usefulness projection. Confirmation receipts are
+    /// already encrypted evidence; this adds no recall-time telemetry.
+    pub fn metrics(&self, project: &ProjectLocator) -> Result<ExperienceMetrics>
+    where
+        H: crate::query::ProjectLookup,
+    {
+        let Some(project_id) = self.history.find_project(project)? else {
+            return Ok(ExperienceMetrics::default());
+        };
+        let mut capsules = self
+            .history
+            .project_experiences(project_id, MAX_METRICS_CAPSULES + 1)?;
+        let truncated = capsules.len() > MAX_METRICS_CAPSULES;
+        capsules.truncate(MAX_METRICS_CAPSULES);
+        Ok(ExperienceMetrics::from_capsules(&capsules, truncated))
+    }
+
     fn select(&self, project_id: Uuid, selector: &str) -> Result<ExperienceCapsule> {
         let selector = selector.trim().to_ascii_lowercase().replace('-', "");
         if selector.len() < 8
@@ -519,6 +539,51 @@ pub struct ExperienceSummary {
     pub failures: usize,
     pub created_at: DateTime<Utc>,
     pub last_confirmed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ExperienceMetrics {
+    pub capsules: usize,
+    pub active: usize,
+    pub challenged: usize,
+    pub superseded: usize,
+    pub obsolete: usize,
+    pub evidence: usize,
+    pub authenticated_confirmations: usize,
+    pub successful_confirmations: usize,
+    pub failed_confirmations: usize,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+impl ExperienceMetrics {
+    fn from_capsules(capsules: &[ExperienceCapsule], truncated: bool) -> Self {
+        let mut metrics = Self {
+            capsules: capsules.len(),
+            truncated,
+            ..Self::default()
+        };
+        for capsule in capsules {
+            match capsule.lifecycle {
+                MemoryLifecycle::Active => metrics.active += 1,
+                MemoryLifecycle::Challenged => metrics.challenged += 1,
+                MemoryLifecycle::Superseded => metrics.superseded += 1,
+                MemoryLifecycle::Obsolete => metrics.obsolete += 1,
+            }
+            metrics.evidence += capsule.evidence.len();
+            for entry in &capsule.evidence {
+                if entry.receipt_digest.is_none() {
+                    continue;
+                }
+                metrics.authenticated_confirmations += 1;
+                match entry.outcome {
+                    SemanticOutcome::Success => metrics.successful_confirmations += 1,
+                    SemanticOutcome::Failure => metrics.failed_confirmations += 1,
+                }
+            }
+        }
+        metrics
+    }
 }
 
 impl From<&ExperienceCapsule> for ExperienceSummary {
@@ -690,6 +755,12 @@ mod tests {
         }
     }
 
+    impl crate::query::ProjectLookup for Rc<MemoryStore> {
+        fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>> {
+            Ok(Some(self.resolve_project(locator)?))
+        }
+    }
+
     fn input(situation: &str, lesson: &str, outcome: SemanticOutcome) -> ExperienceInput {
         ExperienceInput {
             scope: MemoryScope::Project,
@@ -787,6 +858,52 @@ mod tests {
             .unwrap();
         assert_eq!(independent.status, ExperienceStatus::Confirmed);
         assert_eq!(independent.evidence, 2);
+    }
+
+    #[test]
+    fn metrics_expose_only_aggregate_authenticated_feedback() {
+        let store = Rc::new(MemoryStore::default());
+        let service = ExperienceService::new(Rc::clone(&store));
+        let now = Utc::now();
+        service
+            .record_at(
+                project(),
+                input(
+                    "Generated native artifact where parser acceptance is weaker than native checks.",
+                    "Change one placement class at a time, then run native verification.",
+                    SemanticOutcome::Success,
+                ),
+                now,
+            )
+            .unwrap();
+        {
+            let mut capsules = store.capsules.borrow_mut();
+            capsules[0].lifecycle = MemoryLifecycle::Challenged;
+            capsules[0].challenge = Some(crate::core::ChallengeState {
+                challenged_at: now,
+                supporting_outcome: SemanticOutcome::Success,
+                recovery_evidence: 0,
+            });
+            let mut feedback = EvidenceEntry::agent_reported(
+                now + chrono::Duration::hours(1),
+                SemanticOutcome::Failure,
+                Some(FailureReason::VerificationFailed),
+                EnvironmentFingerprint::default(),
+            );
+            feedback.receipt_digest = Some([7; 32]);
+            capsules[0].evidence.push(feedback);
+        }
+
+        let metrics = service.metrics(&project()).unwrap();
+        assert_eq!(metrics.capsules, 1);
+        assert_eq!(metrics.challenged, 1);
+        assert_eq!(metrics.evidence, 2);
+        assert_eq!(metrics.authenticated_confirmations, 1);
+        assert_eq!(metrics.successful_confirmations, 0);
+        assert_eq!(metrics.failed_confirmations, 1);
+        let encoded = serde_json::to_string(&metrics).unwrap();
+        assert!(!encoded.contains("Generated"));
+        assert!(!encoded.contains("placement"));
     }
 
     #[test]

@@ -9,11 +9,11 @@ use zeroize::Zeroizing;
 use crate::{
     adapters::{ManagedCodexSource, aoe, aoe_hook, claude, codex},
     application::{
-        ExperienceInput, ExperienceReport, ExperienceService, ExperienceSummary, ForgetReport,
-        ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation, HookProvider,
-        HookReadiness, IngestionReport, IngestionService, ProjectLocator, RecordingReport,
-        RecordingService, RetentionPolicy, RetentionReport, RetentionService, RetentionStatus,
-        SessionEventSource, TransitionReport, ValidatedRetentionPolicy,
+        ExperienceInput, ExperienceMetrics, ExperienceReport, ExperienceService, ExperienceSummary,
+        ForgetReport, ForgetService, ForgetStatus, HealthReport, HealthService, HookObservation,
+        HookProvider, HookReadiness, IngestionReport, IngestionService, ProjectLocator,
+        RecordingReport, RecordingService, RetentionPolicy, RetentionReport, RetentionService,
+        RetentionStatus, SessionEventSource, TransitionReport, ValidatedRetentionPolicy,
     },
     cli::{Cli, Command, ExperienceCommand, HookAgentArg, PreflightAgentArg},
     context::infer_project_defaults,
@@ -503,6 +503,11 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                 list_experiences(project, limit, data_home, &SystemKeyProvider::default())?;
             print_json(&listing)
         }
+        ExperienceCommand::Metrics { project, data_home } => {
+            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
+            let metrics = experience_metrics(project, data_home, &SystemKeyProvider::default())?;
+            print_compact_json(&metrics)
+        }
         ExperienceCommand::Challenge {
             project,
             selector,
@@ -645,6 +650,17 @@ fn list_experiences(
         return Ok(Vec::new());
     };
     ExperienceService::new(store).list(&ProjectLocator::new(project), limit.clamp(1, 200))
+}
+
+fn experience_metrics(
+    project: PathBuf,
+    data_home: PathBuf,
+    key_provider: &impl ExistingMasterKeyProvider,
+) -> Result<ExperienceMetrics> {
+    let Some(store) = open_existing_history(&data_home, false, key_provider)? else {
+        return Ok(ExperienceMetrics::default());
+    };
+    ExperienceService::new(store).metrics(&ProjectLocator::new(project))
 }
 
 fn transition_experience(
@@ -1426,6 +1442,21 @@ mod tests {
         .unwrap();
 
         assert!(result.experiences.is_empty());
+        assert!(!data_home.exists());
+    }
+
+    #[test]
+    fn experience_metrics_missing_history_is_empty_and_read_only() {
+        let temp = tempdir().unwrap();
+        let data_home = temp.path().join("PRIVATE_DATA_HOME");
+        let metrics = experience_metrics(
+            temp.path().to_path_buf(),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+
+        assert_eq!(metrics, ExperienceMetrics::default());
         assert!(!data_home.exists());
     }
 

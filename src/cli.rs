@@ -468,6 +468,15 @@ pub(crate) enum ExperienceCommand {
         data_home: Option<PathBuf>,
     },
 
+    /// Report aggregate capsule and authenticated-confirmation usefulness metrics.
+    Metrics {
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+
+        #[arg(long, hide = true)]
+        data_home: Option<PathBuf>,
+    },
+
     /// Mark a capsule challenged by contradicting evidence.
     Challenge {
         #[arg(long)]
@@ -806,6 +815,15 @@ mod tests {
         } = defaulted_record.command
         else {
             panic!("expected experience record");
+        };
+        assert_eq!(project, PathBuf::from("."));
+
+        let metrics = Cli::try_parse_from(["regurgitate", "experience", "metrics"]).unwrap();
+        let Command::Experience {
+            command: ExperienceCommand::Metrics { project, .. },
+        } = metrics.command
+        else {
+            panic!("expected experience metrics");
         };
         assert_eq!(project, PathBuf::from("."));
 

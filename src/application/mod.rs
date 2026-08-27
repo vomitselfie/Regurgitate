@@ -10,9 +10,9 @@ mod retention;
 pub use cursor::{CURRENT_CURSOR_VERSION, IngestionCursor, PendingEvent};
 pub use experience::{
     CHALLENGE_RESOLUTION_EVIDENCE, CONTRADICTING_LESSON_SIMILARITY, ConfirmationReference,
-    EQUIVALENT_SITUATION_SIMILARITY, ExperienceInput, ExperienceReport, ExperienceService,
-    ExperienceStatus, ExperienceStore, ExperienceSummary, MAX_DEDUP_CANDIDATES, ScopeKey,
-    TransitionReport, selector_for, workspace_locator,
+    EQUIVALENT_SITUATION_SIMILARITY, ExperienceInput, ExperienceMetrics, ExperienceReport,
+    ExperienceService, ExperienceStatus, ExperienceStore, ExperienceSummary, MAX_DEDUP_CANDIDATES,
+    MAX_METRICS_CAPSULES, ScopeKey, TransitionReport, selector_for, workspace_locator,
 };
 pub use forgetting::{ForgetReport, ForgetService, ForgetStatus, ProjectHistoryEraser};
 pub use health::{
