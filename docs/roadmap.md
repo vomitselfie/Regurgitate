@@ -91,7 +91,8 @@ experience around high precision and low ceremony:
   matcher group, and additive Claude terminal events;
 - version-gated CI releases with verified Linux x86-64, Apple Silicon, and
   Intel macOS archives plus combined checksums;
-  and
+- a checksum-verifying standalone bootstrap with atomic user-level binary
+  installation, pinned Codex/Claude setup, and safe stock-install migration;
 - adversarial privacy, authentication, project-isolation, and
   source-replacement tests.
 

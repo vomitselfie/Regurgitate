@@ -153,6 +153,10 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE")]
         config: PathBuf,
 
+        /// Pin the hook to this executable instead of resolving regurgitate from PATH.
+        #[arg(long, value_name = "FILE")]
+        executable: Option<PathBuf>,
+
         /// Apply the displayed changes instead of previewing them.
         #[arg(long)]
         apply: bool,
@@ -164,6 +168,10 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE")]
         config: PathBuf,
 
+        /// Pin hooks to this executable instead of resolving regurgitate from PATH.
+        #[arg(long, value_name = "FILE")]
+        executable: Option<PathBuf>,
+
         /// Apply the displayed changes instead of previewing them.
         #[arg(long)]
         apply: bool,
@@ -174,6 +182,10 @@ pub(crate) enum Command {
         /// Agent host's skills directory; Regurgitate adds a regurgitate-recall child.
         #[arg(long, value_name = "DIRECTORY")]
         target: PathBuf,
+
+        /// Pin skill commands to this executable instead of resolving regurgitate from PATH.
+        #[arg(long, value_name = "FILE")]
+        executable: Option<PathBuf>,
 
         /// Apply the displayed installation instead of previewing it.
         #[arg(long)]
@@ -1086,6 +1098,7 @@ mod tests {
                 .unwrap();
         let Command::InstallSkill {
             target,
+            executable,
             apply,
             replace,
         } = preview.command
@@ -1093,6 +1106,7 @@ mod tests {
             panic!("expected install-skill command");
         };
         assert_eq!(target, PathBuf::from("/agent/skills"));
+        assert_eq!(executable, None);
         assert!(!apply);
         assert!(!replace);
 
@@ -1122,6 +1136,20 @@ mod tests {
         };
         assert!(!apply);
         assert!(replace);
+
+        let pinned = Cli::try_parse_from([
+            "regurgitate",
+            "install-skill",
+            "--target",
+            "/agent/skills",
+            "--executable",
+            "/opt/regurgitate",
+        ])
+        .unwrap();
+        let Command::InstallSkill { executable, .. } = pinned.command else {
+            panic!("expected install-skill command");
+        };
+        assert_eq!(executable, Some(PathBuf::from("/opt/regurgitate")));
     }
 
     #[test]
@@ -1162,10 +1190,16 @@ mod tests {
             "/codex/config.toml",
         ])
         .unwrap();
-        let Command::InstallCodexHook { config, apply } = preview.command else {
+        let Command::InstallCodexHook {
+            config,
+            executable,
+            apply,
+        } = preview.command
+        else {
             panic!("expected install-codex-hook command");
         };
         assert_eq!(config, PathBuf::from("/codex/config.toml"));
+        assert_eq!(executable, None);
         assert!(!apply);
 
         let applied = Cli::try_parse_from([
@@ -1180,6 +1214,20 @@ mod tests {
             panic!("expected install-codex-hook command");
         };
         assert!(apply);
+
+        let pinned = Cli::try_parse_from([
+            "regurgitate",
+            "install-codex-hook",
+            "--config",
+            "/codex/config.toml",
+            "--executable",
+            "/opt/regurgitate",
+        ])
+        .unwrap();
+        let Command::InstallCodexHook { executable, .. } = pinned.command else {
+            panic!("expected install-codex-hook command");
+        };
+        assert_eq!(executable, Some(PathBuf::from("/opt/regurgitate")));
     }
 
     #[test]
@@ -1191,10 +1239,16 @@ mod tests {
             "/claude/settings.json",
         ])
         .unwrap();
-        let Command::InstallClaudeHook { config, apply } = preview.command else {
+        let Command::InstallClaudeHook {
+            config,
+            executable,
+            apply,
+        } = preview.command
+        else {
             panic!("expected install-claude-hook command");
         };
         assert_eq!(config, PathBuf::from("/claude/settings.json"));
+        assert_eq!(executable, None);
         assert!(!apply);
 
         let applied = Cli::try_parse_from([

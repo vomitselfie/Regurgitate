@@ -113,15 +113,60 @@ native Codex hook; the two sources can observe the same session.
 
 ### Standalone installation
 
-You can also install Regurgitate without AoE. There are two pieces:
+You can install Regurgitate without AoE in one command. Choose the agent to
+connect; the installer downloads into a temporary directory, verifies the
+release archive against `SHA256SUMS`, installs the binary atomically under
+`~/.local/bin`, and safely adds the agent's hook and recall skill.
 
-1. The `regurgitate` program records and reads encrypted history.
-2. A small agent skill tells your agent when to use it.
+#### Codex
 
-#### 1. Install the program
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/vomitselfie/Regurgitate/releases/latest/download/install.sh |
+  sh -s -- --agent codex
+```
+
+#### Claude Code
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/vomitselfie/Regurgitate/releases/latest/download/install.sh |
+  sh -s -- --agent claude
+```
+
+Restart the connected agent. The first recall or learning request may ask for
+permission to reach your operating system's credential store. Approve only the
+exact Regurgitate command, never a general shell command.
+
+The installer pins both the hook and skill to the verified executable, so the
+agent does not depend on shell `PATH` configuration. It never uses `sudo`, never
+edits a shell profile, preserves unrelated agent configuration, and refuses a
+differing skill unless you explicitly add `--replace-skill`.
+
+To update a standalone installation, rerun the same command. To install only
+the binary, use `--agent none`. `--bin-dir <directory>` changes the destination,
+and `--version <version>` installs a specific release.
+
+<details>
+<summary>Inspect the installer before running it</summary>
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/vomitselfie/Regurgitate/releases/latest/download/install.sh \
+  -o regurgitate-install.sh
+less regurgitate-install.sh
+sh regurgitate-install.sh --agent codex
+```
+
+</details>
+
+<details>
+<summary>Manual verified installation</summary>
+
+Regurgitate still ships three platform archives:
 
 Open the [latest release](https://github.com/vomitselfie/Regurgitate/releases/latest)
-and download the archive for your computer:
+and download `SHA256SUMS` plus the archive for your computer:
 
 | Computer | Asset name ends with |
 | --- | --- |
@@ -129,83 +174,24 @@ and download the archive for your computer:
 | Apple Silicon Mac | `macos-aarch64.tar.gz` |
 | Intel Mac | `macos-x86_64.tar.gz` |
 
-Extract the archive and put the `regurgitate` file in a directory on your `PATH`,
-such as `~/.local/bin`. Then check it:
-
-```bash
-regurgitate --version
-```
-
-If that says `command not found`, reopen your terminal or ask your agent to add
-`~/.local/bin` to your `PATH`.
-
-If “put it on your PATH” is unfamiliar, ask your coding agent:
-
-> Install the latest Regurgitate release from vomitselfie/Regurgitate for this
-> computer. Verify it against SHA256SUMS, place it in ~/.local/bin, and confirm
-> that `regurgitate --version` works.
-
-<details>
-<summary>Terminal install using GitHub CLI</summary>
-
-```bash
-release="$(gh release view --repo vomitselfie/Regurgitate --json tagName --jq .tagName)"
-case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64) platform="linux-x86_64" ;;
-  Darwin-arm64) platform="macos-aarch64" ;;
-  Darwin-x86_64) platform="macos-x86_64" ;;
-  *) echo "Regurgitate has no release for this platform." >&2; return 1 ;;
-esac
-archive="regurgitate-${release}-${platform}.tar.gz"
-gh release download "$release" --repo vomitselfie/Regurgitate \
-  --pattern "$archive" --pattern SHA256SUMS
-checksum="$(grep -F "  $archive" SHA256SUMS)"
-if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s\n' "$checksum" | sha256sum --check
-else
-  printf '%s\n' "$checksum" | shasum -a 256 --check
-fi
-unpack_dir="$(mktemp -d)"
-tar -xzf "$archive" -C "$unpack_dir"
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$unpack_dir/regurgitate" "$HOME/.local/bin/regurgitate"
-regurgitate --version
-```
+Verify the archive, extract it, place `regurgitate` in a directory on your
+`PATH`, then use the binary's preview-first `install-codex-hook`,
+`install-claude-hook`, and `install-skill` commands. Their `--help` output lists
+the explicit config and skill destinations.
 
 </details>
 
-#### 2. Connect your agent
+#### Avoid mixed installations
 
-Choose the agent you use. You can connect more than one; they share the same
-local encrypted history.
+AoE and standalone installations are separate update channels. AoE's **Set up
+Codex/Claude Code** action pins the agent to AoE's managed binary; the standalone
+installer pins it to the selected `--bin-dir`. Use one setup path per agent.
+`aoe plugin update` does not update a separately installed standalone binary,
+and rerunning the standalone installer does not update AoE's plugin copy.
 
-#### Codex
-
-```bash
-codex_home="${CODEX_HOME:-$HOME/.codex}"
-regurgitate install-codex-hook --config "$codex_home/config.toml" --apply
-regurgitate install-skill --target "$codex_home/skills" --apply
-```
-
-Restart Codex. The first recall or learning request may ask for permission to
-reach your operating system's credential store. Approve only the exact
-`regurgitate recall` or `regurgitate learn` command—not a general shell
-command. Codex's
-[command rules](https://learn.chatgpt.com/docs/agent-configuration/rules) can
-remember that narrow approval.
-
-#### Claude Code
-
-```bash
-claude_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-regurgitate install-claude-hook --config "$claude_home/settings.json" --apply
-regurgitate install-skill --target "$claude_home/skills" --apply
-```
-
-Restart Claude Code. The installer adds to both terminal tool events while
-preserving existing settings and personal hooks. These are Claude Code's
-documented user-level [skill](https://code.claude.com/docs/en/skills) and
-[hook](https://code.claude.com/docs/en/hooks) locations.
+An untouched older PATH-based Regurgitate hook and skill are migrated safely to
+the chosen executable. Personally modified or restricted integrations remain
+untouched and produce a conflict instead.
 
 #### Optional AoE transcript fallback
 
@@ -220,7 +206,7 @@ regurgitate install-aoe-hook \
 
 Use this only when the native Codex hook is not installed.
 
-#### 3. Check it
+#### Check it
 
 Use your agent normally for a moment, then run:
 

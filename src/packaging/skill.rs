@@ -74,6 +74,7 @@ impl SkillPackage {
 enum ExistingInstall {
     Missing,
     Current,
+    CompatibleStandard,
     Different,
 }
 
@@ -107,6 +108,22 @@ pub fn install_skill_with_command(
     install_skill_package(skills_directory, apply, replace, &package)
 }
 
+/// Render one executable path as a single shell command token for an agent
+/// instruction. The path is never executed here.
+pub fn quote_agent_executable(path: &Path) -> Result<String> {
+    let path = path
+        .to_str()
+        .context("Regurgitate executable path is not valid UTF-8")?;
+    if path.is_empty()
+        || path
+            .chars()
+            .any(|character| character.is_control() || character == '`')
+    {
+        bail!("Regurgitate executable path cannot be represented safely in an agent command");
+    }
+    Ok(format!("'{}'", path.replace('\'', "'\"'\"'")))
+}
+
 fn install_skill_package(
     skills_directory: &Path,
     apply: bool,
@@ -123,7 +140,9 @@ fn install_skill_package(
         ExistingInstall::Different if !replace => {
             bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
         }
-        ExistingInstall::Missing | ExistingInstall::Different => {}
+        ExistingInstall::Missing
+        | ExistingInstall::CompatibleStandard
+        | ExistingInstall::Different => {}
     }
 
     if !apply {
@@ -147,7 +166,9 @@ fn install_skill_package(
         ExistingInstall::Different if !replace => {
             bail!("existing {SKILL_NAME} installation differs; preview replacement with --replace");
         }
-        ExistingInstall::Missing | ExistingInstall::Different => {}
+        ExistingInstall::Missing
+        | ExistingInstall::CompatibleStandard
+        | ExistingInstall::Different => {}
     }
 
     let staging =
@@ -157,7 +178,10 @@ fn install_skill_package(
         return Err(error);
     }
 
-    if existing == ExistingInstall::Different {
+    if matches!(
+        existing,
+        ExistingInstall::CompatibleStandard | ExistingInstall::Different
+    ) {
         replace_staging_package(skills_directory, &staging, &destination)?;
         return Ok(report(InstallStatus::Replaced, destination));
     }
@@ -215,6 +239,7 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
         );
     }
 
+    let mut compatible_standard = false;
     for packaged in package.files() {
         let path = destination.join(packaged.relative_path);
         let file_metadata = match fs::symlink_metadata(&path) {
@@ -243,12 +268,54 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
         let standard_skill_is_compatible = packaged.relative_path == "SKILL.md"
             && package.skill != SKILL_CONTENT
             && current == SKILL_CONTENT.as_bytes();
-        if current != packaged.contents.as_bytes() && !standard_skill_is_compatible {
+        if standard_skill_is_compatible {
+            compatible_standard = true;
+        } else if current != packaged.contents.as_bytes() {
             return Ok(ExistingInstall::Different);
         }
     }
 
-    Ok(ExistingInstall::Current)
+    Ok(
+        if compatible_standard && has_only_packaged_layout(destination)? {
+            ExistingInstall::CompatibleStandard
+        } else {
+            if compatible_standard {
+                ExistingInstall::Different
+            } else {
+                ExistingInstall::Current
+            }
+        },
+    )
+}
+
+fn has_only_packaged_layout(destination: &Path) -> Result<bool> {
+    let mut root_entries = fs::read_dir(destination)
+        .with_context(|| format!("could not inspect installed {SKILL_NAME} directory"))?;
+    let mut saw_skill = false;
+    let mut saw_agents = false;
+    for entry in &mut root_entries {
+        let entry = entry.context("could not inspect installed skill entry")?;
+        match entry.file_name().to_str() {
+            Some("SKILL.md") if entry.file_type()?.is_file() => saw_skill = true,
+            Some("agents") if entry.file_type()?.is_dir() => saw_agents = true,
+            _ => return Ok(false),
+        }
+    }
+    if !saw_skill || !saw_agents {
+        return Ok(false);
+    }
+
+    let mut agent_entries = fs::read_dir(destination.join("agents"))
+        .context("could not inspect installed skill agent metadata")?;
+    let mut saw_metadata = false;
+    for entry in &mut agent_entries {
+        let entry = entry.context("could not inspect installed skill agent metadata entry")?;
+        match entry.file_name().to_str() {
+            Some("openai.yaml") if entry.file_type()?.is_file() => saw_metadata = true,
+            _ => return Ok(false),
+        }
+    }
+    Ok(saw_metadata)
 }
 
 fn replace_staging_package(
@@ -425,5 +492,52 @@ mod tests {
         assert!(rendered.contains("regurgitate recall"));
         assert!(rendered.contains("regurgitate experience confirm"));
         assert!(!SKILL_CONTENT.contains(command));
+    }
+
+    #[test]
+    fn pinned_command_safely_migrates_an_untouched_standard_skill() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("agent-skills");
+        install_skill(&target, true, false).unwrap();
+
+        let preview = install_skill_with_command(
+            &target,
+            "'/home/user/.local/bin/regurgitate'",
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+
+        let migrated =
+            install_skill_with_command(&target, "'/home/user/.local/bin/regurgitate'", true, false)
+                .unwrap();
+        assert_eq!(migrated.status, InstallStatus::Replaced);
+        let rendered = fs::read_to_string(migrated.destination.join("SKILL.md")).unwrap();
+        assert!(rendered.contains("'/home/user/.local/bin/regurgitate'"));
+    }
+
+    #[test]
+    fn pinned_command_preserves_a_standard_skill_with_extra_personal_files() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("agent-skills");
+        install_skill(&target, true, false).unwrap();
+        let personal = target.join(SKILL_NAME).join("NOTES.md");
+        fs::write(&personal, "personal notes\n").unwrap();
+
+        let error =
+            install_skill_with_command(&target, "'/home/user/.local/bin/regurgitate'", true, false)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("preview replacement"));
+        assert_eq!(fs::read_to_string(personal).unwrap(), "personal notes\n");
+    }
+
+    #[test]
+    fn agent_executable_paths_are_quoted_without_command_injection() {
+        let quoted = quote_agent_executable(Path::new("/user's tools/regurgitate")).unwrap();
+        assert_eq!(quoted, "'/user'\"'\"'s tools/regurgitate'");
+        assert!(quote_agent_executable(Path::new("/tmp/`unsafe`")).is_err());
+        assert!(quote_agent_executable(Path::new("/tmp/unsafe\npath")).is_err());
     }
 }

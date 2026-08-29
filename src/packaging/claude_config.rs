@@ -146,8 +146,16 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .with_context(|| format!("Claude hooks.{event} must be an array"))?;
+        let standard_command = event_command(event, CLAUDE_HOOK_COMMAND)
+            .expect("every supported event has a standard command");
+        let migrated = migrate_unrestricted_standard_hook(groups, &standard_command, &command)?;
         match regurgitate_hook_coverage(groups, &command)? {
-            RegurgitateHookCoverage::AllTools => continue,
+            RegurgitateHookCoverage::AllTools => {
+                if migrated {
+                    changes.push(event);
+                }
+                continue;
+            }
             RegurgitateHookCoverage::Restricted => {
                 bail!("Regurgitate Claude {event} hook is already restricted by a matcher")
             }
@@ -165,6 +173,45 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let mut content = serde_json::to_string_pretty(&document)?;
     content.push('\n');
     Ok(PreparedConfig { content, changes })
+}
+
+fn migrate_unrestricted_standard_hook(
+    groups: &mut [Value],
+    standard_command: &str,
+    hook_command: &str,
+) -> Result<bool> {
+    if hook_command == standard_command {
+        return Ok(false);
+    }
+    let mut migrated = false;
+    for group in groups {
+        let group = group
+            .as_object_mut()
+            .context("Claude hook groups must be JSON objects")?;
+        let unrestricted = match group.get("matcher") {
+            None => true,
+            Some(Value::String(matcher)) => matcher.is_empty() || matcher == "*",
+            Some(_) => false,
+        };
+        if !unrestricted {
+            continue;
+        }
+        let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for handler in handlers {
+            let Some(handler) = handler.as_object_mut() else {
+                continue;
+            };
+            if handler.get("type").and_then(Value::as_str) == Some("command")
+                && handler.get("command").and_then(Value::as_str) == Some(standard_command)
+            {
+                handler.insert("command".to_owned(), Value::String(hook_command.to_owned()));
+                migrated = true;
+            }
+        }
+    }
+    Ok(migrated)
 }
 
 /// The command for one Claude event. Tool events record; the prompt event
@@ -397,6 +444,25 @@ mod tests {
             HookReadiness::Installed
         );
         assert!(fs::read_to_string(config).unwrap().contains(command));
+    }
+
+    #[test]
+    fn pinned_command_safely_migrates_unrestricted_standard_hooks() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("settings.json");
+        install_claude_hook(&config, true).unwrap();
+        let command = "'/home/user/.local/bin/regurgitate' record-hook --agent claude";
+
+        let preview = install_claude_hook_command(&config, command, false).unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+        let migrated = install_claude_hook_command(&config, command, true).unwrap();
+        assert_eq!(migrated.status, InstallStatus::Installed);
+
+        let content = fs::read_to_string(&config).unwrap();
+        assert!(content.contains(command));
+        assert!(content.contains("'/home/user/.local/bin/regurgitate' preflight --agent claude"));
+        assert!(!content.contains(&format!("\"command\": \"{CLAUDE_HOOK_COMMAND}\"")));
+        assert!(!content.contains(&format!("\"command\": \"{CLAUDE_PREFLIGHT_COMMAND}\"")));
     }
 
     #[cfg(unix)]

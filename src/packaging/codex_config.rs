@@ -110,11 +110,16 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
     let groups = hooks["PostToolUse"]
         .as_array_of_tables_mut()
         .context("Codex hooks.PostToolUse must be an array of tables")?;
+    let migrated = migrate_unrestricted_standard_hook(groups, hook_command);
     match regurgitate_hook_coverage(groups, hook_command) {
         RegurgitateHookCoverage::AllTools => {
             return Ok(PreparedConfig {
                 content: document.to_string(),
-                changes: Vec::new(),
+                changes: if migrated {
+                    vec!["hooks.PostToolUse"]
+                } else {
+                    Vec::new()
+                },
             });
         }
         RegurgitateHookCoverage::Restricted => {
@@ -138,6 +143,37 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
         content: document.to_string(),
         changes: vec!["hooks.PostToolUse"],
     })
+}
+
+fn migrate_unrestricted_standard_hook(groups: &mut ArrayOfTables, hook_command: &str) -> bool {
+    if hook_command == CODEX_HOOK_COMMAND {
+        return false;
+    }
+    let mut migrated = false;
+    for group in groups.iter_mut() {
+        let unrestricted = matches!(
+            group.get("matcher").and_then(Item::as_str),
+            None | Some("" | "*")
+        );
+        if !unrestricted {
+            continue;
+        }
+        let Some(handlers) = group
+            .get_mut("hooks")
+            .and_then(Item::as_array_of_tables_mut)
+        else {
+            continue;
+        };
+        for handler in handlers.iter_mut() {
+            if handler.get("type").and_then(Item::as_str) == Some("command")
+                && handler.get("command").and_then(Item::as_str) == Some(CODEX_HOOK_COMMAND)
+            {
+                handler.insert("command", value(hook_command));
+                migrated = true;
+            }
+        }
+    }
+    migrated
 }
 
 fn ensure_hooks_enabled(document: &DocumentMut) -> Result<()> {
@@ -281,6 +317,23 @@ mod tests {
         assert_eq!(repeated.status, InstallStatus::AlreadyCurrent);
         assert!(repeated.changes.is_empty());
         assert_eq!(fs::read_to_string(config).unwrap(), before);
+    }
+
+    #[test]
+    fn pinned_command_safely_migrates_an_unrestricted_standard_hook() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        install_codex_hook(&config, true).unwrap();
+        let command = "'/home/user/.local/bin/regurgitate' record-hook --agent codex";
+
+        let preview = install_codex_hook_command(&config, command, false).unwrap();
+        assert_eq!(preview.status, InstallStatus::Planned);
+        let migrated = install_codex_hook_command(&config, command, true).unwrap();
+        assert_eq!(migrated.status, InstallStatus::Installed);
+
+        let content = fs::read_to_string(&config).unwrap();
+        assert!(content.contains(command));
+        assert!(!content.contains(&format!("command = \"{CODEX_HOOK_COMMAND}\"")));
     }
 
     #[test]

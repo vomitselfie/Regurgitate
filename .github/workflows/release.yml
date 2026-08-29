@@ -46,7 +46,11 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/package-release.sh
+          bash -n scripts/test-install.sh
+          sh -n install.sh
           cargo build --locked
+
+          scripts/test-install.sh target/debug/regurgitate
 
           package_dist="$RUNNER_TEMP/regurgitate-package"
           REGURGITATE_DIST_DIR="$package_dist" \
@@ -171,6 +175,7 @@ jobs:
             "regurgitate-${tag}-linux-x86_64.tar.gz"
             "regurgitate-${tag}-macos-aarch64.tar.gz"
             "regurgitate-${tag}-macos-x86_64.tar.gz"
+            "install.sh"
             "SHA256SUMS"
           )
           tag_commit="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)"
@@ -223,12 +228,14 @@ jobs:
           for archive in "${archives[@]}"; do
             test -f "$archive"
           done
+          install -m 0755 install.sh dist/install.sh
           (
             cd dist
             sha256sum \
               "regurgitate-${tag}-linux-x86_64.tar.gz" \
               "regurgitate-${tag}-macos-aarch64.tar.gz" \
               "regurgitate-${tag}-macos-x86_64.tar.gz" \
+              install.sh \
               > SHA256SUMS
             sha256sum --check SHA256SUMS
           )
@@ -244,6 +251,7 @@ jobs:
             "dist/regurgitate-${tag}-linux-x86_64.tar.gz"
             "dist/regurgitate-${tag}-macos-aarch64.tar.gz"
             "dist/regurgitate-${tag}-macos-x86_64.tar.gz"
+            "dist/install.sh"
           )
 
           if [[ "${{ steps.release.outputs.mode }}" == repair ]]; then

@@ -1,12 +1,13 @@
 use std::{env, path::PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::{
     application::HookReadiness,
     packaging::{
         InstallStatus, inspect_claude_hook_command, inspect_codex_hook_command,
         install_claude_hook_command, install_codex_hook_command, install_skill_with_command,
+        quote_agent_executable,
     },
 };
 
@@ -83,11 +84,8 @@ impl SetupService {
     pub fn from_environment() -> Result<Self> {
         let executable =
             env::current_exe().context("could not locate the Regurgitate plugin binary")?;
-        let executable = executable
-            .to_str()
-            .context("Regurgitate plugin binary path is not valid UTF-8")?;
         Ok(Self {
-            executable_command: shell_quote(executable)?,
+            executable_command: quote_agent_executable(&executable)?,
             paths: SetupPaths::from_environment()?,
         })
     }
@@ -95,7 +93,7 @@ impl SetupService {
     #[cfg(test)]
     fn new(executable: &str, paths: SetupPaths) -> Result<Self> {
         Ok(Self {
-            executable_command: shell_quote(executable)?,
+            executable_command: quote_agent_executable(std::path::Path::new(executable))?,
             paths,
         })
     }
@@ -216,17 +214,6 @@ fn changed(status: InstallStatus) -> bool {
     matches!(status, InstallStatus::Installed | InstallStatus::Replaced)
 }
 
-fn shell_quote(path: &str) -> Result<String> {
-    if path.is_empty()
-        || path
-            .chars()
-            .any(|character| character.is_control() || character == '`')
-    {
-        bail!("Regurgitate executable path cannot be represented safely in an agent command");
-    }
-    Ok(format!("'{}'", path.replace('\'', "'\"'\"'")))
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -320,10 +307,12 @@ mod tests {
     #[test]
     fn executable_paths_are_shell_quoted_without_allowing_command_syntax() {
         assert_eq!(
-            shell_quote("/plugin's home/regurgitate").unwrap(),
+            quote_agent_executable(std::path::Path::new("/plugin's home/regurgitate")).unwrap(),
             r#"'/plugin'"'"'s home/regurgitate'"#
         );
-        assert!(shell_quote("/plugin/`private`/regurgitate").is_err());
-        assert!(shell_quote("/plugin\nhome/regurgitate").is_err());
+        assert!(
+            quote_agent_executable(std::path::Path::new("/plugin/`private`/regurgitate")).is_err()
+        );
+        assert!(quote_agent_executable(std::path::Path::new("/plugin\nhome/regurgitate")).is_err());
     }
 }

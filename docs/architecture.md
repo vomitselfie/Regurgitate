@@ -291,9 +291,10 @@ renaming it into place and is idempotent for identical files. Different
 content is preserved unless `--replace` is explicit; replacement swaps the
 whole staged directory through a private backup and restores the old directory
 if installation fails. Non-directory and symlinked destinations are always
-rejected. The AoE setup service can render one additional instruction that
-pins skill commands to the worker executable; the tracked provider-neutral
-skill remains unchanged. Host path discovery remains outside the installer.
+rejected. A stock PATH-based skill can be recognized and safely migrated to an
+explicit executable, while personally changed content remains a conflict. AoE
+and the standalone bootstrap both pin skill commands to their selected binary;
+the tracked provider-neutral skill remains unchanged.
 
 The same module can conservatively add hooks to explicit AoE, Codex, and Claude config
 files. Provider-specific parsers and policies remain separate, while a small
@@ -305,6 +306,15 @@ refuses invalid hook structures or explicitly disabled lifecycle hooks. The
 Claude installer preserves existing JSON settings and hook groups while adding
 both terminal events and the `UserPromptSubmit` preflight hook. All installers re-read under the provider's adjacent
 lock before applying.
+
+The release `install.sh` bootstrap supports Linux x86-64 and Intel/Apple Silicon
+macOS. It downloads one archive and `SHA256SUMS` over HTTPS into a temporary
+directory, verifies the selected payload, and atomically installs the binary
+without `sudo`. Optional Codex or Claude setup previews both host changes before
+applying them and pins the hook and skill to the installed executable, avoiding
+a future `PATH` version split. Untouched stock hooks migrate safely; restricted
+or personally modified integrations remain conflicts. Temporary payloads are
+removed on success, failure, or interruption.
 
 ## Project identity
 

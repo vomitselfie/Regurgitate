@@ -19,7 +19,12 @@ the declared minimum Rust version and creates these assets:
 - Linux x86-64 archive
 - Apple Silicon macOS archive
 - Intel macOS archive
+- standalone `install.sh` bootstrap
 - combined `SHA256SUMS`
+
+The checksum set covers the three archives and the bootstrap. CI runs the
+bootstrap against a local release fixture to verify pinned Codex setup,
+idempotent reruns, and rejection of a corrupted archive.
 
 The workflow tags the tested commit and generates release notes. Existing
 release tags and complete asset sets are never replaced by a later commit.

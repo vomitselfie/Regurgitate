@@ -25,7 +25,8 @@ use crate::{
     packaging::{
         AOE_CONFIG_SNIPPET, CLAUDE_CONFIG_SNIPPET, CODEX_CONFIG_SNIPPET, inspect_aoe_hook,
         inspect_claude_hook, inspect_codex_hook, install_aoe_hook, install_claude_hook,
-        install_codex_hook, install_skill,
+        install_claude_hook_command, install_codex_hook, install_codex_hook_command, install_skill,
+        install_skill_with_command, quote_agent_executable,
     },
     paths::default_data_home,
     query::{
@@ -216,20 +217,55 @@ pub fn execute(cli: Cli) -> Result<()> {
             let report = install_aoe_hook(&config, apply)?;
             print_json(&report)
         }
-        Command::InstallCodexHook { config, apply } => {
-            let report = install_codex_hook(&config, apply)?;
+        Command::InstallCodexHook {
+            config,
+            executable,
+            apply,
+        } => {
+            let report = match executable {
+                Some(executable) => {
+                    let command = format!(
+                        "{} record-hook --agent codex",
+                        quote_agent_executable(&executable)?
+                    );
+                    install_codex_hook_command(&config, &command, apply)?
+                }
+                None => install_codex_hook(&config, apply)?,
+            };
             print_json(&report)
         }
-        Command::InstallClaudeHook { config, apply } => {
-            let report = install_claude_hook(&config, apply)?;
+        Command::InstallClaudeHook {
+            config,
+            executable,
+            apply,
+        } => {
+            let report = match executable {
+                Some(executable) => {
+                    let command = format!(
+                        "{} record-hook --agent claude",
+                        quote_agent_executable(&executable)?
+                    );
+                    install_claude_hook_command(&config, &command, apply)?
+                }
+                None => install_claude_hook(&config, apply)?,
+            };
             print_json(&report)
         }
         Command::InstallSkill {
             target,
+            executable,
             apply,
             replace,
         } => {
-            let report = install_skill(&target, apply, replace)?;
+            let report = match executable {
+                Some(executable) => install_skill_with_command(
+                    &target,
+                    &quote_agent_executable(&executable)?,
+                    apply,
+                    replace,
+                )?,
+                None => install_skill(&target, apply, replace)?,
+            };
             print_json(&report)
         }
         Command::DebugParse {
