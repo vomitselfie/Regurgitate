@@ -501,6 +501,46 @@ impl<'c> ContextMatcher<'c> {
         self.context.task.is_some() || self.intent.has_task_hints()
     }
 
+    /// Query-driven retrieval from outside the project requires one exact,
+    /// controlled context agreement beyond an inferred task category. This
+    /// deliberately prefers `no_matches` over surfacing a cross-domain lesson
+    /// merely because a broad word such as "memory" mapped to the same task.
+    fn broader_scope_anchor(&self, capsule: &ExperienceCapsule) -> bool {
+        let evidence_tool = capsule
+            .evidence
+            .iter()
+            .find_map(|entry| entry.environment.tool_family);
+        let risks: Vec<_> = if self.context.risks.is_empty() {
+            self.intent.risks().iter().copied().collect()
+        } else {
+            self.context.risks.to_vec()
+        };
+
+        exact_match_term(
+            self.context.artifact,
+            self.intent.artifacts().iter().copied(),
+            self.context.project_defaults.artifact,
+            capsule.applicability.artifact_kind,
+        ) || exact_match_term(
+            self.context.ecosystem,
+            self.intent.ecosystems().iter().copied(),
+            self.context.project_defaults.ecosystem,
+            capsule.applicability.ecosystem,
+        ) || exact_match_term(
+            self.context.tool_family,
+            self.intent.tool_families().iter().copied(),
+            self.context.project_defaults.tool_family,
+            capsule.applicability.tool_family.or(evidence_tool),
+        ) || exact_match_term(
+            self.context.phase,
+            self.intent.phases().iter().copied(),
+            None,
+            capsule.applicability.phase,
+        ) || risks
+            .iter()
+            .any(|risk| capsule.applicability.risk_shapes.contains(risk))
+    }
+
     /// Returns `None` when the capsule is outside the current task region.
     fn applicability(&self, policy: &RankingPolicy, capsule: &ExperienceCapsule) -> Option<f64> {
         let task = match self.context.task {
@@ -513,8 +553,16 @@ impl<'c> ContextMatcher<'c> {
         if self.task_filter_active() && task == 0.0 {
             return None;
         }
-        if capsule.scope != MemoryScope::Project && !capsule.context_complete() {
-            return None;
+        if capsule.scope != MemoryScope::Project {
+            if !capsule.context_complete() {
+                return None;
+            }
+            if self.context.query.is_some()
+                && self.context.task.is_none()
+                && !self.broader_scope_anchor(capsule)
+            {
+                return None;
+            }
         }
         let artifact = match_term(
             self.context.artifact,
@@ -626,6 +674,28 @@ fn match_term<T: Copy + PartialEq>(
         None => 0.5,
         Some(recorded) => f64::from(u8::from(hints.contains(&recorded))),
     }
+}
+
+/// Exact agreement using the same explicit > query > project-default
+/// precedence as `match_term`. Missing context or missing capsule metadata is
+/// not an anchor.
+fn exact_match_term<T: Copy + PartialEq>(
+    explicit: Option<T>,
+    inferred: impl Iterator<Item = T>,
+    project_default: Option<T>,
+    recorded: Option<T>,
+) -> bool {
+    let Some(recorded) = recorded else {
+        return false;
+    };
+    if let Some(explicit) = explicit {
+        return explicit == recorded;
+    }
+    let inferred: Vec<_> = inferred.collect();
+    if !inferred.is_empty() {
+        return inferred.contains(&recorded);
+    }
+    project_default == Some(recorded)
 }
 
 struct Cluster {
@@ -1402,6 +1472,87 @@ mod tests {
             EphemeralTaskContext::default(),
         );
         assert!(result.experiences.is_empty());
+    }
+
+    #[test]
+    fn query_driven_broader_recall_rejects_task_only_cross_domain_noise() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut desktop = capsule(1, MemoryScope::Machine, &[SemanticOutcome::Success]);
+        desktop.task = TaskKind::Performance;
+        desktop.applicability = ApplicabilityTags::default();
+        desktop.situation = Some(
+            Situation::new("A desktop feels laggy after a fresh operating system install.")
+                .unwrap(),
+        );
+        desktop.lesson = Some(
+            Lesson::new("Verify processor boost and the intended power governor first.").unwrap(),
+        );
+        history.capsules.push(desktop);
+
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                query: Some("agent memory interaction friction evaluation"),
+                project_defaults: ProjectDefaults {
+                    artifact: Some(ArtifactKind::Source),
+                    ecosystem: Some(Ecosystem::Rust),
+                    tool_family: Some(ToolFamily::Cargo),
+                },
+                ..EphemeralTaskContext::default()
+            },
+        );
+
+        assert_eq!(result.status, RecallStatus::NoMatches);
+        assert!(result.experiences.is_empty());
+
+        let explicit = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                query: Some("agent memory interaction friction evaluation"),
+                task: Some(TaskKind::Performance),
+                project_defaults: ProjectDefaults {
+                    artifact: Some(ArtifactKind::Source),
+                    ecosystem: Some(Ecosystem::Rust),
+                    tool_family: Some(ToolFamily::Cargo),
+                },
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert_eq!(explicit.status, RecallStatus::Matches);
+        assert_eq!(explicit.experiences.len(), 1);
+    }
+
+    #[test]
+    fn query_driven_broader_recall_keeps_domain_anchored_lessons() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut rust = capsule(1, MemoryScope::Machine, &[SemanticOutcome::Success]);
+        rust.task = TaskKind::Performance;
+        rust.applicability = ApplicabilityTags {
+            artifact_kind: Some(ArtifactKind::Source),
+            ecosystem: Some(Ecosystem::Rust),
+            tool_family: Some(ToolFamily::Cargo),
+            ..ApplicabilityTags::default()
+        };
+        rust.situation = Some(
+            Situation::new("A Rust process uses more memory after a source-level change.").unwrap(),
+        );
+        rust.lesson = Some(
+            Lesson::new("Profile allocation changes before attempting broad optimization.")
+                .unwrap(),
+        );
+        history.capsules.push(rust);
+
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("optimize rust memory source latency")),
+        );
+
+        assert_eq!(result.status, RecallStatus::Matches);
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].scope, MemoryScope::Machine);
     }
 
     #[test]

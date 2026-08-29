@@ -90,7 +90,7 @@ impl Default for RankingPolicy {
             rank_scope: 0.05,
             rank_context_bonus: 0.02,
             sparse_local_evidence: 3,
-            broader_scope_min_applicability: 0.5,
+            broader_scope_min_applicability: 0.6,
             min_applicability: 0.2,
         }
     }

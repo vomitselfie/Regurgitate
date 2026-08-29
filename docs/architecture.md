@@ -125,8 +125,11 @@ from allowlisted marker presence. Query text is zeroized. Detection never
 reads marker or source contents and never invokes a project tool. Recall then loads a bounded candidate window from
 the project scope (capsules plus legacy rows). Only if fewer than a handful of
 applicable active project capsules exist does it expand outward to workspace,
-ecosystem, machine, and global buckets, and broader capsules must clear a
-higher applicability bar to surface.
+ecosystem, machine, and global buckets. Query-driven broader-scope recall also
+requires an exact controlled anchor beyond an inferred task category: artifact,
+ecosystem, tool family, phase, or risk. An explicit `--task` opts into category-
+only retrieval. This gate deliberately prefers `no_matches` over cross-domain
+noise; queryless human browsing and project-local recall are unchanged.
 
 Stage two reranks the decrypted window. Every ranking constant lives in one
 `RankingPolicy`:
@@ -152,8 +155,9 @@ Stage two reranks the decrypted window. Every ranking constant lives in one
   0.15·confidence + 0.10·recency + 0.05·scope prior`, plus a small bonus for
   context-bearing capsules.
 
-Broader scopes require situation and lesson context. Risk-sensitive requests
-move their best applicable failed or challenged lesson ahead of trimming. The
+Broader scopes require situation and lesson context and clear a higher numeric
+applicability bar after the controlled-anchor gate. Risk-sensitive requests move
+their best applicable failed or challenged lesson ahead of trimming. The
 serialized brief carries no identifiers or timestamps and is trimmed
 from the bottom until it fits the token budget; the hard maximum is still
 enforced before storage is queried.
