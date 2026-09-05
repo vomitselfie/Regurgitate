@@ -181,7 +181,10 @@ impl TaskIntent {
                     intent.ecosystems.insert(Ecosystem::Rust);
                     intent.tool_families.insert(ToolFamily::Cargo);
                 }
-                "python" | "pytest" | "pip" | "venv" | "uv" => {
+                "python" | "pip" | "venv" | "uv" => {
+                    intent.ecosystems.insert(Ecosystem::Python);
+                }
+                "pytest" => {
                     intent.ecosystems.insert(Ecosystem::Python);
                     intent.tool_families.insert(ToolFamily::Pytest);
                 }
@@ -225,7 +228,7 @@ impl TaskIntent {
                     intent.ecosystems.insert(Ecosystem::Cpp);
                     intent.tool_families.insert(ToolFamily::Clang);
                 }
-                "cuda" | "nvcc" | "gpu" | "kernel" => {
+                "cuda" | "nvcc" => {
                     intent.ecosystems.insert(Ecosystem::Cuda);
                     intent.tool_families.insert(ToolFamily::Nvcc);
                 }
@@ -246,7 +249,7 @@ impl TaskIntent {
                     intent.tool_families.insert(ToolFamily::Kicad);
                     intent.artifacts.insert(ArtifactKind::NativeCad);
                 }
-                "sql" | "sqlite" | "postgres" | "mysql" | "schema" => {
+                "sql" | "sqlite" | "postgres" | "mysql" => {
                     intent.ecosystems.insert(Ecosystem::Sql);
                 }
                 "kubectl" | "kubernetes" | "k8s" | "helm" => {
@@ -325,6 +328,15 @@ impl TaskIntent {
         !self.tasks.is_empty()
     }
 
+    pub fn has_retrieval_hints(&self) -> bool {
+        self.has_task_hints()
+            || !self.ecosystems.is_empty()
+            || !self.tool_families.is_empty()
+            || !self.phases.is_empty()
+            || !self.artifacts.is_empty()
+            || !self.risks.is_empty()
+    }
+
     pub fn ecosystems(&self) -> &BTreeSet<Ecosystem> {
         &self.ecosystems
     }
@@ -353,6 +365,29 @@ impl TaskIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ambiguous_domain_words_do_not_invent_a_specific_toolchain() {
+        let python = TaskIntent::classify("python dependency upgrade");
+        assert!(python.ecosystems().contains(&Ecosystem::Python));
+        assert!(python.tool_families().is_empty());
+        assert!(
+            TaskIntent::classify("pytest failure")
+                .tool_families()
+                .contains(&ToolFamily::Pytest)
+        );
+        let schema = TaskIntent::classify("schema compatibility");
+        assert!(schema.ecosystems().is_empty());
+        assert!(schema.risks().contains(&RiskShape::VersionSensitive));
+        let kernel = TaskIntent::classify("kernel gpu debugging");
+        assert!(!kernel.ecosystems().contains(&Ecosystem::Cuda));
+        assert!(!kernel.tool_families().contains(&ToolFamily::Nvcc));
+        assert!(
+            TaskIntent::classify("cuda nvcc debugging")
+                .tool_families()
+                .contains(&ToolFamily::Nvcc)
+        );
+    }
 
     #[test]
     fn reduces_task_text_to_controlled_hints() {

@@ -30,6 +30,11 @@ Notes that cannot fit whole are omitted, including their caveats and references,
 rather than shortened into advice without its conditions. The skill treats
 either empty status as terminal and does not ask the user to maintain memory.
 
+Unrecognized queries stay quiet. Known conflicting ecosystems and explicitly
+selected tool families are filtered before ranking; unknown metadata remains
+eligible. Use a short task and concrete tool/domain description (for example
+`python dependency upgrade`) or explicit flags when the inferred context is wrong.
+
 | Without Regurgitate | With Regurgitate |
 | --- | --- |
 | A new session starts from zero | A new session can check what worked before |

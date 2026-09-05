@@ -2,6 +2,7 @@ mod brief;
 mod evidence_policy;
 mod policy;
 mod recall;
+mod relevance;
 mod task;
 
 pub(crate) use task::infer_risks;

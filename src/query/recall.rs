@@ -283,6 +283,19 @@ where
         now: DateTime<Utc>,
     ) -> Result<RecallResult> {
         options.validate()?;
+        let intent = context.query.map(TaskIntent::classify).unwrap_or_default();
+        // An unrecognized query is not permission to return arbitrary local
+        // lessons. Explicit filters still allow intentional category recall.
+        let unrecognized_query = context.query.is_some()
+            && !intent.has_retrieval_hints()
+            && context.task.is_none()
+            && context.ecosystem.is_none()
+            && context.tool_family.is_none()
+            && context.phase.is_none()
+            && context.artifact.is_none()
+            && context.risks.is_empty()
+            && options.operation.is_none()
+            && !options.failures_only;
         let project_id = self.history.find_project(locator)?;
         let hook_events = match project_id {
             Some(id) => self.history.recent_project_events(
@@ -293,8 +306,17 @@ where
             None => Vec::new(),
         };
         let hook_summary = summarize_hooks(&hook_events, options);
+        if unrecognized_query {
+            // Preserve ordinary recall's separate diagnostic hook summary.
+            // Brief rendering omits telemetry and returns a quiet no-match.
+            return Ok(budgeted_result(
+                Vec::new(),
+                0,
+                hook_summary,
+                options.token_budget,
+            ));
+        }
 
-        let intent = context.query.map(TaskIntent::classify).unwrap_or_default();
         let matcher = ContextMatcher::new(&context, &intent);
 
         // Stage 1: bounded project-scope window, including v2 legacy rows.
@@ -544,6 +566,16 @@ impl<'c> ContextMatcher<'c> {
 
     /// Returns `None` when the capsule is outside the current task region.
     fn applicability(&self, policy: &RankingPolicy, capsule: &ExperienceCapsule) -> Option<f64> {
+        if super::relevance::ecosystem_conflicts(
+            self.context.ecosystem,
+            self.intent.ecosystems().iter().copied(),
+            capsule.applicability.ecosystem,
+        ) || super::relevance::tool_conflicts(
+            self.context.tool_family,
+            capsule.applicability.tool_family,
+        ) {
+            return None;
+        }
         let task = match self.context.task {
             Some(task) => f64::from(u8::from(task == capsule.task)),
             None if self.intent.has_task_hints() => {
@@ -1382,6 +1414,135 @@ mod tests {
             EphemeralTaskContext::from_query(Some("delete records safely")),
         );
         assert_eq!(inferred_risk.experiences[0].failures, 1);
+    }
+
+    #[test]
+    fn unrecognized_queries_stay_quiet_even_with_project_defaults() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        history.capsules.push(capsule(
+            1,
+            MemoryScope::Project,
+            &[SemanticOutcome::Success; 8],
+        ));
+        for query in [
+            "",
+            "   ",
+            "recall relevance filtering explicit context precedence",
+            "hello there",
+        ] {
+            let result = recall(
+                &history,
+                RecallOptions::default(),
+                EphemeralTaskContext {
+                    query: Some(query),
+                    project_defaults: ProjectDefaults {
+                        artifact: Some(ArtifactKind::NativeCad),
+                        ecosystem: Some(Ecosystem::Kicad),
+                        tool_family: Some(ToolFamily::Kicad),
+                    },
+                    ..EphemeralTaskContext::default()
+                },
+            );
+            assert_eq!(result.status, RecallStatus::NoMatches, "query {query:?}");
+        }
+        // An explicit category remains an intentional category query.
+        let explicit = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                query: Some("unrecognized wording"),
+                task: Some(TaskKind::Debugging),
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert_eq!(explicit.experiences.len(), 1);
+    }
+
+    #[test]
+    fn domain_filter_keeps_generic_related_and_explicitly_selected_lessons() {
+        for scope in [MemoryScope::Project, MemoryScope::Machine] {
+            for (recorded, query, explicit) in [
+                (Some(Ecosystem::Javascript), "debug typescript source", None),
+                (Some(Ecosystem::Generic), "debug rust source", None),
+                (None, "debug python source", None),
+                (
+                    Some(Ecosystem::Rust),
+                    "debug python source",
+                    Some(Ecosystem::Rust),
+                ),
+                (Some(Ecosystem::Python), "debug rust python source", None),
+            ] {
+                let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+                let mut lesson = capsule(1, scope, &[SemanticOutcome::Success; 4]);
+                lesson.applicability = ApplicabilityTags {
+                    ecosystem: recorded,
+                    artifact_kind: Some(ArtifactKind::Source),
+                    phase: Some(Phase::Diagnose),
+                    ..ApplicabilityTags::default()
+                };
+                history.capsules.push(lesson);
+                let result = recall(
+                    &history,
+                    RecallOptions::default(),
+                    EphemeralTaskContext {
+                        query: Some(query),
+                        ecosystem: explicit,
+                        ..EphemeralTaskContext::default()
+                    },
+                );
+                assert_eq!(
+                    result.experiences.len(),
+                    1,
+                    "scope {scope:?}, query {query}, recorded {recorded:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrong_ecosystems_are_excluded_not_merely_downranked() {
+        for scope in [MemoryScope::Project, MemoryScope::Machine] {
+            let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+            let mut rust = capsule(1, scope, &[SemanticOutcome::Success; 8]);
+            rust.applicability = ApplicabilityTags {
+                ecosystem: Some(Ecosystem::Rust),
+                artifact_kind: Some(ArtifactKind::Source),
+                phase: Some(Phase::Diagnose),
+                ..ApplicabilityTags::default()
+            };
+            history.capsules.push(rust);
+            let result = recall(
+                &history,
+                RecallOptions::default(),
+                EphemeralTaskContext {
+                    query: Some("debug python source error"),
+                    project_defaults: ProjectDefaults {
+                        ecosystem: Some(Ecosystem::Rust),
+                        ..ProjectDefaults::default()
+                    },
+                    ..EphemeralTaskContext::default()
+                },
+            );
+            assert!(result.experiences.is_empty(), "scope {scope:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_tool_family_excludes_a_different_known_tool() {
+        let mut history = MemoryHistory::new(Some(Uuid::from_u128(7)));
+        let mut lesson = capsule(1, MemoryScope::Project, &[SemanticOutcome::Success; 8]);
+        lesson.applicability.tool_family = Some(ToolFamily::Pnpm);
+        history.capsules.push(lesson);
+        let result = recall(
+            &history,
+            RecallOptions::default(),
+            EphemeralTaskContext {
+                task: Some(TaskKind::Debugging),
+                tool_family: Some(ToolFamily::Yarn),
+                ..EphemeralTaskContext::default()
+            },
+        );
+        assert!(result.experiences.is_empty());
     }
 
     #[test]
