@@ -20,6 +20,7 @@ const OPENAI_METADATA: &str = include_str!(concat!(
     "/skills/regurgitate-recall/agents/openai.yaml"
 ));
 const SKILL_PATHS: [&str; 2] = ["SKILL.md", "agents/openai.yaml"];
+const PREVIOUS_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.3.md");
 
 struct PackagedFile<'a> {
     relative_path: &'static str,
@@ -28,12 +29,14 @@ struct PackagedFile<'a> {
 
 struct SkillPackage {
     skill: String,
+    previous_skill: String,
 }
 
 impl SkillPackage {
     fn standard() -> Self {
         Self {
             skill: SKILL_CONTENT.to_owned(),
+            previous_skill: PREVIOUS_SKILL_CONTENT.to_owned(),
         }
     }
 
@@ -53,6 +56,7 @@ impl SkillPackage {
         );
         Ok(Self {
             skill: SKILL_CONTENT.replacen(heading, &instruction, 1),
+            previous_skill: PREVIOUS_SKILL_CONTENT.replacen(heading, &instruction, 1),
         })
     }
 
@@ -266,8 +270,9 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
             format!("could not read installed skill file at {}", path.display())
         })?;
         let standard_skill_is_compatible = packaged.relative_path == "SKILL.md"
-            && package.skill != SKILL_CONTENT
-            && current == SKILL_CONTENT.as_bytes();
+            && ((package.skill != SKILL_CONTENT && current == SKILL_CONTENT.as_bytes())
+                || current == PREVIOUS_SKILL_CONTENT.as_bytes()
+                || current == package.previous_skill.as_bytes());
         if standard_skill_is_compatible {
             compatible_standard = true;
         } else if current != packaged.contents.as_bytes() {
@@ -378,6 +383,51 @@ fn report(status: InstallStatus, destination: PathBuf) -> SkillInstallReport {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn previous_stock_skills_upgrade_but_personal_files_prevent_replacement() {
+        for command in [None, Some("'/opt/regurgitate'")] {
+            for extra in [None, Some("NOTES.md"), Some("agents/personal.yaml")] {
+                let temp = tempdir().unwrap();
+                let package = match command {
+                    Some(command) => SkillPackage::for_command(command).unwrap(),
+                    None => SkillPackage::standard(),
+                };
+                let destination = temp.path().join(SKILL_NAME);
+                write_staging_package(&destination, &package).unwrap();
+                fs::write(destination.join("SKILL.md"), &package.previous_skill).unwrap();
+                if let Some(extra) = extra {
+                    fs::write(destination.join(extra), "personal content").unwrap();
+                    assert!(install_skill_package(temp.path(), true, false, &package).is_err());
+                    assert_eq!(
+                        fs::read_to_string(destination.join(extra)).unwrap(),
+                        "personal content"
+                    );
+                    assert_eq!(
+                        fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+                        package.previous_skill
+                    );
+                } else {
+                    assert_eq!(
+                        install_skill_package(temp.path(), false, false, &package)
+                            .unwrap()
+                            .status,
+                        InstallStatus::Planned
+                    );
+                    assert_eq!(
+                        install_skill_package(temp.path(), true, false, &package)
+                            .unwrap()
+                            .status,
+                        InstallStatus::Replaced
+                    );
+                    assert_eq!(
+                        fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+                        package.skill
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn agent_instruction_bundle_stays_compact() {

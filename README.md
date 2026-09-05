@@ -32,6 +32,43 @@ new task → scoped, recency- and evidence-weighted recall → 100–300 token b
 
 ## What does it store?
 
+### A shared local notebook
+
+Lessons belong to the local encrypted store, not to an agent or session. Connect
+each agent once using AoE setup or the standalone installer. Agents running as
+the same OS user with the same data home and credential store then use the same
+notebook. Custom data homes and separate OS accounts remain separate stores.
+
+For a verified lesson that applies across projects, agents can add `--shared`:
+
+```bash
+regurgitate experience record --shared --task integration \
+  --situation "A stock integration is migrated by replacing its bundle directory." \
+  --lesson "Check the entire directory layout before migration; extra personal files require explicit replacement." \
+  --procedure targeted-verification --outcome success --artifact config
+```
+
+This illustrates the syntax; record only after observing and verifying the
+lesson. `--shared` means `--scope machine`. Omitting it keeps the lesson scoped
+to its project. Existing memories keep their scope. Recall consults broader
+scopes when relevant local evidence is sparse, including in a new project with
+no recorded history; task and applicability filters still apply.
+
+The bundled skill chooses shared scope for portable lessons and keeps recording
+selective. A single procedure dimension is enough; caveats and ordered steps are
+optional. Hooks are optional telemetry, not a prerequisite for sharing lessons.
+Any agent capable of invoking the CLI can participate. Forgetting an origin
+project removes its lessons even when they were shared. There is no network
+service, background lesson generator, or automatic promotion of old memories.
+
+After updating the binary, refresh each agent's recall skill and restart the
+agent. AoE users run its setup action; standalone users rerun the installer with
+their agent. The exact previous bundled skill upgrades automatically. Personal
+edits or extra files require review and explicit replacement (`--replace-skill`
+for standalone installations).
+
+### Stored evidence
+
 Regurgitate keeps two deliberately separate ledgers. Hooks record controlled
 tool-execution categories and provider-reported status. Explicit experience
 records an **experience capsule**: a controlled task, a compositional
