@@ -20,7 +20,8 @@ const OPENAI_METADATA: &str = include_str!(concat!(
     "/skills/regurgitate-recall/agents/openai.yaml"
 ));
 const SKILL_PATHS: [&str; 2] = ["SKILL.md", "agents/openai.yaml"];
-const PREVIOUS_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.3.md");
+const PREVIOUS_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.4.md");
+const OLDER_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.3.md");
 
 struct PackagedFile<'a> {
     relative_path: &'static str,
@@ -30,6 +31,7 @@ struct PackagedFile<'a> {
 struct SkillPackage {
     skill: String,
     previous_skill: String,
+    older_skill: String,
 }
 
 impl SkillPackage {
@@ -37,6 +39,7 @@ impl SkillPackage {
         Self {
             skill: SKILL_CONTENT.to_owned(),
             previous_skill: PREVIOUS_SKILL_CONTENT.to_owned(),
+            older_skill: OLDER_SKILL_CONTENT.to_owned(),
         }
     }
 
@@ -57,6 +60,7 @@ impl SkillPackage {
         Ok(Self {
             skill: SKILL_CONTENT.replacen(heading, &instruction, 1),
             previous_skill: PREVIOUS_SKILL_CONTENT.replacen(heading, &instruction, 1),
+            older_skill: OLDER_SKILL_CONTENT.replacen(heading, &instruction, 1),
         })
     }
 
@@ -272,7 +276,9 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
         let standard_skill_is_compatible = packaged.relative_path == "SKILL.md"
             && ((package.skill != SKILL_CONTENT && current == SKILL_CONTENT.as_bytes())
                 || current == PREVIOUS_SKILL_CONTENT.as_bytes()
-                || current == package.previous_skill.as_bytes());
+                || current == package.previous_skill.as_bytes()
+                || current == OLDER_SKILL_CONTENT.as_bytes()
+                || current == package.older_skill.as_bytes());
         if standard_skill_is_compatible {
             compatible_standard = true;
         } else if current != packaged.contents.as_bytes() {
@@ -383,6 +389,30 @@ fn report(status: InstallStatus, destination: PathBuf) -> SkillInstallReport {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn skipping_a_release_still_upgrades_the_older_stock_skill() {
+        for command in [None, Some("'/opt/regurgitate'")] {
+            let temp = tempdir().unwrap();
+            let package = match command {
+                Some(command) => SkillPackage::for_command(command).unwrap(),
+                None => SkillPackage::standard(),
+            };
+            let destination = temp.path().join(SKILL_NAME);
+            write_staging_package(&destination, &package).unwrap();
+            fs::write(destination.join("SKILL.md"), &package.older_skill).unwrap();
+            assert_eq!(
+                install_skill_package(temp.path(), true, false, &package)
+                    .unwrap()
+                    .status,
+                InstallStatus::Replaced
+            );
+            assert_eq!(
+                fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+                package.skill
+            );
+        }
+    }
 
     #[test]
     fn previous_stock_skills_upgrade_but_personal_files_prevent_replacement() {

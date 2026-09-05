@@ -288,13 +288,18 @@ pub(crate) enum Command {
         #[arg(long = "risk", value_delimiter = ',')]
         risks: Vec<RiskShape>,
 
-        /// Approximate maximum JSON output tokens (hard maximum: 1000).
+        /// Approximate maximum output tokens, including briefs (hard maximum: 1000).
         #[arg(long, default_value_t = crate::query::DEFAULT_TOKEN_BUDGET)]
         token_budget: usize,
 
         /// Reduce unavailable credentials or history to a non-blocking JSON status.
         #[arg(long)]
         best_effort: bool,
+
+        /// Return a compact lesson brief instead of diagnostic JSON.
+        /// Keeps conditions, caveats, uncertainty, and confirmation references.
+        #[arg(long)]
+        brief: bool,
 
         /// Override XDG_DATA_HOME (primarily for fixture tests).
         #[arg(long, hide = true)]
@@ -852,6 +857,7 @@ mod tests {
             "--risk",
             "version-sensitive,flaky",
             "--best-effort",
+            "--brief",
         ])
         .unwrap();
         let Command::Recall {
@@ -861,6 +867,7 @@ mod tests {
             tool_major,
             risks,
             best_effort,
+            brief,
             ..
         } = cli.command
         else {
@@ -872,6 +879,7 @@ mod tests {
         assert_eq!(tool_major, Some(1));
         assert_eq!(risks, vec![RiskShape::VersionSensitive, RiskShape::Flaky]);
         assert!(best_effort);
+        assert!(brief);
 
         let defaulted = Cli::try_parse_from(["regurgitate", "recall"]).unwrap();
         let Command::Recall { project, .. } = defaulted.command else {

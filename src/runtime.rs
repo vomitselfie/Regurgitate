@@ -307,6 +307,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             risks,
             token_budget,
             best_effort,
+            brief,
             data_home,
         } => {
             let query = query.map(Zeroizing::new);
@@ -319,6 +320,16 @@ pub fn execute(cli: Cli) -> Result<()> {
                 token_budget,
             };
             options.validate()?;
+            // Budget the requested representation, not the diagnostic JSON
+            // that can otherwise discard a lesson before its brief is rendered.
+            let options = if brief {
+                RecallOptions {
+                    token_budget: crate::query::MAX_TOKEN_BUDGET,
+                    ..options
+                }
+            } else {
+                options
+            };
             let recalled = recall_project(
                 project,
                 options,
@@ -341,7 +352,23 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Err(_) if best_effort => RecallResult::unavailable(),
                 Err(error) => return Err(error),
             };
-            print_compact_json(&result)
+            if brief {
+                let rendered = crate::query::render_brief(&result, token_budget);
+                if rendered.items == 0 {
+                    let status = if result.status == crate::query::RecallStatus::Unavailable {
+                        RecallResult::unavailable()
+                    } else {
+                        RecallResult::empty()
+                    };
+                    return print_compact_json(&status);
+                }
+                let mut stdout = io::stdout().lock();
+                stdout.write_all(rendered.text.as_bytes())?;
+                stdout.write_all(b"\n")?;
+                Ok(())
+            } else {
+                print_compact_json(&result)
+            }
         }
     }
 }
@@ -1219,6 +1246,52 @@ mod tests {
                 host_class: None,
             },
         }
+    }
+
+    #[test]
+    fn preflight_budgets_the_note_instead_of_its_larger_diagnostic_json() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let data_home = temp.path().join("data");
+        record_experience(
+            project.clone(),
+            kicad_input(
+                "Change one placement class at a time, then verify natively.",
+                SemanticOutcome::Success,
+            ),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let context =
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc"));
+        let result = recall_project(
+            project.clone(),
+            RecallOptions {
+                token_budget: crate::query::MAX_TOKEN_BUDGET,
+                ..RecallOptions::default()
+            },
+            context,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let note = crate::query::render_brief(&result, 1000);
+        assert_eq!(note.items, 1);
+        let budget = note.approximate_tokens;
+        assert!(result.approximate_tokens > budget);
+        let brief = preflight_brief(
+            ProjectLocator::new(project),
+            context,
+            budget,
+            data_home,
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(brief.items, 1);
+        assert!(brief.approximate_tokens <= budget);
+        assert!(brief.text.contains("CAVEAT_SENTINEL"));
     }
 
     #[test]

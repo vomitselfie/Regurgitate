@@ -32,10 +32,8 @@ impl ExperienceBrief {
 
 /// Host-neutral preflight port. Adapters call it at the earliest safe point
 /// where a task context is known; the result is small enough to inject
-/// before substantial reasoning. Unlike `recall`, it only carries lessons
-/// with moderate or strong evidence (`n_eff >= min_effective_evidence`):
-/// unsolicited context must earn its place, and one unconfirmed capsule
-/// must not be pushed into every session.
+/// before substantial reasoning. Prefers moderate or strong evidence, with
+/// at most two explicitly unconfirmed lessons when stronger evidence is absent.
 pub trait RecallBroker {
     fn brief(
         &self,
@@ -62,10 +60,13 @@ where
         }
         let options = RecallOptions {
             limit: MAX_RECALL_LIMIT.min(8),
-            token_budget: token_budget.clamp(32, super::MAX_TOKEN_BUDGET),
+            token_budget: super::MAX_TOKEN_BUDGET,
             ..RecallOptions::default()
         };
         let mut result = self.recall(project, options, context)?;
+        result
+            .experiences
+            .retain(|item| item.situation.is_some() && item.lesson.is_some());
         // Confirmed lessons are worth unsolicited context; unconfirmed ones
         // are not, except to bootstrap: when nothing stronger exists, show at
         // most two tagged as unconfirmed so the agent can confirm or refute
@@ -82,7 +83,10 @@ where
             result.experiences.retain(|item| item.reference.is_some());
             result.experiences.truncate(UNCONFIRMED_BOOTSTRAP_ITEMS);
         }
-        Ok(render_brief(&result, token_budget))
+        Ok(render_brief(
+            &result,
+            token_budget.clamp(32, super::MAX_TOKEN_BUDGET),
+        ))
     }
 }
 
@@ -96,17 +100,19 @@ const HEADER: &str =
 /// the approximate token budget is met. Returns an empty brief rather than
 /// a header with no items.
 pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBrief {
-    let mut count = result.experiences.len();
-    let any_unconfirmed = result
+    // Context-free aggregates are diagnostic data, not actionable reminders.
+    let items: Vec<_> = result
         .experiences
         .iter()
-        .any(|item| item.strength == EvidenceStrength::Limited);
+        .filter(|item| item.situation.is_some() && item.lesson.is_some())
+        .collect();
+    let mut count = items.len();
     loop {
         if count == 0 {
             return ExperienceBrief::empty();
         }
         let mut text = String::from(HEADER);
-        for (index, item) in result.experiences.iter().take(count).enumerate() {
+        for (index, item) in items.iter().take(count).enumerate() {
             let strength = match item.strength {
                 EvidenceStrength::Limited => "unconfirmed",
                 EvidenceStrength::Moderate => "moderate",
@@ -120,15 +126,13 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
             };
             let body = item
                 .lesson
-                .clone()
-                .unwrap_or_else(|| format!("{} for {}", item.procedure, item.task_label()));
+                .as_deref()
+                .expect("contextual items have lessons");
             text.push_str(&format!(
-                "\n{}. [{strength} / {}{}] {body} (posterior≈{:.2}; n_eff={:.1}; {}✓ {}✗{guidance}{})",
+                "\n{}. [{strength} / {}{}] {body} ({} succeeded, {} failed{guidance}{})",
                 index + 1,
                 item.scope,
                 if item.challenged { ", challenged" } else { "" },
-                item.posterior,
-                item.effective_evidence,
                 item.successes,
                 item.failures,
                 item.reference
@@ -142,19 +146,23 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
             if let Some(caveat) = &item.caveat {
                 text.push_str(&format!("\n   Caveat: {caveat}"));
             }
-            if item.lesson.is_none() && item.legacy {
-                text.push_str("\n   (legacy aggregate without context)");
+            if let Some(reason) = &item.failure_reason {
+                text.push_str(&format!("\n   Failure: {reason}"));
             }
         }
-        if any_unconfirmed {
+        if items
+            .iter()
+            .take(count)
+            .any(|item| item.reference.is_some())
+        {
             text.push_str(
-                "\nIf a lesson is applied, confirm or refute it: `regurgitate experience confirm --match <ref> --outcome success|failure`.",
+                "\nIf applied: `regurgitate experience confirm --match <ref> --outcome success|failure`.",
             );
         }
-        let omitted = result.experiences.len() - count;
+        let omitted = result.omitted + items.len() - count;
         if omitted > 0 {
             text.push_str(&format!(
-                "\n({omitted} more relevant lesson{} omitted for budget; `regurgitate recall` lists them)",
+                "\n({omitted} more relevant lesson{} omitted for budget.)",
                 if omitted == 1 { "" } else { "s" }
             ));
         }
@@ -168,22 +176,6 @@ pub fn render_brief(result: &RecallResult, token_budget: usize) -> ExperienceBri
             };
         }
         count -= 1;
-    }
-}
-
-impl super::ExperienceBriefItem {
-    fn task_label(&self) -> String {
-        format!("{:?}", self.task)
-            .chars()
-            .enumerate()
-            .flat_map(|(index, character)| {
-                if character.is_uppercase() && index > 0 {
-                    vec!['-', character.to_ascii_lowercase()]
-                } else {
-                    vec![character.to_ascii_lowercase()]
-                }
-            })
-            .collect()
     }
 }
 
@@ -220,6 +212,48 @@ mod tests {
             legacy: false,
             failure_reason: None,
             common_error: None,
+        }
+    }
+
+    #[test]
+    fn compact_brief_keeps_caveats_counterevidence_and_receipts_whole() {
+        let mut lesson = item(0);
+        lesson.reference = Some(format!("r1_{}", "a".repeat(48)));
+        lesson.guidance = Some(PracticeGuidance::Avoid);
+        lesson.challenged = true;
+        lesson.failure_reason = Some(crate::core::FailureReason::VerificationFailed);
+        let result = RecallResult {
+            status: crate::query::RecallStatus::Matches,
+            experiences: vec![lesson.clone()],
+            omitted: 0,
+            hook_summary: HookSummary {
+                sampled_executions: 100,
+                reported_successes: 100,
+                ..HookSummary::default()
+            },
+            approximate_tokens: 0,
+        };
+        let brief = render_brief(&result, 240);
+        assert_eq!(brief.items, 1);
+        assert!(brief.text.len() < serde_json::to_string(&result).unwrap().len());
+        assert!(brief.text.contains(lesson.situation.as_deref().unwrap()));
+        assert!(brief.text.contains(lesson.caveat.as_deref().unwrap()));
+        assert!(brief.text.contains(lesson.reference.as_deref().unwrap()));
+        assert!(brief.text.contains("challenged"));
+        assert!(brief.text.contains("avoid"));
+        assert!(brief.text.contains("1 failed"));
+        assert!(brief.text.contains("verification-failed"));
+        assert!(!brief.text.contains("posterior"));
+        assert!(!brief.text.contains("100"));
+        // Budget pressure drops the whole note; it must not strip the warning.
+        assert_eq!(render_brief(&result, 32), ExperienceBrief::empty());
+        for budget in 32..=240 {
+            let bounded = render_brief(&result, budget);
+            assert!(bounded.approximate_tokens <= budget);
+            if bounded.items > 0 {
+                assert!(bounded.text.contains(lesson.caveat.as_deref().unwrap()));
+                assert!(bounded.text.contains(lesson.reference.as_deref().unwrap()));
+            }
         }
     }
 
@@ -342,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_items_describe_the_procedure_and_task() {
+    fn context_free_legacy_items_do_not_consume_agent_attention() {
         let mut legacy = item(0);
         legacy.lesson = None;
         legacy.situation = None;
@@ -356,11 +390,6 @@ mod tests {
             approximate_tokens: 0,
         };
         let brief = render_brief(&result, 300);
-        assert!(
-            brief
-                .text
-                .contains("structured-patch + targeted-verification for feature-implementation")
-        );
-        assert!(brief.text.contains("legacy aggregate"));
+        assert_eq!(brief, ExperienceBrief::empty());
     }
 }

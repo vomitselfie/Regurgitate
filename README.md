@@ -13,6 +13,23 @@ the contents of your files.
 
 ## What changes for you?
 
+The default skill asks for at most two short reminders at a consequential
+decision, and skips routine work. Each reminder keeps the condition, lesson,
+caveat, evidence strength, and any contrary outcomes together. It should help
+the agent avoid a retry without giving you memory-management work.
+
+```bash
+regurgitate recall --query "rust dependency migration" \
+  --brief --limit 2 --best-effort --token-budget 240
+```
+
+`--brief` returns readable notes; without it the existing diagnostic JSON stays
+available. No applicable note produces only `{"status":"no_matches"}`; an
+unavailable store with `--best-effort` produces `{"status":"unavailable"}`.
+Notes that cannot fit whole are omitted, including their caveats and references,
+rather than shortened into advice without its conditions. The skill treats
+either empty status as terminal and does not ask the user to maintain memory.
+
 | Without Regurgitate | With Regurgitate |
 | --- | --- |
 | A new session starts from zero | A new session can check what worked before |
