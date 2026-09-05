@@ -73,7 +73,7 @@ experience around high precision and low ceremony:
 - transient task-query filtering with no query persistence;
 - hard observation and approximate serialized-token budgets;
 - identifier-only AoE idle/error hook ingestion with generated configuration;
-- an installable AoE API-v12 release-binary plugin with aggregate health,
+- an installable AoE API-v13 release-binary plugin with aggregate health,
   status UI, and explicit one-action Codex/Claude setup;
 - native Codex `PostToolUse` recording with generated configuration and a
   preview-first explicit-path installer;
@@ -188,7 +188,7 @@ core:
 2. the binary enters worker mode only for AoE's exact plugin identity and
    otherwise remains the normal provider-neutral CLI;
 3. isolated protocol and view modules publish only aggregate health to the
-   status bar and settings page;
+   status bar and home pane;
 4. explicit setup actions install the selected agent's native hook and recall
    skill using the AoE-managed executable, without requiring a PATH install;
 5. existing user configuration is preserved and unsafe conflicts fail closed;

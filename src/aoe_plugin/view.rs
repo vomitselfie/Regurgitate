@@ -31,7 +31,7 @@ pub(super) fn status_bar(report: &HealthReport) -> Value {
     })
 }
 
-pub(super) fn settings_page(snapshot: &PluginSnapshot, last_setup: Option<SetupNotice>) -> Value {
+pub(super) fn home_pane(snapshot: &PluginSnapshot, last_setup: Option<SetupNotice>) -> Value {
     let report = &snapshot.health;
     let any_connected = [snapshot.integrations.codex, snapshot.integrations.claude]
         .into_iter()
@@ -303,7 +303,7 @@ mod tests {
         );
         assert_eq!(status_bar(&snapshot.health)["tone"], json!("success"));
 
-        let page = settings_page(&snapshot, None);
+        let page = home_pane(&snapshot, None);
         assert_eq!(page["title"], json!("Regurgitate"));
         assert_eq!(page["blocks"][1]["title"], json!("Regurgitate is ready"));
         assert_eq!(
@@ -325,7 +325,7 @@ mod tests {
         );
         assert_eq!(status_bar(&snapshot.health)["tone"], json!("warn"));
         assert_eq!(
-            settings_page(&snapshot, None)["blocks"][5]["children"][1]["value"],
+            home_pane(&snapshot, None)["blocks"][5]["children"][1]["value"],
             json!("unavailable")
         );
     }
@@ -337,7 +337,7 @@ mod tests {
         snapshot.health.history.learned_practice_count = Some(0);
         snapshot.health.history.experience_count = Some(0);
 
-        let page = settings_page(&snapshot, None);
+        let page = home_pane(&snapshot, None);
         assert_eq!(
             page["blocks"][1]["title"],
             json!("Regurgitate is recording")
@@ -354,7 +354,7 @@ mod tests {
             OverallHealth::NotConfigured,
             ComponentReadiness::NotConfigured,
         );
-        let page = settings_page(
+        let page = home_pane(
             &snapshot,
             Some(SetupNotice {
                 target: SetupTarget::Codex,

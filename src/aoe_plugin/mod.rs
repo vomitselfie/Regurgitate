@@ -75,7 +75,20 @@ mod tests {
             manifest["version"].as_str(),
             Some(env!("CARGO_PKG_VERSION"))
         );
-        assert_eq!(manifest["api_version"].as_integer(), Some(12));
+        assert_eq!(manifest["api_version"].as_integer(), Some(13));
+        assert_eq!(manifest["aoe_version"].as_str(), Some(">=1.15.1, <2.0.0"));
+        let ui: Vec<_> = manifest["ui"]
+            .as_array_of_tables()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["slot"].as_str().unwrap(),
+                    entry["id"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(ui, [("status-bar", "health"), ("home-pane", "overview")]);
         assert_eq!(manifest["runtime"]["kind"].as_str(), Some("release-binary"));
         assert_eq!(
             manifest["runtime"]["asset"].as_str(),

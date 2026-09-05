@@ -1,8 +1,8 @@
 id = "vomitselfie.regurgitate"
 name = "Regurgitate"
-version = "0.10.6"
-api_version = 12
-aoe_version = ">=1.14.0, <2.0.0"
+version = "0.10.7"
+api_version = 13
+aoe_version = ">=1.15.1, <2.0.0"
 description = "Private, encrypted procedural memory for AI coding agents."
 icon = "brain-circuit"
 
@@ -33,7 +33,7 @@ slot = "status-bar"
 id = "health"
 
 [[ui]]
-slot = "settings-page"
+slot = "home-pane"
 id = "overview"
 
 [runtime]

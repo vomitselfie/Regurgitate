@@ -42,6 +42,17 @@ jobs:
       - name: Test
         run: cargo test --locked --all-targets
 
+      - name: Validate manifest with AoE
+        run: |
+          set -euo pipefail
+          aoe_fixture="$(mktemp -d "$RUNNER_TEMP/aoe-compat.XXXXXX")"
+          curl --fail --show-error --silent --location \
+            https://github.com/agent-of-empires/agent-of-empires/releases/download/v1.15.3/aoe-linux-amd64.tar.gz \
+            --output "$aoe_fixture/aoe.tar.gz"
+          echo "050a7a7726967656c02faf887dad50f977d6b447c751db440079ba3df6be7623  $aoe_fixture/aoe.tar.gz" | sha256sum --check
+          tar -xzf "$aoe_fixture/aoe.tar.gz" -C "$aoe_fixture"
+          bash scripts/test-aoe-manifest.sh "$aoe_fixture/aoe-linux-amd64"
+
       - name: Verify release packaging
         run: |
           set -euo pipefail

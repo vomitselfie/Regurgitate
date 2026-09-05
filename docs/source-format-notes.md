@@ -24,7 +24,8 @@ AoE currently provides three useful integration surfaces:
 1. repo lifecycle hooks (`on_create`, `on_launch`, `on_destroy`);
 2. global/profile status-transition hooks with `AOE_SESSION_ID`, `AOE_TOOL`, and
    project context; and
-3. a stable plugin system using manifest API version 12 and JSON-RPC workers.
+3. a plugin system using manifest API version 13 and JSON-RPC workers
+   (plugin compatibility rechecked against AoE 1.15.3 on 2026-09-05).
 
 The plugin system is useful for installation, commands, settings, and UI, but
 has no post-install callback and its worker contract is not itself a complete
@@ -35,8 +36,9 @@ automatic session-boundary ingestion.
 Regurgitate therefore ships a release-binary plugin as an operational layer over the
 same executable. Its worker publishes aggregate health and handles controlled
 status, refresh, and setup methods; it does not receive or reconstruct provider
-tool events. Contributed setup commands cover hosts where settings-page actions
-are not interactive. AoE 1.14.x launches workers only from `aoe serve`, so the
+tool events. The global `home-pane` hosts health and setup actions, with
+contributed commands as an alternative. AoE retired `settings-page`; the plugin
+now requires AoE 1.15.1 or newer within 1.x. Workers launch from `aoe serve`, so the
 standalone CLI and installed recording hooks remain supported independently of
 the daemon.
 

@@ -123,9 +123,9 @@ impl<W: Write> Worker<W> {
         self.call_host(
             "ui.state.set",
             json!({
-                "slot": "settings-page",
+                "slot": "home-pane",
                 "id": "overview",
-                "payload": view::settings_page(snapshot, self.last_setup)
+                "payload": view::home_pane(snapshot, self.last_setup)
             }),
             inspect,
             setup,
@@ -348,13 +348,13 @@ mod tests {
         assert_eq!(messages.len(), 6);
         assert_eq!(messages[0]["method"], json!("ui.state.set"));
         assert_eq!(messages[0]["params"]["slot"], json!("status-bar"));
-        assert_eq!(messages[1]["params"]["slot"], json!("settings-page"));
+        assert_eq!(messages[1]["params"]["slot"], json!("home-pane"));
         assert_eq!(messages[2]["id"], json!(7));
         assert_eq!(messages[2]["result"]["history"]["event_count"], json!(9));
         assert_eq!(messages[3]["id"], json!(8));
         assert_eq!(messages[3]["result"]["accepted"], json!(true));
         assert_eq!(messages[4]["params"]["slot"], json!("status-bar"));
-        assert_eq!(messages[5]["params"]["slot"], json!("settings-page"));
+        assert_eq!(messages[5]["params"]["slot"], json!("home-pane"));
     }
 
     #[test]
@@ -423,7 +423,7 @@ mod tests {
             .collect();
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[2]["params"]["slot"], json!("status-bar"));
-        assert_eq!(messages[3]["params"]["slot"], json!("settings-page"));
+        assert_eq!(messages[3]["params"]["slot"], json!("home-pane"));
         let encoded = serde_json::to_string(&messages).unwrap();
         assert!(!encoded.contains("opaque-session"));
     }

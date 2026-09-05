@@ -232,7 +232,7 @@ personal hooks. Repeated or overlapping delivery reuses the normal cursor and
 stable-event idempotency path. SQLite waits briefly for a concurrent local
 writer rather than immediately failing with a busy error.
 
-The repository root also carries an AoE API-v12 manifest. Its release-asset
+The repository root also carries an AoE API-v13 manifest. Its release-asset
 template selects Linux x86-64, Apple Silicon, or Intel macOS using AoE's host
 OS and architecture substitutions. Every archive exposes the same root
 `regurgitate` path, so packaging stays separate from worker dispatch. AoE launches
@@ -244,9 +244,9 @@ event model.
 
 The worker speaks newline-delimited JSON-RPC over stdio, keeps stdout exclusive
 to protocol messages, and exits when the host closes stdin. It uses the normal
-read-only health service to publish a global status segment and settings page.
+read-only health service to publish a global status segment and home pane.
 It also offers explicit Codex and Claude Code setup actions through the
-settings page and contributed commands. Plugin installation itself never
+home pane and contributed commands. Plugin installation itself never
 mutates another program's configuration because AoE has no post-install setup
 contract and such a mutation should require a user action.
 
@@ -495,7 +495,7 @@ Implemented:
 - Linux Secret Service and macOS Keychain key retrieval/creation;
 - manual session ingestion;
 - identifier-only AoE status-hook ingestion and non-mutating config generation;
-- an AoE API-v12 release-binary plugin with supervised JSON-RPC health and
+- an AoE API-v13 release-binary plugin with supervised JSON-RPC health and
   explicit Codex/Claude setup UI;
 - native Codex hook config generation and a preview-first explicit-path
   installer;

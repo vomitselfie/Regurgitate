@@ -62,7 +62,7 @@ That's the setup. You can keep working normally.
 <details>
 <summary><strong>I use Agent of Empires (AoE)</strong></summary>
 
-These steps are for an existing AoE installation, version 1.14 or newer within
+These steps are for an existing AoE installation, version 1.15.1 or newer within
 version 1.x.
 
 1. Open **Terminal**, paste this command, and press **Enter**:
@@ -72,7 +72,7 @@ aoe plugin install gh:vomitselfie/Regurgitate
 ```
 
 2. Open AoE. If it is not running, run `aoe serve` in Terminal.
-3. Open Regurgitate's plugin settings and click **Set up Codex** or **Set up Claude Code**.
+3. Open the Regurgitate pane on AoE's home view and click **Set up Codex** or **Set up Claude Code**.
 4. Restart the assistant you connected.
 
 The setup button matters: installing the plugin downloads it; setup connects
