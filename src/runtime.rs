@@ -418,6 +418,7 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
         ExperienceCommand::Record {
             project,
             scope,
+            shared,
             task,
             situation,
             lesson,
@@ -481,7 +482,7 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                 return print_experience_rejection(AdmissionField::Lesson, reason);
             }
             let input = ExperienceInput {
-                scope,
+                scope: if shared { MemoryScope::Machine } else { scope },
                 task: task.into(),
                 situation: Some(situation),
                 lesson: Some(lesson),
@@ -1218,6 +1219,88 @@ mod tests {
                 host_class: None,
             },
         }
+    }
+
+    #[test]
+    fn shared_lesson_reaches_a_new_project_and_accepts_authenticated_feedback() {
+        let temp = tempdir().unwrap();
+        let origin = temp.path().join("origin");
+        let newcomer = temp.path().join("newcomer");
+        fs::create_dir(&origin).unwrap();
+        fs::create_dir(&newcomer).unwrap();
+        let data_home = temp.path().join("data");
+        let lesson = "Change one placement class at a time, then verify natively.";
+        let mut input = kicad_input(lesson, SemanticOutcome::Success);
+        input.scope = MemoryScope::Machine;
+        record_experience(origin.clone(), input, data_home.clone(), &FixedKeyProvider).unwrap();
+        record_experience(
+            origin.clone(),
+            kicad_input(
+                "Private project convention must stay in the origin repository.",
+                SemanticOutcome::Success,
+            ),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let database = data_home.join("regurgitate/history.db");
+        let before = fs::read(&database).unwrap();
+        let result = recall_project(
+            newcomer.clone(),
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(result.experiences.len(), 1);
+        assert_eq!(result.experiences[0].scope, MemoryScope::Machine);
+        assert_eq!(result.experiences[0].lesson.as_deref(), Some(lesson));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        let brief = preflight_brief(
+            ProjectLocator::new(newcomer),
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            300,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(brief.items, 1);
+        let reference = brief
+            .text
+            .split("ref ")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap();
+        assert!(reference.starts_with("r1_"));
+        let confirmed = confirm_experience(
+            reference,
+            SemanticOutcome::Success,
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(confirmed.evidence, 2);
+        let duplicate = confirm_experience(
+            reference,
+            SemanticOutcome::Success,
+            None,
+            data_home.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(duplicate.evidence, 2);
+        forget_project(origin, true, data_home.clone(), &FixedKeyProvider).unwrap();
+        let result = recall_project(
+            temp.path().join("newcomer"),
+            RecallOptions::default(),
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc")),
+            data_home,
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert!(result.experiences.is_empty());
     }
 
     #[test]

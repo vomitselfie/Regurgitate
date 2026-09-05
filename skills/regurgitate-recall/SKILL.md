@@ -14,8 +14,8 @@ Recall once only when prior experience could materially change non-trivial
 implementation, diagnosis, migration, deployment, or research. Skip simple
 questions, mechanical edits, formatting, and tasks with an injected brief.
 
-Project and controlled context are inferred. Use explicit flags only to correct
-an inference:
+Context is inferred. Recall includes applicable shared lessons even in a new
+project. Use flags only to correct inference:
 
 ```bash
 regurgitate recall --query "<short non-secret category>" \
@@ -42,24 +42,28 @@ blocks the task.
 
 ## Record rarely
 
-After a meaningful verified milestone or rejected approach, record at most one
-capsule only when the lesson is novel, reusable, specific, evidence-backed, and
-not covered by recalled experience:
+After verified work, record at most one novel, reusable, specific lesson not
+covered by recall:
 
 ```bash
 regurgitate experience record --task <task> \
   --situation "<when it applies>" --lesson "<what to do>" \
-  --caveat "<boundary>" --procedure <dimension>[,<dimension>] \
-  --steps <step>[,<step>] --outcome <success|failure> \
-  [--failure-reason <reason>]
+  --procedure <dimension> --outcome <success|failure>
 ```
 
-Text is one impersonal notebook sentence (240/320/160 characters). Commands,
-paths, URLs, secrets, payloads, and conversation are rejected. Outcome means
-the procedure produced a correct result, not that a tool exited zero.
-`duplicate` and `rejected` are terminal: do not rewrite or retry merely to make
-a capsule exist. Skip routine activity, ambiguous results, and generic advice.
-The fixed procedure and step vocabulary is available from `record --help`.
+Add `--shared` for portable tool, verification, or host lessons; omit it for
+project-specific behavior. Agents under the same OS account and data home share
+this notebook. Never widen old lessons merely to fill it.
+
+One procedure dimension suffices. Add `--caveat`, `--steps`, or `--failure-reason`
+only when useful. Correct inferred tags if the lesson concerns a different tool
+or ecosystem. Never invent verification or outcomes.
+
+Text is impersonal (240/320/160 characters). Commands, paths, URLs, secrets,
+payloads, and conversation are rejected. Success means a correct result.
+`duplicate` and `rejected` are terminal; do not rewrite to force acceptance.
+Skip routine activity, ambiguous results, and generic advice. Vocabulary is
+available from `record --help`.
 
 ## Sandboxed hosts
 

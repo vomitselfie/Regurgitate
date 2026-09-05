@@ -125,7 +125,10 @@ from allowlisted marker presence. Query text is zeroized. Detection never
 reads marker or source contents and never invokes a project tool. Recall then loads a bounded candidate window from
 the project scope (capsules plus legacy rows). Only if fewer than a handful of
 applicable active project capsules exist does it expand outward to workspace,
-ecosystem, machine, and global buckets. Query-driven broader-scope recall also
+ecosystem, machine, and global buckets. An unknown project skips local reads but
+still queries these broader buckets without creating an identity or history.
+`experience record --shared` selects machine scope; the origin still owns the
+lesson for deletion. Query-driven broader-scope recall also
 requires an exact controlled anchor beyond an inferred task category: artifact,
 ecosystem, tool family, phase, or risk. An explicit `--task` opts into category-
 only retrieval. This gate deliberately prefers `no_matches` over cross-domain

@@ -283,35 +283,36 @@ where
         now: DateTime<Utc>,
     ) -> Result<RecallResult> {
         options.validate()?;
-        let Some(project_id) = self.history.find_project(locator)? else {
-            return Ok(budgeted_result(
-                Vec::new(),
-                0,
-                HookSummary::default(),
-                options.token_budget,
-            ));
+        let project_id = self.history.find_project(locator)?;
+        let hook_events = match project_id {
+            Some(id) => self.history.recent_project_events(
+                id,
+                EvidenceKind::HookExecution,
+                MAX_CANDIDATE_EVENTS_PER_KIND,
+            )?,
+            None => Vec::new(),
         };
-        let hook_events = self.history.recent_project_events(
-            project_id,
-            EvidenceKind::HookExecution,
-            MAX_CANDIDATE_EVENTS_PER_KIND,
-        )?;
         let hook_summary = summarize_hooks(&hook_events, options);
 
         let intent = context.query.map(TaskIntent::classify).unwrap_or_default();
         let matcher = ContextMatcher::new(&context, &intent);
 
         // Stage 1: bounded project-scope window, including v2 legacy rows.
-        let mut candidates = self
-            .history
-            .scoped_experiences(ScopeKey::Project(project_id), MAX_CANDIDATES_PER_SCOPE)?;
-        let practice_events = self.history.recent_project_events(
-            project_id,
-            EvidenceKind::LearnedPractice,
-            MAX_CANDIDATE_EVENTS_PER_KIND,
-        )?;
-        let (legacy, legacy_errors) = materialize_legacy(project_id, &practice_events);
-        candidates.extend(legacy);
+        let mut candidates = Vec::new();
+        let mut legacy_errors = HashMap::new();
+        if let Some(project_id) = project_id {
+            candidates = self
+                .history
+                .scoped_experiences(ScopeKey::Project(project_id), MAX_CANDIDATES_PER_SCOPE)?;
+            let practice_events = self.history.recent_project_events(
+                project_id,
+                EvidenceKind::LearnedPractice,
+                MAX_CANDIDATE_EVENTS_PER_KIND,
+            )?;
+            let (legacy, errors) = materialize_legacy(project_id, &practice_events);
+            candidates.extend(legacy);
+            legacy_errors = errors;
+        }
 
         let local_active = candidates
             .iter()
@@ -1798,6 +1799,42 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("recall limit"));
         assert_eq!(history.requested_limit.get(), 0);
+    }
+
+    #[test]
+    fn new_projects_recall_shared_lessons_without_local_history() {
+        for scope in [
+            MemoryScope::Machine,
+            MemoryScope::Ecosystem,
+            MemoryScope::Global,
+        ] {
+            let mut history = MemoryHistory::new(None);
+            history
+                .capsules
+                .push(capsule(1, scope, &[SemanticOutcome::Success; 4]));
+            history.capsules.push(capsule(
+                2,
+                MemoryScope::Project,
+                &[SemanticOutcome::Success; 4],
+            ));
+            let result = recall(
+                &history,
+                RecallOptions::default(),
+                EphemeralTaskContext::from_query(Some(
+                    "debugging kicad generated artifact verification",
+                )),
+            );
+            assert_eq!(result.experiences.len(), 1, "scope {scope:?}");
+            assert_eq!(result.experiences[0].scope, scope);
+            assert_eq!(history.requested_limit.get(), 0);
+
+            let unrelated = recall(
+                &history,
+                RecallOptions::default(),
+                EphemeralTaskContext::from_query(Some("python release documentation")),
+            );
+            assert!(unrelated.experiences.is_empty());
+        }
     }
 
     #[test]

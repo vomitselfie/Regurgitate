@@ -381,6 +381,11 @@ pub(crate) enum ExperienceCommand {
         #[arg(long, default_value = "project")]
         scope: MemoryScope,
 
+        /// Share a portable lesson across projects and agents using this local store.
+        /// Equivalent to --scope machine; existing project lessons are unchanged.
+        #[arg(long, conflicts_with = "scope")]
+        shared: bool,
+
         /// Controlled task category in which the procedure was evaluated.
         #[arg(long, value_enum)]
         task: TaskKindArg,
@@ -677,6 +682,48 @@ impl From<OperationArg> for Operation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_record_is_explicit_and_conflicts_with_scope() {
+        let args = [
+            "regurgitate",
+            "experience",
+            "record",
+            "--task",
+            "testing",
+            "--situation",
+            "A reusable testing condition",
+            "--lesson",
+            "A verified testing lesson",
+            "--procedure",
+            "targeted-verification",
+            "--outcome",
+            "success",
+        ];
+        for shared in [false, true] {
+            let mut selected = args.to_vec();
+            if shared {
+                selected.push("--shared");
+            }
+            let cli = Cli::try_parse_from(selected).unwrap();
+            let Command::Experience {
+                command:
+                    ExperienceCommand::Record {
+                        shared: actual,
+                        scope,
+                        ..
+                    },
+            } = cli.command
+            else {
+                panic!("expected record");
+            };
+            assert_eq!(actual, shared);
+            assert_eq!(scope, MemoryScope::Project);
+        }
+        let mut conflicting = args.to_vec();
+        conflicting.extend(["--shared", "--scope", "project"]);
+        assert!(Cli::try_parse_from(conflicting).is_err());
+    }
 
     #[test]
     fn experience_record_parses_controlled_vocabularies_only() {
