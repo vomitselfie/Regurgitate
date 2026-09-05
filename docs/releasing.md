@@ -2,10 +2,15 @@
 
 ## Local verification
 
+`rust-toolchain.toml` pins local Cargo commands to Rust 1.88.0, the same compiler,
+formatter, and Clippy used by CI. Rustup installs the pinned toolchain when
+needed. Testing only with a newer default toolchain does not verify this release
+gate: Clippy behavior can differ between versions.
+
 ```bash
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 The same checks run in GitHub Actions for pull requests and pushes to `master`.
@@ -32,3 +37,8 @@ release tags and complete asset sets are never replaced by a later commit.
 For each new release, update the package version in `Cargo.toml`, refresh
 `Cargo.lock`, run the verification commands above, and push the tested commit
 to `master`.
+
+When changing the supported Rust version, keep `rust-toolchain.toml`, the
+workflow's `RUST_VERSION`, and `Cargo.toml`'s `rust-version` aligned. A failed
+verification job skips both platform builds and release publication; inspect
+the Actions run before expecting a new entry on the Releases page.

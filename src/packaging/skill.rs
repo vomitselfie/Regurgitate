@@ -289,12 +289,10 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
     Ok(
         if compatible_standard && has_only_packaged_layout(destination)? {
             ExistingInstall::CompatibleStandard
+        } else if compatible_standard {
+            ExistingInstall::Different
         } else {
-            if compatible_standard {
-                ExistingInstall::Different
-            } else {
-                ExistingInstall::Current
-            }
+            ExistingInstall::Current
         },
     )
 }
