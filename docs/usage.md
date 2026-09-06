@@ -146,11 +146,12 @@ Use this only when the native Codex hook is not installed.
 
 ### Check it
 
-For an AoE installation, use the plugin's status page. For a standalone install,
+For an AoE installation, use the Regurgitate home pane. For a standalone install,
 if `regurgitate` is on your `PATH`, run:
 
 ```bash
 regurgitate status
+regurgitate status --codex-config ~/.codex/config.toml
 regurgitate recall --query "data import" --brief --limit 2 --best-effort --token-budget 240
 ```
 
@@ -159,6 +160,13 @@ an event, status should report ready history and separate `hook_event_count`
 from `experience_count`. Recall may still be empty until the agent has
 recorded a useful lesson for that task. Regurgitate does not retain the query
 text, although your shell may keep commands you type in its own history.
+
+Hook checks accept both the legacy PATH command and installer-generated quoted
+absolute paths. `installed` means the configuration contains the expected hook,
+not that its executable has run or the credential store is accessible. These
+checks do not modify the configuration. Explicit setup can repoint an existing
+stock hook between standalone and AoE copies without appending a duplicate;
+custom commands and matcher restrictions are preserved.
 
 ## Day-to-day use
 

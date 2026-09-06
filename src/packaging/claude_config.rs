@@ -12,9 +12,11 @@ use crate::application::HookReadiness;
 use super::{
     InstallStatus,
     config_file::{acquire_config_lock, atomic_write_config, containing_directory, read_config},
+    hook_command::same_stock_hook,
 };
 
 const CLAUDE_HOOK_COMMAND: &str = "regurgitate record-hook --agent claude";
+#[cfg(test)]
 const CLAUDE_PREFLIGHT_COMMAND: &str = "regurgitate preflight --agent claude";
 const RECORD_HOOK_SUFFIX: &str = "record-hook --agent claude";
 const PREFLIGHT_SUFFIX: &str = "preflight --agent claude";
@@ -149,7 +151,7 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
         let standard_command = event_command(event, CLAUDE_HOOK_COMMAND)
             .expect("every supported event has a standard command");
         let migrated = migrate_unrestricted_standard_hook(groups, &standard_command, &command)?;
-        match regurgitate_hook_coverage(groups, &command)? {
+        match regurgitate_hook_coverage(groups, &command, &standard_command)? {
             RegurgitateHookCoverage::AllTools => {
                 if migrated {
                     changes.push(event);
@@ -204,7 +206,12 @@ fn migrate_unrestricted_standard_hook(
                 continue;
             };
             if handler.get("type").and_then(Value::as_str) == Some("command")
-                && handler.get("command").and_then(Value::as_str) == Some(standard_command)
+                && handler
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| {
+                        command != hook_command && same_stock_hook(command, standard_command)
+                    })
             {
                 handler.insert("command".to_owned(), Value::String(hook_command.to_owned()));
                 migrated = true;
@@ -237,6 +244,7 @@ enum RegurgitateHookCoverage {
 fn regurgitate_hook_coverage(
     groups: &[Value],
     hook_command: &str,
+    standard_command: &str,
 ) -> Result<RegurgitateHookCoverage> {
     let mut found_restricted = false;
     for group in groups {
@@ -258,9 +266,7 @@ fn regurgitate_hook_coverage(
                     .get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|command| {
-                        command == hook_command
-                            || command == CLAUDE_HOOK_COMMAND
-                            || command == CLAUDE_PREFLIGHT_COMMAND
+                        command == hook_command || same_stock_hook(command, standard_command)
                     });
             Ok::<_, anyhow::Error>(found || matches)
         })?;

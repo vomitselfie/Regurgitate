@@ -115,7 +115,7 @@ pub(super) fn home_pane(snapshot: &PluginSnapshot, last_setup: Option<SetupNotic
         }),
         json!({
             "kind": "note",
-            "text": "Setup changes only the selected agent's user hook and Regurgitate skill. Existing settings and personal hooks are preserved. Restart that agent after setup.",
+            "text": format!("AoE copy: {}. Setup installs or updates the selected agent's hook and skill to use this copy directly. A separate terminal installation is not updated. Existing settings and personal hooks are preserved. Restart that agent after setup.", env!("CARGO_PKG_VERSION")),
             "tone": "info"
         }),
         json!({
@@ -200,7 +200,7 @@ fn integration_label(state: IntegrationState) -> &'static str {
     ) {
         "needs attention"
     } else {
-        "not connected"
+        "not connected to this copy"
     }
 }
 

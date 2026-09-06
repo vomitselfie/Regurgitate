@@ -218,6 +218,11 @@ case "$agent" in
 esac
 
 printf 'Installed %s at %s\n' "$actual_version" "$destination"
+printf 'This updates the standalone copy only; AoE plugin updates are separate.\n'
+resolved_command="$(command -v regurgitate || true)"
+if [ -n "$resolved_command" ] && [ "$resolved_command" != "$destination" ]; then
+    printf 'Notice: PATH currently finds %s instead. Run %s directly to use this installed copy.\n' "$resolved_command" "$destination"
+fi
 if [ "$agent" != none ]; then
     printf 'Connected %s; restart it before using Regurgitate.\n' "$agent"
 fi

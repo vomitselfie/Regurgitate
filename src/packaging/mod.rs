@@ -2,6 +2,7 @@ mod aoe_config;
 mod claude_config;
 mod codex_config;
 mod config_file;
+mod hook_command;
 mod skill;
 
 use serde::Serialize;

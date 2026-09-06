@@ -53,7 +53,8 @@ run_installer() {
             --bin-dir "$bin_dir"
 }
 
-run_installer codex >/dev/null
+installer_output="$(run_installer codex)"
+grep -F 'This updates the standalone copy only' <<<"$installer_output" >/dev/null
 
 installed="$bin_dir/regurgitate"
 skill="$codex_home/skills/regurgitate-recall/SKILL.md"

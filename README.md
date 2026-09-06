@@ -124,6 +124,12 @@ Then use **Set up Codex** or **Set up Claude Code** again and restart that
 assistant. Use the same installation method you originally chose for each
 assistant.
 
+**Used both methods?** You have two copies, updated separately. `regurgitate
+--version` checks the copy your Terminal finds; `aoe plugin info
+vomitselfie.regurgitate` checks AoE's copy. Updating one does not update the other.
+Choose which copy should serve your assistant and run its setup again. Setup
+points the hook and skill directly to that copy, so they do not depend on PATH.
+
 </details>
 
 <details>
@@ -147,6 +153,10 @@ Do not grant unrestricted terminal access just to make memory work.
 - **“Command not found” while installing:** note which command is missing and ask your assistant to help install that prerequisite.
 - **Setup reports a conflict:** it found existing files it cannot safely replace. Ask your assistant to review them before replacing anything.
 - **Memory is unavailable:** your computer's key storage or the assistant's permissions may need attention. Your main work can continue.
+
+A configured hook is not proof that new events are being recorded. Restart the
+assistant after setup. If recording still fails, check its hook execution and
+key-store permissions; reinstalling the plugin alone does not resolve those.
 
 For help, [open an issue](https://github.com/vomitselfie/Regurgitate/issues) with
 your operating system, assistant, and the error message. Remove private details

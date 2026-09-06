@@ -12,6 +12,7 @@ use crate::application::HookReadiness;
 use super::{
     InstallStatus,
     config_file::{acquire_config_lock, atomic_write_config, containing_directory, read_config},
+    hook_command::same_stock_hook,
 };
 
 const CODEX_HOOK_COMMAND: &str = "regurgitate record-hook --agent codex";
@@ -166,7 +167,12 @@ fn migrate_unrestricted_standard_hook(groups: &mut ArrayOfTables, hook_command: 
         };
         for handler in handlers.iter_mut() {
             if handler.get("type").and_then(Item::as_str) == Some("command")
-                && handler.get("command").and_then(Item::as_str) == Some(CODEX_HOOK_COMMAND)
+                && handler
+                    .get("command")
+                    .and_then(Item::as_str)
+                    .is_some_and(|command| {
+                        command != hook_command && same_stock_hook(command, CODEX_HOOK_COMMAND)
+                    })
             {
                 handler.insert("command", value(hook_command));
                 migrated = true;
@@ -209,18 +215,21 @@ fn regurgitate_hook_coverage(
 ) -> RegurgitateHookCoverage {
     let mut found_restricted = false;
     for group in groups {
-        let contains_regurgitate =
-            group
-                .get("hooks")
-                .and_then(Item::as_array_of_tables)
-                .is_some_and(|handlers| {
-                    handlers.iter().any(|handler| {
-                        handler.get("type").and_then(Item::as_str) == Some("command")
-                            && handler.get("command").and_then(Item::as_str).is_some_and(
-                                |command| command == hook_command || command == CODEX_HOOK_COMMAND,
-                            )
-                    })
-                });
+        let contains_regurgitate = group
+            .get("hooks")
+            .and_then(Item::as_array_of_tables)
+            .is_some_and(|handlers| {
+                handlers.iter().any(|handler| {
+                    handler.get("type").and_then(Item::as_str) == Some("command")
+                        && handler
+                            .get("command")
+                            .and_then(Item::as_str)
+                            .is_some_and(|command| {
+                                command == hook_command
+                                    || same_stock_hook(command, CODEX_HOOK_COMMAND)
+                            })
+                })
+            });
         if !contains_regurgitate {
             continue;
         }
