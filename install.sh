@@ -226,6 +226,9 @@ fi
 if [ "$agent" != none ]; then
     printf 'Connected %s; restart it before using Regurgitate.\n' "$agent"
 fi
+if [ "$agent" = codex ]; then
+    printf 'In Codex, open /hooks and review/trust the Regurgitate hook if prompted. Setup does not grant hook trust.\n'
+fi
 case ":${PATH:-}:" in
     *":$bin_dir:"*) ;;
     *) printf 'Add %s to PATH to run regurgitate directly.\n' "$bin_dir" ;;

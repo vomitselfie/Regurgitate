@@ -155,6 +155,9 @@ fn hook_needs_install(status_hooks: &Table, key: &str) -> Result<bool> {
     };
     match item.as_str() {
         Some(AOE_HOOK_COMMAND) => Ok(false),
+        Some("praxis aoe-hook") => bail!(
+            "AoE {key} still uses legacy Praxis. If native agent recording is configured, remove this obsolete status hook; otherwise replace it with regurgitate aoe-hook. No changes made"
+        ),
         Some(_) => bail!("AoE {key} is already configured; refusing to replace it"),
         None => bail!("AoE {key} must be a string; refusing to replace it"),
     }

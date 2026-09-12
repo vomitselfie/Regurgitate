@@ -44,6 +44,19 @@ pub fn inspect_codex_hook(config: &Path) -> Result<HookReadiness> {
 
 pub fn inspect_codex_hook_command(config: &Path, hook_command: &str) -> Result<HookReadiness> {
     validate_hook_command(hook_command)?;
+    match json_destination(config) {
+        Ok(Some(json)) => {
+            return Ok(
+                match super::codex_json::prepare(&read_config(&json, "Codex")?, hook_command) {
+                    Ok((_, false)) => HookReadiness::Installed,
+                    Ok(_) => HookReadiness::NotInstalled,
+                    Err(_) => HookReadiness::Conflicting,
+                },
+            );
+        }
+        Err(_) => return Ok(HookReadiness::Conflicting),
+        Ok(None) => {}
+    }
     let content = read_config(config, "Codex")?;
     Ok(match prepare_config(&content, hook_command) {
         Ok(prepared) if prepared.changes.is_empty() => HookReadiness::Installed,
@@ -66,6 +79,9 @@ pub fn install_codex_hook_command(
     apply: bool,
 ) -> Result<CodexHookInstallReport> {
     validate_hook_command(hook_command)?;
+    if let Some(json) = json_destination(config)? {
+        return super::codex_json::install(&json, hook_command, apply);
+    }
     let prepared = prepare_config(&read_config(config, "Codex")?, hook_command)?;
     if prepared.changes.is_empty() {
         return Ok(report(InstallStatus::AlreadyCurrent, config, Vec::new()));
@@ -86,6 +102,40 @@ pub fn install_codex_hook_command(
     }
     atomic_write_config(config, prepared.content.as_bytes(), "Codex")?;
     Ok(report(InstallStatus::Installed, config, prepared.changes))
+}
+
+// Keep the user's existing representation. Both sources load in Codex, so
+// refuse ambiguous mixed PostToolUse definitions rather than double-record.
+fn json_destination(config: &Path) -> Result<Option<PathBuf>> {
+    let explicit_json = config.extension().is_some_and(|ext| ext == "json");
+    let json = if explicit_json {
+        config.to_path_buf()
+    } else {
+        config.with_file_name("hooks.json")
+    };
+    let toml = if explicit_json {
+        config.with_file_name("config.toml")
+    } else {
+        config.to_path_buf()
+    };
+    let content = read_config(&toml, "Codex")?;
+    let doc = content
+        .parse::<DocumentMut>()
+        .context("Codex config is not valid TOML")?;
+    ensure_hooks_enabled(&doc)?;
+    if !explicit_json && !json.try_exists()? {
+        return Ok(None);
+    }
+    if doc
+        .get("hooks")
+        .and_then(|h| h.get("PostToolUse"))
+        .is_some()
+    {
+        bail!(
+            "Both Codex config.toml PostToolUse and hooks.json exist; review /hooks and keep one representation before setup"
+        );
+    }
+    Ok(Some(json))
 }
 
 fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {

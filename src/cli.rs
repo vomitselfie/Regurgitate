@@ -496,6 +496,14 @@ pub(crate) enum ExperienceCommand {
 
     /// Report aggregate capsule and authenticated-confirmation usefulness metrics.
     Metrics {
+        /// Inspect machine-shared lessons instead of lessons from one project.
+        #[arg(long, conflicts_with = "project")]
+        shared: bool,
+
+        /// Explain the scope and evidence in plain language.
+        #[arg(long)]
+        brief: bool,
+
         #[arg(long, default_value = ".")]
         project: PathBuf,
 

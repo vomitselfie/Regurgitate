@@ -170,7 +170,7 @@ fn setup_notice(notice: SetupNotice) -> Value {
     let (title, detail, tone) = match notice.outcome {
         SetupOutcome::Installed => (
             format!("{agent} setup complete"),
-            "The recording hook and recall skill were installed. Restart the agent to load them.",
+            "The recording hook and recall skill were installed. Restart the agent to load them. In Codex, open /hooks and review/trust changed hooks; setup does not grant trust.",
             "success",
         ),
         SetupOutcome::AlreadyCurrent => (

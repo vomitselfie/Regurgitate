@@ -567,10 +567,27 @@ fn execute_experience(command: ExperienceCommand) -> Result<()> {
                 list_experiences(project, limit, data_home, &SystemKeyProvider::default())?;
             print_json(&listing)
         }
-        ExperienceCommand::Metrics { project, data_home } => {
+        ExperienceCommand::Metrics {
+            project,
+            data_home,
+            shared,
+            brief,
+        } => {
             let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let metrics = experience_metrics(project, data_home, &SystemKeyProvider::default())?;
-            print_compact_json(&metrics)
+            let metrics = if shared {
+                match open_existing_history(&data_home, false, &SystemKeyProvider::default())? {
+                    Some(store) => ExperienceService::new(store).shared_metrics()?,
+                    None => ExperienceMetrics::default(),
+                }
+            } else {
+                experience_metrics(project, data_home, &SystemKeyProvider::default())?
+            };
+            if brief {
+                print!("{}", metrics.brief(shared));
+                Ok(())
+            } else {
+                print_compact_json(&metrics)
+            }
         }
         ExperienceCommand::Challenge {
             project,

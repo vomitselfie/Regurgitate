@@ -168,6 +168,24 @@ checks do not modify the configuration. Explicit setup can repoint an existing
 stock hook between standalone and AoE copies without appending a duplicate;
 custom commands and matcher restrictions are preserved.
 
+For Codex, passing `config.toml` also checks its sibling `hooks.json`. If that JSON
+file exists, setup uses it instead of adding another TOML hook; mixed
+PostToolUse sources require manual review. An explicit `--config hooks.json`
+is also supported. TOML-only installations keep their existing representation.
+Readiness does not inspect or modify Codex's hook trust state. After setup, use
+`/hooks` to review the exact changed definition. This follows the
+[official hook contract](https://learn.chatgpt.com/docs/hooks).
+
+`experience metrics --brief` describes evidence from this project's lessons;
+`experience metrics --shared --brief` describes the machine-shared bucket.
+They are not whole-notebook totals and may overlap. No recall telemetry is added.
+
+If an AoE status slot still contains exactly `praxis aoe-hook`, setup now explains
+the legacy conflict without changing it. With native recording already connected,
+remove only those obsolete `on_idle`/`on_error` entries from `[status_hooks]`;
+otherwise replace them with `regurgitate aoe-hook`. Do not enable both ingestion
+paths or delete unrelated hooks or the old notebook as part of this cleanup.
+
 ## Day-to-day use
 
 Once the hook and skill are installed, there is usually nothing to manage.

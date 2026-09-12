@@ -1,6 +1,7 @@
 mod aoe_config;
 mod claude_config;
 mod codex_config;
+mod codex_json;
 mod config_file;
 mod hook_command;
 mod skill;

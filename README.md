@@ -34,7 +34,7 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 ```
 
 3. Wait for the messages beginning with `Installed` and `Connected`.
-4. Close and reopen Codex so it can load Regurgitate.
+4. Close and reopen Codex. Run `/hooks` and review/trust the Regurgitate hook if prompted. Setup never grants trust on your behalf.
 
 That's the setup. You can keep working normally.
 
@@ -73,7 +73,7 @@ aoe plugin install gh:vomitselfie/Regurgitate
 
 2. Open AoE. If it is not running, run `aoe serve` in Terminal.
 3. Open the Regurgitate pane on AoE's home view and click **Set up Codex** or **Set up Claude Code**.
-4. Restart the assistant you connected.
+4. Restart the assistant you connected. For Codex, open `/hooks` and review/trust the Regurgitate hook if prompted.
 
 The setup button matters: installing the plugin downloads it; setup connects
 it to your assistant. You can also find the setup actions in AoE's command
@@ -161,6 +161,29 @@ key-store permissions; reinstalling the plugin alone does not resolve those.
 For help, [open an issue](https://github.com/vomitselfie/Regurgitate/issues) with
 your operating system, assistant, and the error message. Remove private details
 before sharing it; do not upload the notebook or encryption keys.
+
+</details>
+
+<details>
+<summary>How can I tell whether it is helping?</summary>
+
+Recording activity, saving lessons, and successfully reusing lessons are three
+different things. More events alone do not prove value. Check the evidence:
+
+```bash
+regurgitate experience metrics --brief
+regurgitate experience metrics --shared --brief
+```
+
+The first checks lessons recorded from the current project; the second checks
+machine-shared lessons. Those views can overlap. Zero confirmations means reuse
+is unverified, not that the notebook is broken. Confirmations are agent reports,
+not independent proof of time saved. Never manufacture lessons or confirmations
+just to improve these numbers.
+
+For Codex recording issues, use `/hooks`: a configured hook may still need trust
+or be disabled. Status checks configuration, not runtime approval. Sandbox
+key-store access is a separate check.
 
 </details>
 

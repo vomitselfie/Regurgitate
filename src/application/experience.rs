@@ -472,6 +472,16 @@ where
         Ok(ExperienceMetrics::from_capsules(&capsules, truncated))
     }
 
+    /// Machine-shared lessons only; excludes private project buckets.
+    pub fn shared_metrics(&self) -> Result<ExperienceMetrics> {
+        let mut capsules = self
+            .history
+            .scoped_experiences(ScopeKey::Machine, MAX_METRICS_CAPSULES + 1)?;
+        let truncated = capsules.len() > MAX_METRICS_CAPSULES;
+        capsules.truncate(MAX_METRICS_CAPSULES);
+        Ok(ExperienceMetrics::from_capsules(&capsules, truncated))
+    }
+
     fn select(&self, project_id: Uuid, selector: &str) -> Result<ExperienceCapsule> {
         let selector = selector.trim().to_ascii_lowercase().replace('-', "");
         if selector.len() < 8
@@ -557,6 +567,33 @@ pub struct ExperienceMetrics {
 }
 
 impl ExperienceMetrics {
+    pub fn brief(&self, shared: bool) -> String {
+        let scope = if shared {
+            "Machine-shared lessons (not private project lessons)"
+        } else {
+            "Lessons recorded from this project (not the whole notebook)"
+        };
+        let assessment = if self.capsules == 0 {
+            "No saved lessons in this scope yet."
+        } else if self.authenticated_confirmations == 0 {
+            "Usefulness is unverified: saved lessons are not evidence of successful reuse."
+        } else {
+            "Reuse has agent-reported feedback, not an independent measure of time saved."
+        };
+        format!(
+            "{scope}\n{} lessons; {} active.\nConfirmed reuse: {} successful, {} failed.\n{assessment}\n{}",
+            self.capsules,
+            self.active,
+            self.successful_confirmations,
+            self.failed_confirmations,
+            if self.truncated {
+                "Partial counts: scan limit reached.\n"
+            } else {
+                ""
+            }
+        )
+    }
+
     fn from_capsules(capsules: &[ExperienceCapsule], truncated: bool) -> Self {
         let mut metrics = Self {
             capsules: capsules.len(),
@@ -759,6 +796,47 @@ mod tests {
         fn find_project(&self, locator: &ProjectLocator) -> Result<Option<Uuid>> {
             Ok(Some(self.resolve_project(locator)?))
         }
+    }
+
+    #[test]
+    fn shared_metrics_exclude_private_lessons_and_do_not_imply_reuse() {
+        let store = Rc::new(MemoryStore::default());
+        let service = ExperienceService::new(Rc::clone(&store));
+        let lesson = || {
+            input(
+                "Native artifact validation is required.",
+                "Validate native artifacts after incremental changes.",
+                SemanticOutcome::Success,
+            )
+        };
+        service.record_at(project(), lesson(), Utc::now()).unwrap();
+        assert_eq!(service.shared_metrics().unwrap().capsules, 0);
+        let mut shared = lesson();
+        shared.scope = MemoryScope::Machine;
+        service.record_at(project(), shared, Utc::now()).unwrap();
+        let metrics = service.shared_metrics().unwrap();
+        assert_eq!(metrics.capsules, 1);
+        assert_eq!(metrics.authenticated_confirmations, 0);
+        assert!(metrics.brief(true).contains("unverified"));
+        assert!(!metrics.brief(true).contains("Native artifact"));
+        assert_eq!(store.capsules.borrow().len(), 2);
+    }
+
+    #[test]
+    fn brief_reports_failures_and_partial_counts_without_promising_value() {
+        let metrics = ExperienceMetrics {
+            capsules: 3,
+            authenticated_confirmations: 2,
+            successful_confirmations: 1,
+            failed_confirmations: 1,
+            truncated: true,
+            ..ExperienceMetrics::default()
+        };
+        let brief = metrics.brief(false);
+        assert!(brief.contains("not the whole notebook"));
+        assert!(brief.contains("1 successful, 1 failed"));
+        assert!(brief.contains("not an independent measure"));
+        assert!(brief.contains("Partial counts"));
     }
 
     fn input(situation: &str, lesson: &str, outcome: SemanticOutcome) -> ExperienceInput {

@@ -63,6 +63,14 @@ on the reconnaissance date above.
 
 ## Codex
 
+Hook configuration rechecked on 2026-09-12 against the
+[official hook documentation](https://learn.chatgpt.com/docs/hooks): Codex loads
+both sibling `hooks.json` and inline TOML definitions, and requires review of
+new or changed non-managed hook hashes through `/hooks`. Regurgitate now detects
+both representations, uses an existing JSON source for setup, and refuses mixed
+PostToolUse sources rather than adding duplicate recording. It never writes hook
+trust hashes or bypasses review. Configuration readiness is not runtime approval.
+
 Current Codex JSONL records are stored below `CODEX_HOME/sessions` and use
 top-level record types including `session_meta`, `turn_context`, `event_msg`,
 and `response_item`. Tool activity appears as paired response items:
