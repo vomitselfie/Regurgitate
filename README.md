@@ -15,8 +15,10 @@ Regurgitate is still early; those benefits are the goal, not a guarantee.
 Works with **Codex** and **Claude Code** on **Mac** or **64-bit Intel/AMD Linux**.
 Your coding assistant must already be installed. Windows is not supported yet.
 
-Choose your assistant below. If you use Agent of Empires, choose that option
-instead. You do not need to download the source code or move files yourself.
+Recommended: use the standalone installer for your assistant below—even if you
+launch it through Agent of Empires. AoE plugin installation is an optional
+alternative, not an extra step. Pick one method; you do not need both copies.
+You do not need to download the source code or move files yourself.
 
 To find **Terminal** on a Mac, press **Command + Space**, type `Terminal`, and
 press **Enter**. On Linux, search your applications menu for `Terminal`.
@@ -33,7 +35,7 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   sh -s -- --agent codex
 ```
 
-3. Wait for the messages beginning with `Installed` and `Connected`.
+3. Wait for the messages beginning with `Installed` and `Configured`.
 4. Close and reopen Codex. Run `/hooks` and review/trust the Regurgitate hook if prompted. Setup never grants trust on your behalf.
 
 That's the setup. You can keep working normally.
@@ -52,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   sh -s -- --agent claude
 ```
 
-3. Wait for the messages beginning with `Installed` and `Connected`.
+3. Wait for the messages beginning with `Installed` and `Configured`.
 4. Close and reopen Claude Code so it can load Regurgitate.
 
 That's the setup. You can keep working normally.
@@ -60,7 +62,7 @@ That's the setup. You can keep working normally.
 </details>
 
 <details>
-<summary><strong>I use Agent of Empires (AoE)</strong></summary>
+<summary><strong>Optional: install through Agent of Empires (AoE)</strong></summary>
 
 These steps are for an existing AoE installation, version 1.15.1 or newer within
 version 1.x.
@@ -86,7 +88,8 @@ If AoE says the plugin is already installed, use the update instructions below.
 ## What happens next?
 
 Keep using your assistant as usual. It can save an occasional useful lesson and
-check for relevant lessons when they could help. You do not need to write
+receive one relevant lesson automatically before a recognizable task. No match,
+locked keyring, or slow lookup means no reminder. You do not need to write
 lessons, keep a daily log, or mention Regurgitate in every chat.
 
 It starts empty. No lessons yet—or nothing to recall for a particular task—is

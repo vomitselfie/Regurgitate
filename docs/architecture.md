@@ -170,26 +170,26 @@ enforced before storage is queried.
 `RecallBroker` is a host-neutral port that returns a plain-text experience
 brief for a task context and token budget, or nothing at all when no lesson
 is relevant. `regurgitate preflight --project … --query …` exposes it for
-any host with a startup instruction channel. For Claude Code,
-`regurgitate preflight --agent claude` reads the `UserPromptSubmit` payload
+any host with a startup instruction channel. For Codex and Claude Code,
+`regurgitate preflight --agent codex|claude` reads the `UserPromptSubmit` payload
 (only `cwd`, `hook_event_name`, and a transient `prompt` are deserialized),
 classifies the prompt ephemerally, and answers with `additionalContext`; an
 irrelevant prompt produces no output and therefore no context overhead.
 Preflight is stricter than `recall` on purpose: once a project has lessons
 with moderate or strong evidence (`n_eff ≥ 2.5`) it injects only those. When
-nothing that strong exists yet it bootstraps with at most two capsules tagged
+nothing that strong exists yet it bootstraps with one capsule tagged
 `unconfirmed`, so evidence can start accumulating at all. Every recalled
 capsule carries an authenticated, stateless `ref`; `experience confirm
 --match <ref>` appends one evidence entry to exactly that capsule in whatever
 scope it lives. Replaying one receipt is idempotent, and issuing it leaves the
-read-only database untouched. A budget-trimmed brief
-ends with an "N more omitted" line. The
-Claude config printer and installer add that hook next to the two recording
-hooks. Preflight never fails a host prompt: a missing database or key simply
-yields an empty brief, and it never creates state. Codex and AoE do not yet
-expose a stable pre-task lifecycle hook, so they stay on the skill-driven
-(Tier B) path; the core is not distorted to fake automation those hosts
-cannot provide.
+read-only database untouched. Automatic preflight selects at most one lesson,
+preferring project-local candidates within the eligible evidence tier. Host
+input is capped at 64 KiB, output at 240 approximate tokens, and retrieval at
+350 ms. A non-interactive key reader never unlocks or creates credentials. The
+Codex and Claude config printers/installers add the prompt hook alongside their
+recording hooks. Missing or unavailable memory yields no brief and creates no
+state. AoE setup connects the underlying agent's native hooks; AoE itself does
+not receive prompt text. Skills remain the manual fallback for other hosts.
 
 ## Ingestion flow
 

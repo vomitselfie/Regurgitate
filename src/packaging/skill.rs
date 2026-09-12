@@ -22,6 +22,7 @@ const OPENAI_METADATA: &str = include_str!(concat!(
 const SKILL_PATHS: [&str; 2] = ["SKILL.md", "agents/openai.yaml"];
 const PREVIOUS_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.4.md");
 const OLDER_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.3.md");
+const RECENT_SKILL_CONTENT: &str = include_str!("recall-skill-v0.10.9.md");
 
 struct PackagedFile<'a> {
     relative_path: &'static str,
@@ -32,6 +33,7 @@ struct SkillPackage {
     skill: String,
     previous_skill: String,
     older_skill: String,
+    recent_skill: String,
 }
 
 impl SkillPackage {
@@ -40,6 +42,7 @@ impl SkillPackage {
             skill: SKILL_CONTENT.to_owned(),
             previous_skill: PREVIOUS_SKILL_CONTENT.to_owned(),
             older_skill: OLDER_SKILL_CONTENT.to_owned(),
+            recent_skill: RECENT_SKILL_CONTENT.to_owned(),
         }
     }
 
@@ -61,6 +64,7 @@ impl SkillPackage {
             skill: SKILL_CONTENT.replacen(heading, &instruction, 1),
             previous_skill: PREVIOUS_SKILL_CONTENT.replacen(heading, &instruction, 1),
             older_skill: OLDER_SKILL_CONTENT.replacen(heading, &instruction, 1),
+            recent_skill: RECENT_SKILL_CONTENT.replacen(heading, &instruction, 1),
         })
     }
 
@@ -276,6 +280,8 @@ fn inspect_existing_install(destination: &Path, package: &SkillPackage) -> Resul
         let standard_skill_is_compatible = packaged.relative_path == "SKILL.md"
             && ((package.skill != SKILL_CONTENT && current == SKILL_CONTENT.as_bytes())
                 || current == PREVIOUS_SKILL_CONTENT.as_bytes()
+                || current == RECENT_SKILL_CONTENT.as_bytes()
+                || current == package.recent_skill.as_bytes()
                 || current == package.previous_skill.as_bytes()
                 || current == OLDER_SKILL_CONTENT.as_bytes()
                 || current == package.older_skill.as_bytes());
@@ -399,6 +405,30 @@ mod tests {
             let destination = temp.path().join(SKILL_NAME);
             write_staging_package(&destination, &package).unwrap();
             fs::write(destination.join("SKILL.md"), &package.older_skill).unwrap();
+            assert_eq!(
+                install_skill_package(temp.path(), true, false, &package)
+                    .unwrap()
+                    .status,
+                InstallStatus::Replaced
+            );
+            assert_eq!(
+                fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+                package.skill
+            );
+        }
+    }
+
+    #[test]
+    fn quiet_skill_upgrades_the_previous_stock_release() {
+        for command in [None, Some("'/opt/regurgitate'")] {
+            let temp = tempdir().unwrap();
+            let package = match command {
+                Some(command) => SkillPackage::for_command(command).unwrap(),
+                None => SkillPackage::standard(),
+            };
+            let destination = temp.path().join(SKILL_NAME);
+            install_skill_package(temp.path(), true, false, &package).unwrap();
+            fs::write(destination.join("SKILL.md"), &package.recent_skill).unwrap();
             assert_eq!(
                 install_skill_package(temp.path(), true, false, &package)
                     .unwrap()

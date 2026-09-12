@@ -11,6 +11,7 @@ pub(super) fn same_stock_hook(command: &str, expected: &str) -> bool {
 fn stock_action(command: &str) -> Option<&'static str> {
     for action in [
         " record-hook --agent codex",
+        " preflight --agent codex",
         " record-hook --agent claude",
         " preflight --agent claude",
     ] {

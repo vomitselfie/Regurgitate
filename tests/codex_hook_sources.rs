@@ -41,6 +41,8 @@ fn json_is_detected_and_updated_without_writing_toml_or_trust() {
     assert!(result.contains("personal"));
     assert!(!result.contains(OLD));
     assert_eq!(result.matches("record-hook --agent codex").count(), 1);
+    assert_eq!(result.matches("preflight --agent codex").count(), 1);
+    assert!(result.contains("additionalContextLimit"));
     assert_eq!(fs::read_to_string(&config).unwrap(), toml);
 }
 

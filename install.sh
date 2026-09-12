@@ -224,7 +224,7 @@ if [ -n "$resolved_command" ] && [ "$resolved_command" != "$destination" ]; then
     printf 'Notice: PATH currently finds %s instead. Run %s directly to use this installed copy.\n' "$resolved_command" "$destination"
 fi
 if [ "$agent" != none ]; then
-    printf 'Connected %s; restart it before using Regurgitate.\n' "$agent"
+    printf 'Configured %s recording and quiet preflight; restart it before using Regurgitate.\n' "$agent"
 fi
 if [ "$agent" = codex ]; then
     printf 'In Codex, open /hooks and review/trust the Regurgitate hook if prompted. Setup does not grant hook trust.\n'

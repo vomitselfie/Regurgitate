@@ -170,7 +170,7 @@ custom commands and matcher restrictions are preserved.
 
 For Codex, passing `config.toml` also checks its sibling `hooks.json`. If that JSON
 file exists, setup uses it instead of adding another TOML hook; mixed
-PostToolUse sources require manual review. An explicit `--config hooks.json`
+recording or prompt-hook sources require manual review. An explicit `--config hooks.json`
 is also supported. TOML-only installations keep their existing representation.
 Readiness does not inspect or modify Codex's hook trust state. After setup, use
 `/hooks` to review the exact changed definition. This follows the
@@ -187,10 +187,14 @@ Hooks record tiny sanitized execution observations in the background. The
 agent recalls only when prior experience could materially change non-trivial
 work, confirms a recalled lesson by its `ref` when it applied it, and records
 at most one new capsule only when a milestone produced a novel reusable
-lesson. With Claude Code, the installed `UserPromptSubmit` hook injects a short brief
-automatically when a relevant lesson has confirmed evidence, shows at most
-two `unconfirmed` lessons while a project is still bootstrapping, and stays
-silent for unrelated prompts.
+lesson. Codex and Claude Code both get a `UserPromptSubmit` preflight hook.
+It supplies at most one contextual lesson, favors project-local advice among
+eligible candidates, and labels bootstrap advice unconfirmed. It stays silent
+for unrelated prompts, malformed or oversized input, unavailable/locked keys,
+and failed lookups. Automatic retrieval has a 350 ms deadline; the hook never
+opens an unlock dialog, creates a key, or asks for sandbox escalation. Slow
+retrieval is skipped, not delivered after the decision. Manual diagnostics
+remain available, but they are not a prerequisite for ordinary work.
 
 Useful commands:
 

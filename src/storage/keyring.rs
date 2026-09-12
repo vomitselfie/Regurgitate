@@ -130,3 +130,37 @@ impl KeyReadinessProbe for SystemKeyProvider {
         Ok(self.get_existing()?.is_some())
     }
 }
+
+/// Automatic prompt hooks must never summon an unlock dialog or create keys.
+/// Used only in a short-lived preflight process, not the AoE worker.
+pub struct NonInteractiveKeyProvider;
+
+impl ExistingMasterKeyProvider for NonInteractiveKeyProvider {
+    fn get_existing(&self) -> Result<Option<MasterKey>> {
+        #[cfg(target_os = "linux")]
+        {
+            use secret_service::{EncryptionType, blocking::SecretService};
+            let service = SecretService::connect(EncryptionType::Dh)?;
+            let found = service.search_items(std::collections::HashMap::from([
+                ("service", DEFAULT_SERVICE),
+                ("username", DEFAULT_USERNAME),
+            ]))?;
+            // Do not call Unlock or silently choose between ambiguous entries.
+            if !found.locked.is_empty() || found.unlocked.len() != 1 {
+                return Ok(None);
+            }
+            let secret = Zeroizing::new(found.unlocked[0].get_secret()?);
+            MasterKey::from_secret(&secret).map(Some)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _guard =
+                security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()?;
+            SystemKeyProvider::default().get_existing()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Ok(None)
+        }
+    }
+}

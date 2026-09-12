@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
 use crate::{
     application::{HookObservation, ProjectLocator},
@@ -58,47 +57,7 @@ pub fn normalize_tool_hook<R: Read>(reader: R) -> Result<HookObservation> {
     Ok(HookObservation::new(event, ProjectLocator::new(input.cwd)))
 }
 
-/// The complete allowlist read from a Claude Code `UserPromptSubmit` hook.
-/// The prompt is consumed transiently for controlled classification and is
-/// never persisted; everything else in the payload is ignored.
-#[derive(Deserialize)]
-struct ClaudePromptInput {
-    cwd: PathBuf,
-    hook_event_name: String,
-    prompt: Option<String>,
-}
-
-pub struct PreflightRequest {
-    pub project: ProjectLocator,
-    pub prompt: Zeroizing<String>,
-}
-
-pub fn normalize_prompt_submit<R: Read>(reader: R) -> Result<PreflightRequest> {
-    let input: ClaudePromptInput =
-        serde_json::from_reader(reader).context("invalid Claude hook JSON")?;
-    if input.hook_event_name != "UserPromptSubmit" {
-        bail!("expected a Claude UserPromptSubmit event");
-    }
-    Ok(PreflightRequest {
-        project: ProjectLocator::new(input.cwd),
-        prompt: Zeroizing::new(input.prompt.unwrap_or_default()),
-    })
-}
-
-/// Claude Code injects `additionalContext` into the model's context before
-/// it reasons about the prompt. An empty brief produces no output at all so
-/// irrelevant tasks carry zero overhead.
-pub fn preflight_response(brief: &str) -> Option<serde_json::Value> {
-    if brief.is_empty() {
-        return None;
-    }
-    Some(serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": brief
-        }
-    }))
-}
+pub use super::prompt::{PreflightRequest, normalize_prompt_submit, preflight_response};
 
 fn stable_event_id(session_id: &str, tool_use_id: &str) -> Uuid {
     let source = format!("claude:{session_id}:{tool_use_id}");

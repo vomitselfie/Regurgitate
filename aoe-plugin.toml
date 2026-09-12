@@ -1,6 +1,6 @@
 id = "vomitselfie.regurgitate"
 name = "Regurgitate"
-version = "0.10.9"
+version = "0.11.0"
 api_version = 13
 aoe_version = ">=1.15.1, <2.0.0"
 description = "Private, encrypted procedural memory for AI coding agents."

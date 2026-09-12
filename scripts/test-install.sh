@@ -64,6 +64,7 @@ test -f "$skill"
 test -f "$config"
 test "$("$installed" --version)" = "regurgitate $version"
 grep -F "'$installed' record-hook --agent codex" "$config" >/dev/null
+grep -F "'$installed' preflight --agent codex" "$config" >/dev/null
 grep -F "with \`'$installed'\`" "$skill" >/dev/null
 
 before_config="$(sha256sum "$config")"

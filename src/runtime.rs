@@ -85,37 +85,41 @@ pub fn execute(cli: Cli) -> Result<()> {
             agent,
             data_home,
         } => {
-            let data_home = data_home.map(Ok).unwrap_or_else(default_data_home)?;
-            let query = query.map(Zeroizing::new);
-            let metadata = EphemeralTaskContext {
-                query: None,
-                task: task.map(Into::into),
-                phase,
-                artifact,
-                ecosystem,
-                tool_family,
-                tool_major,
-                risks: &risks,
-                project_defaults: Default::default(),
+            let data_home = match data_home.map(Ok).unwrap_or_else(default_data_home) {
+                Ok(path) => path,
+                Err(_) if agent.is_some() => return Ok(()),
+                Err(error) => return Err(error),
             };
+            let query = query.map(Zeroizing::new);
             match agent {
-                Some(PreflightAgentArg::Claude) => {
-                    let request = claude::normalize_prompt_submit(io::stdin().lock())?;
-                    let project_defaults = infer_project_defaults(request.project.as_path());
-                    let context = EphemeralTaskContext {
-                        query: Some(request.prompt.as_str()),
-                        project_defaults,
-                        ..metadata
-                    };
-                    let brief = preflight_brief(
-                        request.project,
-                        context,
-                        token_budget,
-                        data_home,
-                        &SystemKeyProvider::default(),
-                    )?;
-                    if let Some(response) = claude::preflight_response(&brief.text) {
-                        print_json(&response)?;
+                Some(PreflightAgentArg::Claude | PreflightAgentArg::Codex) => {
+                    let response = automatic_preflight(move || {
+                        let request =
+                            crate::adapters::prompt::normalize_prompt_submit(io::stdin().lock())?;
+                        let project_defaults = infer_project_defaults(request.project.as_path());
+                        let context = EphemeralTaskContext {
+                            query: Some(request.prompt.as_str()),
+                            project_defaults,
+                            task: task.map(Into::into),
+                            phase,
+                            artifact,
+                            ecosystem,
+                            tool_family,
+                            tool_major,
+                            risks: &risks,
+                        };
+                        let brief = preflight_brief(
+                            request.project,
+                            context,
+                            token_budget.min(240),
+                            data_home,
+                            &crate::storage::NonInteractiveKeyProvider,
+                        )?;
+                        Ok(crate::adapters::prompt::preflight_response(&brief.text))
+                    });
+                    if let Some(response) = response {
+                        // Broken host pipes are also non-blocking for prompt hooks.
+                        let _ = print_json(&response);
                     }
                     Ok(())
                 }
@@ -125,7 +129,13 @@ pub fn execute(cli: Cli) -> Result<()> {
                     let context = EphemeralTaskContext {
                         query: query.as_ref().map(|value| value.as_str()),
                         project_defaults,
-                        ..metadata
+                        task: task.map(Into::into),
+                        phase,
+                        artifact,
+                        ecosystem,
+                        tool_family,
+                        tool_major,
+                        risks: &risks,
                     };
                     let brief = preflight_brief(
                         ProjectLocator::new(project),
@@ -768,6 +778,24 @@ fn supersede_experience(
     ExperienceService::new(store).supersede(&ProjectLocator::new(project), old, new)
 }
 
+// The short-lived CLI exits after this returns; slow background work cannot
+// write late output or keep the host waiting. Never used by the AoE worker.
+fn automatic_preflight(
+    work: impl FnOnce() -> Result<Option<serde_json::Value>> + Send + 'static,
+) -> Option<serde_json::Value> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("preflight".into())
+        .spawn(move || {
+            let _ = sender.send(work().ok().flatten());
+        })
+        .ok()?;
+    receiver
+        .recv_timeout(std::time::Duration::from_millis(350))
+        .ok()
+        .flatten()
+}
+
 fn preflight_brief(
     project: ProjectLocator,
     context: EphemeralTaskContext<'_>,
@@ -777,10 +805,15 @@ fn preflight_brief(
 ) -> Result<ExperienceBrief> {
     // Preflight must never fail a host prompt: missing history or key simply
     // yields no brief.
+    if context.task.is_none() && !context.has_task_hints() {
+        return Ok(ExperienceBrief::empty());
+    }
     let Ok(Some(store)) = open_existing_history(&data_home, false, key_provider) else {
         return Ok(ExperienceBrief::empty());
     };
-    RecallService::new(&store).brief(&project, context, token_budget)
+    Ok(RecallService::new(&store)
+        .brief(&project, context, token_budget)
+        .unwrap_or_else(|_| ExperienceBrief::empty()))
 }
 
 fn health_status(
@@ -1312,6 +1345,41 @@ mod tests {
     }
 
     #[test]
+    fn automatic_preflight_is_silent_on_errors_and_slow_work() {
+        assert!(automatic_preflight(|| anyhow::bail!("PRIVATE_BACKEND_ERROR")).is_none());
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let started = std::time::Instant::now();
+        assert!(
+            automatic_preflight(move || {
+                let _ = wait.recv();
+                Ok(Some(serde_json::json!({"late":"must not be injected"})))
+            })
+            .is_none()
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        drop(release);
+    }
+
+    #[test]
+    fn casual_prompt_does_not_even_request_a_key() {
+        struct NoAccess;
+        impl ExistingMasterKeyProvider for NoAccess {
+            fn get_existing(&self) -> Result<Option<MasterKey>> {
+                panic!("irrelevant prompts must not access credentials")
+            }
+        }
+        let result = preflight_brief(
+            ProjectLocator::new(PathBuf::from("/absent")),
+            EphemeralTaskContext::from_query(Some("thanks, sounds good")),
+            220,
+            PathBuf::from("/absent"),
+            &NoAccess,
+        )
+        .unwrap();
+        assert!(result.text.is_empty());
+    }
+
+    #[test]
     fn shared_lesson_reaches_a_new_project_and_accepts_authenticated_feedback() {
         let temp = tempdir().unwrap();
         let origin = temp.path().join("origin");
@@ -1381,6 +1449,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(duplicate.evidence, 2);
+        let response = crate::adapters::prompt::preflight_response(&brief.text).unwrap();
+        assert_eq!(
+            response["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+        assert!(
+            response["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .contains(lesson)
+        );
+        assert!(response.get("decision").is_none());
+        assert_eq!(
+            experience_metrics(origin.clone(), data_home.clone(), &FixedKeyProvider)
+                .unwrap()
+                .successful_confirmations,
+            1
+        );
         forget_project(origin, true, data_home.clone(), &FixedKeyProvider).unwrap();
         let result = recall_project(
             temp.path().join("newcomer"),
@@ -1391,6 +1477,66 @@ mod tests {
         )
         .unwrap();
         assert!(result.experiences.is_empty());
+    }
+
+    #[test]
+    fn automatic_brief_chooses_one_local_lesson_and_leaves_storage_unchanged() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let data = temp.path().join("data");
+        let local = "Use the project native verification step after placement changes.";
+        record_experience(
+            project.clone(),
+            kicad_input(local, SemanticOutcome::Success),
+            data.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        let mut shared = kicad_input(
+            "Verify generated native artifacts before accepting broad changes.",
+            SemanticOutcome::Success,
+        );
+        shared.scope = MemoryScope::Machine;
+        shared.procedure.verification = Some(crate::core::VerificationMode::Targeted);
+        record_experience(project.clone(), shared, data.clone(), &FixedKeyProvider).unwrap();
+        let context =
+            EphemeralTaskContext::from_query(Some("debug generated kicad pcb placement drc"));
+        let candidates = recall_project(
+            project.clone(),
+            RecallOptions {
+                token_budget: 1000,
+                ..RecallOptions::default()
+            },
+            context,
+            data.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(candidates.experiences.len(), 2);
+        let database = data.join("regurgitate/history.db");
+        let before = fs::read(&database).unwrap();
+        let brief = preflight_brief(
+            ProjectLocator::new(project.clone()),
+            context,
+            240,
+            data.clone(),
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert_eq!(brief.items, 1);
+        assert!(brief.text.contains(local));
+        assert!(brief.approximate_tokens <= 240);
+        let unrelated = preflight_brief(
+            ProjectLocator::new(project),
+            EphemeralTaskContext::from_query(Some("debug a python import error")),
+            240,
+            data,
+            &FixedKeyProvider,
+        )
+        .unwrap();
+        assert!(unrelated.text.is_empty());
+        assert_eq!(fs::read(database).unwrap(), before);
     }
 
     #[test]

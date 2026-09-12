@@ -20,7 +20,7 @@ phase status live in [v0.8 plan](v0.8-plan.md); the invariant is recorded in
   effective evidence behind one `RankingPolicy`;
 - two-stage retrieval with dual-read of v2 practice rows;
 - confirm/merge, challenge, supersede, and obsolete lifecycle handling;
-- host-neutral `RecallBroker` with Claude Code `UserPromptSubmit` preflight
+- host-neutral `RecallBroker` with Codex and Claude Code `UserPromptSubmit` preflight
   injection and a plain-text `preflight` command;
 - paired cold/warm benchmark protocol and `bench-report` release gate.
 

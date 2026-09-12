@@ -24,7 +24,14 @@ pub const CODEX_CONFIG_SNIPPET: &str = r#"# Merge into the user-level Codex conf
 [[hooks.PostToolUse.hooks]]
 type = "command"
 command = "regurgitate record-hook --agent codex"
-timeout = 5"#;
+timeout = 5
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "regurgitate preflight --agent codex"
+timeout = 2
+additionalContextLimit = 240"#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CodexHookInstallReport {
@@ -128,14 +135,34 @@ fn json_destination(config: &Path) -> Result<Option<PathBuf>> {
     }
     if doc
         .get("hooks")
-        .and_then(|h| h.get("PostToolUse"))
+        .and_then(|h| h.get("PostToolUse").or_else(|| h.get("UserPromptSubmit")))
         .is_some()
     {
         bail!(
-            "Both Codex config.toml PostToolUse and hooks.json exist; review /hooks and keep one representation before setup"
+            "Both Codex config.toml recording/prompt hooks and hooks.json exist; review /hooks and keep one representation before setup"
         );
     }
     Ok(Some(json))
+}
+
+pub(super) fn hook_events(command: &str) -> Vec<(&'static str, &'static str, String)> {
+    let mut events = vec![("PostToolUse", CODEX_HOOK_COMMAND, command.to_owned())];
+    if let Some(prefix) = command.strip_suffix("record-hook --agent codex") {
+        events.push((
+            "UserPromptSubmit",
+            "regurgitate preflight --agent codex",
+            format!("{prefix}preflight --agent codex"),
+        ));
+    }
+    events
+}
+
+pub(super) fn event_change(event: &str) -> &'static str {
+    if event == "UserPromptSubmit" {
+        "hooks.UserPromptSubmit"
+    } else {
+        "hooks.PostToolUse"
+    }
 }
 
 fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
@@ -147,57 +174,62 @@ fn prepare_config(content: &str, hook_command: &str) -> Result<PreparedConfig> {
             .context("Codex config is not valid TOML")?
     };
     ensure_hooks_enabled(&document)?;
-
     if document.get("hooks").is_none() {
         document["hooks"] = table();
     }
     let hooks = document["hooks"]
         .as_table_mut()
         .context("Codex hooks must be a TOML table")?;
-
-    if hooks.get("PostToolUse").is_none() {
-        hooks.insert("PostToolUse", Item::ArrayOfTables(ArrayOfTables::new()));
-    }
-    let groups = hooks["PostToolUse"]
-        .as_array_of_tables_mut()
-        .context("Codex hooks.PostToolUse must be an array of tables")?;
-    let migrated = migrate_unrestricted_standard_hook(groups, hook_command);
-    match regurgitate_hook_coverage(groups, hook_command) {
-        RegurgitateHookCoverage::AllTools => {
-            return Ok(PreparedConfig {
-                content: document.to_string(),
-                changes: if migrated {
-                    vec!["hooks.PostToolUse"]
-                } else {
-                    Vec::new()
-                },
-            });
+    let mut changes = Vec::new();
+    for (event, standard, command) in hook_events(hook_command) {
+        if hooks.get(event).is_none() {
+            hooks.insert(event, Item::ArrayOfTables(ArrayOfTables::new()));
         }
-        RegurgitateHookCoverage::Restricted => {
-            bail!("Regurgitate Codex hook is already restricted by a matcher");
+        let groups = hooks[event]
+            .as_array_of_tables_mut()
+            .context("Codex hook event must be an array of tables")?;
+        let migrated = migrate_unrestricted_standard_hook(groups, &command, standard);
+        match regurgitate_hook_coverage(groups, &command, standard) {
+            RegurgitateHookCoverage::AllTools => {
+                if migrated {
+                    changes.push(event_change(event));
+                }
+                continue;
+            }
+            RegurgitateHookCoverage::Restricted => {
+                bail!("Regurgitate Codex hook is already restricted by a matcher")
+            }
+            RegurgitateHookCoverage::Missing => {}
         }
-        RegurgitateHookCoverage::Missing => {}
+        let mut handler = Table::new();
+        handler.insert("type", value("command"));
+        handler.insert("command", value(command));
+        handler.insert(
+            "timeout",
+            value(if event == "UserPromptSubmit" { 2 } else { 5 }),
+        );
+        if event == "UserPromptSubmit" {
+            handler.insert("additionalContextLimit", value(240));
+        }
+        let mut handlers = ArrayOfTables::new();
+        handlers.push(handler);
+        let mut group = Table::new();
+        group.insert("hooks", Item::ArrayOfTables(handlers));
+        groups.push(group);
+        changes.push(event_change(event));
     }
-
-    let mut handler = Table::new();
-    handler.insert("type", value("command"));
-    handler.insert("command", value(hook_command));
-    handler.insert("timeout", value(5));
-    let mut handlers = ArrayOfTables::new();
-    handlers.push(handler);
-
-    let mut group = Table::new();
-    group.insert("hooks", Item::ArrayOfTables(handlers));
-    groups.push(group);
-
     Ok(PreparedConfig {
         content: document.to_string(),
-        changes: vec!["hooks.PostToolUse"],
+        changes,
     })
 }
 
-fn migrate_unrestricted_standard_hook(groups: &mut ArrayOfTables, hook_command: &str) -> bool {
-    if hook_command == CODEX_HOOK_COMMAND {
+fn migrate_unrestricted_standard_hook(
+    groups: &mut ArrayOfTables,
+    hook_command: &str,
+    standard: &str,
+) -> bool {
+    if hook_command == standard {
         return false;
     }
     let mut migrated = false;
@@ -221,7 +253,7 @@ fn migrate_unrestricted_standard_hook(groups: &mut ArrayOfTables, hook_command: 
                     .get("command")
                     .and_then(Item::as_str)
                     .is_some_and(|command| {
-                        command != hook_command && same_stock_hook(command, CODEX_HOOK_COMMAND)
+                        command != hook_command && same_stock_hook(command, standard)
                     })
             {
                 handler.insert("command", value(hook_command));
@@ -262,6 +294,7 @@ enum RegurgitateHookCoverage {
 fn regurgitate_hook_coverage(
     groups: &ArrayOfTables,
     hook_command: &str,
+    standard: &str,
 ) -> RegurgitateHookCoverage {
     let mut found_restricted = false;
     for group in groups {
@@ -275,8 +308,7 @@ fn regurgitate_hook_coverage(
                             .get("command")
                             .and_then(Item::as_str)
                             .is_some_and(|command| {
-                                command == hook_command
-                                    || same_stock_hook(command, CODEX_HOOK_COMMAND)
+                                command == hook_command || same_stock_hook(command, standard)
                             })
                 })
             });
@@ -327,7 +359,10 @@ mod tests {
         let report = install_codex_hook(&config, false).unwrap();
 
         assert_eq!(report.status, InstallStatus::Planned);
-        assert_eq!(report.changes, ["hooks.PostToolUse"]);
+        assert_eq!(
+            report.changes,
+            ["hooks.PostToolUse", "hooks.UserPromptSubmit"]
+        );
         assert!(!config.exists());
         assert!(!config.parent().unwrap().exists());
     }

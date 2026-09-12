@@ -22,61 +22,68 @@ pub(super) fn prepare(content: &str, command: &str) -> Result<(String, bool)> {
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .context("Codex hooks must be an object")?;
-    let groups = hooks
-        .entry("PostToolUse")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .context("Codex PostToolUse must be an array")?;
-    let mut found = false;
-    let mut changed = false;
-    for group in groups.iter_mut() {
-        let group = group
-            .as_object_mut()
-            .context("Codex hook group must be an object")?;
-        let unrestricted = match group.get("matcher") {
-            None => true,
-            Some(Value::String(s)) => s.is_empty() || s == "*",
-            _ => bail!("Codex hook matcher must be a string"),
-        };
-        let handlers = group
-            .get_mut("hooks")
-            .and_then(Value::as_array_mut)
-            .context("Codex handlers must be an array")?;
-        for handler in handlers {
-            let handler = handler
+    let mut any_changed = false;
+    for (event, standard, command) in super::codex_config::hook_events(command) {
+        let command = command.as_str();
+        let groups = hooks
+            .entry(event)
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .context("Codex PostToolUse must be an array")?;
+        let mut found = false;
+        let mut changed = false;
+        for group in groups.iter_mut() {
+            let group = group
                 .as_object_mut()
-                .context("Codex handler must be an object")?;
-            if handler.get("type").and_then(Value::as_str) != Some("command") {
-                continue;
-            }
-            let Some(existing) = handler.get("command").and_then(Value::as_str) else {
-                continue;
+                .context("Codex hook group must be an object")?;
+            let unrestricted = match group.get("matcher") {
+                None => true,
+                Some(Value::String(s)) => s.is_empty() || s == "*",
+                _ => bail!("Codex hook matcher must be a string"),
             };
-            if existing != command
-                && !same_stock_hook(existing, "regurgitate record-hook --agent codex")
-            {
-                continue;
-            }
-            if !unrestricted {
-                bail!("Regurgitate Codex hook is restricted by a matcher");
-            }
-            if found {
-                bail!("Duplicate Regurgitate Codex hooks require manual review");
-            }
-            found = true;
-            if existing != command && command != "regurgitate record-hook --agent codex" {
-                handler.insert("command".into(), json!(command));
-                changed = true;
+            let handlers = group
+                .get_mut("hooks")
+                .and_then(Value::as_array_mut)
+                .context("Codex handlers must be an array")?;
+            for handler in handlers {
+                let handler = handler
+                    .as_object_mut()
+                    .context("Codex handler must be an object")?;
+                if handler.get("type").and_then(Value::as_str) != Some("command") {
+                    continue;
+                }
+                let Some(existing) = handler.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                if existing != command && !same_stock_hook(existing, standard) {
+                    continue;
+                }
+                if !unrestricted {
+                    bail!("Regurgitate Codex hook is restricted by a matcher");
+                }
+                if found {
+                    bail!("Duplicate Regurgitate Codex hooks require manual review");
+                }
+                found = true;
+                if existing != command && command != standard {
+                    handler.insert("command".into(), json!(command));
+                    changed = true;
+                }
             }
         }
-    }
-    if !found {
-        groups.push(json!({"hooks": [{"type":"command", "command":command, "timeout":5}]}));
-        changed = true;
+        if !found {
+            let mut handler = json!({"type":"command", "command":command, "timeout":if event == "UserPromptSubmit" { 2 } else { 5 }});
+            if event == "UserPromptSubmit" {
+                handler["additionalContextLimit"] = json!(240);
+            }
+            groups.push(json!({"hooks":[handler]}));
+            changed = true;
+        }
+        any_changed |= changed;
     }
     Ok((
         format!("{}\n", serde_json::to_string_pretty(&doc)?),
-        changed,
+        any_changed,
     ))
 }
 
@@ -104,7 +111,10 @@ pub(super) fn install(path: &Path, command: &str, apply: bool) -> Result<CodexHo
         status,
         config: path.into(),
         changes: if matches!(status, InstallStatus::Planned | InstallStatus::Installed) {
-            vec!["hooks.PostToolUse"]
+            super::codex_config::hook_events(command)
+                .iter()
+                .map(|(event, _, _)| super::codex_config::event_change(event))
+                .collect()
         } else {
             vec![]
         },

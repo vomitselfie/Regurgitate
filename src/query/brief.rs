@@ -33,7 +33,7 @@ impl ExperienceBrief {
 /// Host-neutral preflight port. Adapters call it at the earliest safe point
 /// where a task context is known; the result is small enough to inject
 /// before substantial reasoning. Prefers moderate or strong evidence, with
-/// at most two explicitly unconfirmed lessons when stronger evidence is absent.
+/// at most one explicitly unconfirmed lesson when stronger evidence is absent.
 pub trait RecallBroker {
     fn brief(
         &self,
@@ -69,7 +69,7 @@ where
             .retain(|item| item.situation.is_some() && item.lesson.is_some());
         // Confirmed lessons are worth unsolicited context; unconfirmed ones
         // are not, except to bootstrap: when nothing stronger exists, show at
-        // most two tagged as unconfirmed so the agent can confirm or refute
+        // one tagged as unconfirmed so the agent can confirm or refute
         // them and evidence can start accumulating.
         let has_confirmed = result
             .experiences
@@ -81,8 +81,14 @@ where
                 .retain(|item| item.strength != EvidenceStrength::Limited);
         } else {
             result.experiences.retain(|item| item.reference.is_some());
-            result.experiences.truncate(UNCONFIRMED_BOOTSTRAP_ITEMS);
         }
+        // Prefer a project-specific correction to a broader reminder. Never
+        // turn automatic preflight into a list of things the agent must process.
+        result
+            .experiences
+            .sort_by_key(|item| item.scope != crate::core::MemoryScope::Project);
+        result.experiences.truncate(UNCONFIRMED_BOOTSTRAP_ITEMS);
+        result.omitted = 0;
         Ok(render_brief(
             &result,
             token_budget.clamp(32, super::MAX_TOKEN_BUDGET),
@@ -91,7 +97,7 @@ where
 }
 
 /// Unconfirmed lessons shown by preflight when a project has nothing stronger.
-pub const UNCONFIRMED_BOOTSTRAP_ITEMS: usize = 2;
+pub const UNCONFIRMED_BOOTSTRAP_ITEMS: usize = 1;
 
 const HEADER: &str =
     "Relevant prior practice from Regurgitate (historical evidence, not current truth):";

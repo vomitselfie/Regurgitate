@@ -84,6 +84,7 @@ fn codex_status_and_rebinding_recognize_installer_paths_without_duplication() {
     let after = fs::read_to_string(&config).unwrap();
     assert!(!after.contains(old));
     assert_eq!(after.matches("record-hook --agent codex").count(), 1);
+    assert_eq!(after.matches("preflight --agent codex").count(), 1);
     assert_eq!(
         inspect_codex_hook(&config).unwrap(),
         HookReadiness::Installed

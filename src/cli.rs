@@ -313,8 +313,9 @@ pub(crate) enum Command {
     },
 
     /// Emit a plain-text experience brief for host preflight injection.
-    /// Unlike `recall`, only lessons with moderate or strong evidence are
-    /// included; a prompt with no recognizable task produces no output.
+    /// At most one lesson, preferring stronger evidence; bootstrap advice is
+    /// labeled unconfirmed. Unrelated prompts produce no output. Automatic
+    /// host invocations are quiet, non-interactive, and deadline-bounded.
     #[command(verbatim_doc_comment)]
     Preflight {
         /// Local project directory; read from the hook payload with --agent.
@@ -558,6 +559,7 @@ pub(crate) enum ExperienceCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum PreflightAgentArg {
     Claude,
+    Codex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
