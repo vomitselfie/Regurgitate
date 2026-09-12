@@ -180,12 +180,6 @@ Readiness does not inspect or modify Codex's hook trust state. After setup, use
 `experience metrics --shared --brief` describes the machine-shared bucket.
 They are not whole-notebook totals and may overlap. No recall telemetry is added.
 
-If an AoE status slot still contains exactly `praxis aoe-hook`, setup now explains
-the legacy conflict without changing it. With native recording already connected,
-remove only those obsolete `on_idle`/`on_error` entries from `[status_hooks]`;
-otherwise replace them with `regurgitate aoe-hook`. Do not enable both ingestion
-paths or delete unrelated hooks or the old notebook as part of this cleanup.
-
 ## Day-to-day use
 
 Once the hook and skill are installed, there is usually nothing to manage.
